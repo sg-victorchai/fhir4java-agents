@@ -538,6 +538,47 @@ public class InteractionGuard {
 
 ## Plugin Architecture (Detailed Design)
 
+### Plugin Implementation Options
+
+The FHIR server supports **two plugin implementation approaches**:
+
+| Approach | Use Case | Language | Deployment | Hot-Reload |
+|----------|----------|----------|------------|------------|
+| **Spring Bean** | Embedded plugins, same JVM | Java only | Classpath | No (restart required) |
+| **MCP Protocol** | External plugins, any language | Any (Java, Python, Node.js, etc.) | Separate process/container | Yes |
+
+### Option 1: Spring Bean Plugins (Embedded)
+
+Traditional Spring-based plugins running in the same JVM. Best for:
+- Performance-critical plugins (no IPC overhead)
+- Tight integration with Spring ecosystem
+- Simple deployment (single artifact)
+
+### Option 2: MCP-Based Plugins (External)
+
+Using the [Model Context Protocol](https://modelcontextprotocol.io/) for external plugin communication. Best for:
+- Polyglot plugins (Python ML models, Node.js integrations, etc.)
+- Hot-pluggable without server restart
+- Isolated plugin failures (won't crash main server)
+- Third-party plugin ecosystem
+
+**MCP Java SDK:** [Official SDK](https://github.com/modelcontextprotocol/java-sdk) maintained with Spring AI team.
+
+```xml
+<!-- Maven dependency for MCP -->
+<dependency>
+    <groupId>io.modelcontextprotocol.sdk</groupId>
+    <artifactId>mcp</artifactId>
+    <version>0.9.0</version>
+</dependency>
+
+<!-- Spring Boot starter for MCP -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-starter-mcp-client</artifactId>
+</dependency>
+```
+
 ### Plugin Categories
 
 The plugin system is organized into two main categories:
@@ -1525,6 +1566,267 @@ fhir4java:
       trace-all-requests: true
       sample-rate: 1.0  # 100% of requests
 ```
+
+---
+
+## MCP-Based Plugin Architecture (External Plugins)
+
+For plugins that need to be written in other languages, hot-pluggable, or run in isolation, we support the **Model Context Protocol (MCP)**.
+
+### MCP Plugin Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FHIR4Java Server                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      MCP Plugin Manager                          │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │   │
+│  │  │ MCP Client  │  │ MCP Client  │  │ MCP Client  │  ...         │   │
+│  │  │  (stdio)    │  │  (HTTP)     │  │  (SSE)      │              │   │
+│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │   │
+│  └─────────┼────────────────┼────────────────┼─────────────────────┘   │
+└────────────┼────────────────┼────────────────┼─────────────────────────┘
+             │                │                │
+             ▼                ▼                ▼
+    ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
+    │  MCP Server    │ │  MCP Server    │ │  MCP Server    │
+    │  (Python)      │ │  (Node.js)     │ │  (Java)        │
+    │                │ │                │ │                │
+    │ Business Logic │ │ ML Validation  │ │ Auth Plugin    │
+    │    Plugin      │ │    Plugin      │ │                │
+    └────────────────┘ └────────────────┘ └────────────────┘
+```
+
+### MCP Plugin Manager
+
+```java
+@Component
+public class McpPluginManager {
+    private final Map<String, McpSyncClient> mcpClients = new ConcurrentHashMap<>();
+    private final McpPluginConfig config;
+
+    @PostConstruct
+    public void initializeMcpPlugins() {
+        for (McpPluginDefinition plugin : config.getPlugins()) {
+            McpSyncClient client = createClient(plugin);
+            client.initialize();
+
+            // Discover available tools from the MCP server
+            ListToolsResult tools = client.listTools();
+            log.info("MCP Plugin '{}' registered with {} tools", plugin.getName(), tools.tools().size());
+
+            mcpClients.put(plugin.getName(), client);
+        }
+    }
+
+    private McpSyncClient createClient(McpPluginDefinition plugin) {
+        McpTransport transport = switch (plugin.getTransport()) {
+            case STDIO -> new StdioClientTransport(plugin.getCommand(), plugin.getArgs());
+            case HTTP -> new HttpClientTransport(plugin.getUrl());
+            case SSE -> new SseClientTransport(plugin.getUrl());
+        };
+
+        return McpClient.sync(transport)
+            .requestTimeout(Duration.ofSeconds(plugin.getTimeoutSeconds()))
+            .build();
+    }
+
+    /**
+     * Execute a tool on an MCP plugin server
+     */
+    public ToolResult executeTool(String pluginName, String toolName, Map<String, Object> arguments) {
+        McpSyncClient client = mcpClients.get(pluginName);
+        if (client == null) {
+            throw new PluginNotFoundException("MCP plugin not found: " + pluginName);
+        }
+
+        CallToolRequest request = new CallToolRequest(toolName, arguments);
+        return client.callTool(request);
+    }
+
+    /**
+     * Get resources from an MCP plugin server
+     */
+    public List<Resource> getResources(String pluginName) {
+        McpSyncClient client = mcpClients.get(pluginName);
+        return client.listResources().resources();
+    }
+}
+```
+
+### MCP Business Logic Plugin (Example in Python)
+
+```python
+# business_logic_plugin.py - MCP Server for Patient validation
+from mcp import Server, Tool, Resource
+from mcp.server.stdio import stdio_server
+
+server = Server("patient-validation-plugin")
+
+@server.tool()
+async def validate_patient_consent(patient_id: str, patient_data: dict) -> dict:
+    """Validate that patient has required consent forms"""
+    # Custom business logic
+    has_consent = check_consent_database(patient_id)
+
+    return {
+        "valid": has_consent,
+        "message": "Consent validated" if has_consent else "Missing consent form",
+        "required_forms": ["HIPAA", "Treatment Consent"] if not has_consent else []
+    }
+
+@server.tool()
+async def enrich_patient_data(patient_data: dict) -> dict:
+    """Enrich patient data with external information"""
+    # Call external APIs, ML models, etc.
+    enriched = patient_data.copy()
+    enriched["risk_score"] = calculate_risk_score(patient_data)
+    enriched["care_gaps"] = identify_care_gaps(patient_data)
+    return enriched
+
+@server.resource("consent-requirements")
+async def get_consent_requirements() -> str:
+    """Return current consent requirements as JSON"""
+    return json.dumps(CONSENT_REQUIREMENTS)
+
+if __name__ == "__main__":
+    stdio_server(server)
+```
+
+### MCP Plugin Configuration
+
+```yaml
+fhir4java:
+  plugins:
+    # MCP-based plugins (external)
+    mcp:
+      enabled: true
+      plugins:
+        # Local plugin via stdio
+        - name: patient-validation
+          transport: stdio
+          command: python
+          args: ["/plugins/patient_validation_plugin.py"]
+          timeout-seconds: 30
+          tools:
+            - name: validate_patient_consent
+              maps-to: beforeCreate  # Hook into create operation
+              resource-types: [Patient]
+            - name: enrich_patient_data
+              maps-to: beforeCreate
+              resource-types: [Patient]
+
+        # Remote plugin via HTTP
+        - name: ml-observation-validator
+          transport: http
+          url: http://ml-service:8080/mcp
+          timeout-seconds: 60
+          tools:
+            - name: validate_observation_value
+              maps-to: beforeCreate
+              resource-types: [Observation]
+            - name: predict_abnormal
+              maps-to: afterCreate
+              resource-types: [Observation]
+
+        # Containerized plugin
+        - name: auth-plugin
+          transport: http
+          url: http://auth-plugin:3000/mcp
+          timeout-seconds: 10
+          tools:
+            - name: authenticate
+              maps-to: authentication
+            - name: authorize
+              maps-to: authorization
+```
+
+### Hybrid Plugin Orchestrator
+
+The orchestrator supports both Spring Bean and MCP plugins:
+
+```java
+@Component
+public class HybridPluginOrchestrator {
+    private final List<BusinessLogicPlugin> springPlugins;  // Embedded
+    private final McpPluginManager mcpPluginManager;        // External
+
+    public void executeBeforeOperation(BusinessContext context) {
+        // Execute Spring Bean plugins first (faster, same JVM)
+        for (BusinessLogicPlugin plugin : springPlugins) {
+            if (plugin.supports(context.getResourceType(), context.getInteraction())) {
+                plugin.beforeOperation(context);
+            }
+        }
+
+        // Then execute MCP plugins (external, any language)
+        List<McpToolMapping> mcpTools = getMcpToolsForHook("beforeCreate", context.getResourceType());
+        for (McpToolMapping mapping : mcpTools) {
+            ToolResult result = mcpPluginManager.executeTool(
+                mapping.getPluginName(),
+                mapping.getToolName(),
+                Map.of(
+                    "resourceType", context.getResourceType(),
+                    "resourceData", serializeResource(context.getResource())
+                )
+            );
+
+            if (!result.isSuccess()) {
+                throw new BusinessRuleException(result.getErrorMessage());
+            }
+
+            // Apply any modifications from the MCP plugin
+            if (result.hasModifiedResource()) {
+                context.setResource(deserializeResource(result.getModifiedResource()));
+            }
+        }
+    }
+}
+```
+
+### MCP Plugin Docker Compose Example
+
+```yaml
+version: '3.8'
+services:
+  fhir4java:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - MCP_PLUGINS_ENABLED=true
+    depends_on:
+      - ml-validator
+      - auth-plugin
+
+  # Python ML validation plugin
+  ml-validator:
+    build: ./plugins/ml-validator
+    expose:
+      - "8080"
+    environment:
+      - MODEL_PATH=/models/observation_validator.pkl
+
+  # Node.js auth plugin
+  auth-plugin:
+    build: ./plugins/auth
+    expose:
+      - "3000"
+    environment:
+      - OAUTH_ISSUER=https://auth.example.org
+```
+
+### Benefits of MCP for FHIR Plugins
+
+| Feature | Benefit |
+|---------|---------|
+| **Polyglot** | Write plugins in Python (ML), Node.js (integrations), Go (performance) |
+| **Isolation** | Plugin crashes don't affect main server |
+| **Hot-reload** | Update plugins without server restart |
+| **Scaling** | Scale plugins independently |
+| **Security** | Sandboxed execution, explicit tool permissions |
+| **AI-Ready** | MCP is designed for AI/LLM integration |
+| **Ecosystem** | Growing library of MCP servers/tools |
 
 ---
 
@@ -2531,6 +2833,9 @@ volumes:
 | plugin | `PerformancePlugin.java` | Performance tracking interface |
 | plugin | `DatabasePerformancePlugin.java` | Database performance tracking |
 | plugin | `BusinessLogicPlugin.java` | Business logic plugin interface |
+| plugin | `McpPluginManager.java` | MCP plugin manager for external plugins |
+| plugin | `HybridPluginOrchestrator.java` | Orchestrator for Spring + MCP plugins |
+| plugin | `McpPluginConfig.java` | MCP plugin configuration |
 | server | `application.yml` | Main configuration |
 | server | `fhir-config/searchparameters/_base-searchparameters.json` | Base search params (FHIR Bundle of SearchParameter) |
 | server | `fhir-config/searchparameters/patient-searchparameters.json` | Patient search params (FHIR Bundle) |
