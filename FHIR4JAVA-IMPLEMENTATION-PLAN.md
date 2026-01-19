@@ -1846,6 +1846,921 @@ CREATE SCHEMA IF NOT EXISTS fhir_resources;
 -- e.g., fhir_patient, fhir_observation, etc.
 ```
 
+---
+
+## History Management (Versioning)
+
+### How History Records Are Created
+
+Every mutating operation (CREATE, UPDATE, DELETE) automatically creates a history record in the same transaction:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    HISTORY RECORD CREATION FLOW                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  CREATE Operation:                                                       │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+│  │  New Data   │────▶│ resource_data│────▶│  history    │               │
+│  │  (v1)       │     │   (v1)      │     │  (v1, CREATE)│              │
+│  └─────────────┘     └─────────────┘     └─────────────┘               │
+│                                                                          │
+│  UPDATE Operation:                                                       │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+│  │ Existing v1 │────▶│ Copy to     │────▶│  history    │               │
+│  │             │     │ history     │     │  (v1, stored)│              │
+│  └─────────────┘     └─────────────┘     └─────────────┘               │
+│         │                                                                │
+│         ▼                                                                │
+│  ┌─────────────┐     ┌─────────────┐                                    │
+│  │  New Data   │────▶│ resource_data│                                    │
+│  │  (v2)       │     │   (v2)      │                                    │
+│  └─────────────┘     └─────────────┘                                    │
+│                                                                          │
+│  DELETE Operation:                                                       │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+│  │ Existing vN │────▶│ Copy to     │────▶│  history    │               │
+│  │             │     │ history     │     │  (vN, DELETE)│              │
+│  └─────────────┘     └─────────────┘     └─────────────┘               │
+│         │                                                                │
+│         ▼                                                                │
+│  ┌─────────────┐                                                        │
+│  │ Soft delete │  (is_deleted = true, or physical delete)               │
+│  │ resource_data│                                                        │
+│  └─────────────┘                                                        │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Resource Service Implementation
+
+The `ResourceService` is the main service for all CRUD operations. History management is handled transparently as an internal implementation detail.
+
+```java
+@Service
+@Transactional
+public class ResourceService {
+    private final ResourceRepository resourceRepository;
+    private final ResourceHistoryRepository historyRepository;
+    private final FhirContextFactory fhirContextFactory;
+
+    /**
+     * CREATE: Insert new resource and create history entry
+     */
+    public ResourceEntity create(String resourceType, IBaseResource resource) {
+        // Generate new ID and set version 1
+        String resourceId = UUID.randomUUID().toString();
+        resource.setId(resourceId);
+        resource.getMeta().setVersionId("1");
+        resource.getMeta().setLastUpdated(new Date());
+
+        // Save to main table
+        ResourceEntity entity = ResourceEntity.builder()
+            .id(UUID.fromString(resourceId))
+            .resourceType(resourceType)
+            .versionId(1)
+            .content(serialize(resource))
+            .lastUpdated(Instant.now())
+            .build();
+        resourceRepository.save(entity);
+
+        // Create history record (same transaction)
+        createHistoryRecord(entity, HistoryOperation.CREATE);
+
+        return entity;
+    }
+
+    /**
+     * UPDATE: Copy current version to history, then update main table
+     */
+    public ResourceEntity update(String resourceType, String id, IBaseResource resource) {
+        ResourceEntity existing = resourceRepository.findById(UUID.fromString(id))
+            .orElseThrow(() -> new ResourceNotFoundException(resourceType, id));
+
+        // Step 1: Copy CURRENT version to history BEFORE updating
+        createHistoryRecord(existing, HistoryOperation.UPDATE);
+
+        // Step 2: Update main table with new version
+        int newVersion = existing.getVersionId() + 1;
+        resource.getMeta().setVersionId(String.valueOf(newVersion));
+        resource.getMeta().setLastUpdated(new Date());
+
+        existing.setVersionId(newVersion);
+        existing.setContent(serialize(resource));
+        existing.setLastUpdated(Instant.now());
+        resourceRepository.save(existing);
+
+        return existing;
+    }
+
+    /**
+     * DELETE: Copy current version to history, then soft/hard delete
+     */
+    public void delete(String resourceType, String id, boolean hardDelete) {
+        ResourceEntity existing = resourceRepository.findById(UUID.fromString(id))
+            .orElseThrow(() -> new ResourceNotFoundException(resourceType, id));
+
+        // Copy to history with DELETE operation
+        createHistoryRecord(existing, HistoryOperation.DELETE);
+
+        if (hardDelete) {
+            resourceRepository.delete(existing);
+        } else {
+            // Soft delete - mark as deleted but keep in main table
+            existing.setDeleted(true);
+            existing.setLastUpdated(Instant.now());
+            resourceRepository.save(existing);
+        }
+    }
+
+    /**
+     * Create history record - called within same transaction
+     */
+    private void createHistoryRecord(ResourceEntity entity, HistoryOperation operation) {
+        ResourceHistoryEntity history = ResourceHistoryEntity.builder()
+            .resourceId(entity.getId())
+            .resourceType(entity.getResourceType())
+            .versionId(entity.getVersionId())
+            .fhirVersion(entity.getFhirVersion())
+            .content(entity.getContent())  // Copy the JSONB content
+            .operation(operation)
+            .changedAt(Instant.now())
+            .changedBy(SecurityContextHolder.getContext().getAuthentication().getName())
+            .build();
+        historyRepository.save(history);
+    }
+
+    /**
+     * VREAD: Read specific version from history
+     */
+    public Optional<IBaseResource> vread(String resourceType, String id, String versionId) {
+        int version = Integer.parseInt(versionId);
+
+        // Check if it's the current version
+        Optional<ResourceEntity> current = resourceRepository.findById(UUID.fromString(id));
+        if (current.isPresent() && current.get().getVersionId() == version) {
+            return Optional.of(deserialize(current.get()));
+        }
+
+        // Otherwise, look in history
+        return historyRepository.findByResourceIdAndVersionId(UUID.fromString(id), version)
+            .map(this::deserialize);
+    }
+
+    /**
+     * HISTORY: Get all versions of a resource
+     */
+    public Bundle history(String resourceType, String id, HistoryParameters params) {
+        List<ResourceHistoryEntity> versions = historyRepository
+            .findByResourceIdOrderByVersionIdDesc(
+                UUID.fromString(id),
+                PageRequest.of(0, params.getCount())
+            );
+
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.HISTORY);
+
+        for (ResourceHistoryEntity history : versions) {
+            Bundle.BundleEntryComponent entry = bundle.addEntry();
+            entry.setResource(deserialize(history));
+            entry.getRequest()
+                .setMethod(toHttpMethod(history.getOperation()))
+                .setUrl(resourceType + "/" + id);
+            entry.getResponse()
+                .setLastModified(Date.from(history.getChangedAt()));
+        }
+
+        return bundle;
+    }
+}
+```
+
+### History Table Optimization
+
+```sql
+-- Optimized history table with partitioning by time
+CREATE TABLE fhir_resources.resource_history (
+    history_id BIGSERIAL,
+    resource_id UUID NOT NULL,
+    resource_type VARCHAR(100) NOT NULL,
+    version_id INTEGER NOT NULL,
+    fhir_version VARCHAR(10) NOT NULL,
+    content JSONB NOT NULL,
+    operation VARCHAR(20) NOT NULL,
+    changed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    changed_by VARCHAR(255),
+    PRIMARY KEY (history_id, changed_at)
+) PARTITION BY RANGE (changed_at);
+
+-- Create monthly partitions for history (auto-managed)
+CREATE TABLE fhir_resources.resource_history_2025_01
+    PARTITION OF fhir_resources.resource_history
+    FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+
+-- Index for vread (get specific version)
+CREATE INDEX idx_history_resource_version
+    ON fhir_resources.resource_history(resource_id, version_id);
+
+-- Index for history operation (get all versions of a resource)
+CREATE INDEX idx_history_resource_time
+    ON fhir_resources.resource_history(resource_id, changed_at DESC);
+```
+
+---
+
+## Search Parameter Re-indexing Strategy
+
+### Does Adding New Search Parameters Require Re-indexing?
+
+**Yes**, adding new search parameters requires re-indexing existing data. However, we implement a **non-blocking, incremental re-indexing** strategy:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    SEARCH PARAMETER RE-INDEXING                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  1. NEW SEARCH PARAM ADDED                                               │
+│     ┌─────────────────┐                                                  │
+│     │ birthdate added │                                                  │
+│     │ to Patient      │                                                  │
+│     └────────┬────────┘                                                  │
+│              │                                                           │
+│              ▼                                                           │
+│  2. MARK PARAM AS "INDEXING"                                            │
+│     ┌─────────────────┐                                                  │
+│     │ search_param    │                                                  │
+│     │ status=INDEXING │                                                  │
+│     └────────┬────────┘                                                  │
+│              │                                                           │
+│              ▼                                                           │
+│  3. BACKGROUND RE-INDEX JOB (Non-blocking)                              │
+│     ┌─────────────────────────────────────────┐                         │
+│     │  Process in batches (e.g., 1000 records)│                         │
+│     │  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐       │                         │
+│     │  │Batch│→│Batch│→│Batch│→│Batch│→ ...  │                         │
+│     │  │  1  │ │  2  │ │  3  │ │  N  │       │                         │
+│     │  └─────┘ └─────┘ └─────┘ └─────┘       │                         │
+│     │  Track progress in reindex_job table    │                         │
+│     └────────┬────────────────────────────────┘                         │
+│              │                                                           │
+│              ▼                                                           │
+│  4. MARK PARAM AS "ACTIVE"                                              │
+│     ┌─────────────────┐                                                  │
+│     │ search_param    │                                                  │
+│     │ status=ACTIVE   │                                                  │
+│     └─────────────────┘                                                  │
+│                                                                          │
+│  DURING INDEXING:                                                        │
+│  - New writes automatically index the new param                          │
+│  - Searches on new param return partial results (with warning)          │
+│  - Or searches wait until indexing complete (configurable)               │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Re-indexing Implementation
+
+```java
+@Service
+public class SearchIndexRebuilder {
+    private final ResourceRepository resourceRepository;
+    private final SearchIndexRepository searchIndexRepository;
+    private final ReindexJobRepository reindexJobRepository;
+    private final SearchParameterRegistry searchParamRegistry;
+
+    private static final int BATCH_SIZE = 1000;
+
+    /**
+     * Trigger re-index when new search parameter is added
+     */
+    @Async
+    public void reindexForNewSearchParameter(String resourceType, SearchParameter newParam) {
+        // Create reindex job record
+        ReindexJob job = ReindexJob.builder()
+            .resourceType(resourceType)
+            .searchParameterCode(newParam.getCode())
+            .status(ReindexStatus.RUNNING)
+            .totalRecords(resourceRepository.countByResourceType(resourceType))
+            .processedRecords(0)
+            .startedAt(Instant.now())
+            .build();
+        reindexJobRepository.save(job);
+
+        try {
+            long lastProcessedId = 0;
+            int processed = 0;
+
+            while (true) {
+                // Fetch batch of resources
+                List<ResourceEntity> batch = resourceRepository
+                    .findByResourceTypeAndIdGreaterThan(
+                        resourceType, lastProcessedId,
+                        PageRequest.of(0, BATCH_SIZE)
+                    );
+
+                if (batch.isEmpty()) break;
+
+                // Process batch
+                List<SearchIndexEntity> indexEntries = new ArrayList<>();
+                for (ResourceEntity resource : batch) {
+                    // Extract search parameter value from resource
+                    List<SearchIndexEntity> entries = extractSearchIndexEntries(
+                        resource, newParam);
+                    indexEntries.addAll(entries);
+                    lastProcessedId = resource.getId();
+                }
+
+                // Bulk insert index entries
+                searchIndexRepository.saveAll(indexEntries);
+
+                // Update progress
+                processed += batch.size();
+                job.setProcessedRecords(processed);
+                job.setLastProcessedId(lastProcessedId);
+                reindexJobRepository.save(job);
+
+                // Yield to prevent resource starvation
+                Thread.sleep(10);
+            }
+
+            // Mark complete
+            job.setStatus(ReindexStatus.COMPLETED);
+            job.setCompletedAt(Instant.now());
+
+            // Activate the search parameter
+            searchParamRegistry.activateParameter(resourceType, newParam.getCode());
+
+        } catch (Exception e) {
+            job.setStatus(ReindexStatus.FAILED);
+            job.setErrorMessage(e.getMessage());
+            throw new ReindexException("Re-indexing failed", e);
+        } finally {
+            reindexJobRepository.save(job);
+        }
+    }
+
+    /**
+     * Resume interrupted reindex job
+     */
+    public void resumeReindexJob(Long jobId) {
+        ReindexJob job = reindexJobRepository.findById(jobId)
+            .orElseThrow(() -> new JobNotFoundException(jobId));
+
+        if (job.getStatus() != ReindexStatus.FAILED) {
+            throw new IllegalStateException("Can only resume failed jobs");
+        }
+
+        // Resume from last processed ID
+        job.setStatus(ReindexStatus.RUNNING);
+        reindexJobRepository.save(job);
+
+        // Continue processing...
+    }
+}
+
+// Reindex job tracking table
+@Entity
+@Table(name = "reindex_job", schema = "fhir_resources")
+public class ReindexJob {
+    @Id @GeneratedValue
+    private Long id;
+    private String resourceType;
+    private String searchParameterCode;
+
+    @Enumerated(EnumType.STRING)
+    private ReindexStatus status;
+
+    private long totalRecords;
+    private long processedRecords;
+    private Long lastProcessedId;
+    private Instant startedAt;
+    private Instant completedAt;
+    private String errorMessage;
+}
+```
+
+### Search Parameter Status Management
+
+```yaml
+# Search parameter states
+search-parameter-states:
+  PENDING:    # Defined but not yet indexed
+  INDEXING:   # Background indexing in progress
+  ACTIVE:     # Fully indexed and searchable
+  DEPRECATED: # No longer indexed for new data
+```
+
+---
+
+## High-Performance Query Strategy (100ms @ 100M Records)
+
+### Performance Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                 HIGH-PERFORMANCE QUERY ARCHITECTURE                      │
+│                     (100ms @ 100 Million Records)                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                        CACHING LAYER                             │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │   │
+│  │  │ L1: Local   │  │ L2: Redis   │  │ Query Cache │              │   │
+│  │  │ (Caffeine)  │  │ (Cluster)   │  │ (Results)   │              │   │
+│  │  │ ~1ms        │  │ ~5ms        │  │ ~10ms       │              │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘              │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │ Cache Miss                               │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     CONNECTION POOLING                           │   │
+│  │  ┌─────────────────────────────────────────────────────────┐    │   │
+│  │  │ HikariCP (min=10, max=50, prepared statements cached)   │    │   │
+│  │  └─────────────────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    DATABASE TOPOLOGY                             │   │
+│  │                                                                  │   │
+│  │  ┌───────────────┐      ┌───────────────┐                       │   │
+│  │  │   PRIMARY     │─────▶│  READ REPLICA │ (for queries)         │   │
+│  │  │   (writes)    │      │     1         │                       │   │
+│  │  └───────────────┘      └───────────────┘                       │   │
+│  │         │                      │                                 │   │
+│  │         │               ┌───────────────┐                       │   │
+│  │         └──────────────▶│  READ REPLICA │ (for queries)         │   │
+│  │                         │     2         │                       │   │
+│  │                         └───────────────┘                       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                 OPTIMIZED TABLE STRUCTURE                        │   │
+│  │                                                                  │   │
+│  │  ┌─────────────────────────────────────────────────────────┐    │   │
+│  │  │ PARTITIONED TABLES (by resource_type + time range)      │    │   │
+│  │  │ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐        │    │   │
+│  │  │ │Patient  │ │Observ.  │ │Encounter│ │  ...    │        │    │   │
+│  │  │ │2024-Q1  │ │2024-Q1  │ │2024-Q1  │ │         │        │    │   │
+│  │  │ └─────────┘ └─────────┘ └─────────┘ └─────────┘        │    │   │
+│  │  └─────────────────────────────────────────────────────────┘    │   │
+│  │                                                                  │   │
+│  │  ┌─────────────────────────────────────────────────────────┐    │   │
+│  │  │ OPTIMIZED INDEXES                                        │    │   │
+│  │  │ • B-tree: Primary keys, foreign keys                     │    │   │
+│  │  │ • GIN: JSONB content (for flexible queries)              │    │   │
+│  │  │ • BRIN: Time-based columns (very compact)                │    │   │
+│  │  │ • Partial: Conditional indexes for common queries        │    │   │
+│  │  │ • Covering: Include columns to avoid table lookups       │    │   │
+│  │  └─────────────────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Table Partitioning Strategy
+
+```sql
+-- Partition main resource table by resource_type (list) and time (range)
+CREATE TABLE fhir_resources.resource_data (
+    id UUID NOT NULL,
+    resource_type VARCHAR(100) NOT NULL,
+    version_id INTEGER NOT NULL DEFAULT 1,
+    fhir_version VARCHAR(10) NOT NULL,
+    content JSONB NOT NULL,
+    last_updated TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (id, resource_type, created_at)
+) PARTITION BY LIST (resource_type);
+
+-- Create partition for each major resource type
+CREATE TABLE fhir_resources.resource_data_patient
+    PARTITION OF fhir_resources.resource_data
+    FOR VALUES IN ('Patient')
+    PARTITION BY RANGE (created_at);
+
+CREATE TABLE fhir_resources.resource_data_observation
+    PARTITION OF fhir_resources.resource_data
+    FOR VALUES IN ('Observation')
+    PARTITION BY RANGE (created_at);
+
+-- Sub-partition by quarter for high-volume resources
+CREATE TABLE fhir_resources.resource_data_observation_2025q1
+    PARTITION OF fhir_resources.resource_data_observation
+    FOR VALUES FROM ('2025-01-01') TO ('2025-04-01');
+
+-- Search index table - also partitioned
+CREATE TABLE fhir_resources.search_index (
+    id BIGSERIAL,
+    resource_id UUID NOT NULL,
+    resource_type VARCHAR(100) NOT NULL,
+    param_name VARCHAR(100) NOT NULL,
+    param_type VARCHAR(20) NOT NULL,
+    -- Different value columns for different types
+    string_value VARCHAR(2000),
+    string_value_normalized VARCHAR(2000), -- lowercase, accent-folded
+    date_value_start TIMESTAMP WITH TIME ZONE,
+    date_value_end TIMESTAMP WITH TIME ZONE,
+    number_value NUMERIC,
+    quantity_value NUMERIC,
+    quantity_unit VARCHAR(100),
+    reference_id UUID,
+    reference_type VARCHAR(100),
+    token_system VARCHAR(500),
+    token_code VARCHAR(500),
+    token_text VARCHAR(500),
+    PRIMARY KEY (id, resource_type)
+) PARTITION BY LIST (resource_type);
+
+-- Partition search index per resource type
+CREATE TABLE fhir_resources.search_index_patient
+    PARTITION OF fhir_resources.search_index
+    FOR VALUES IN ('Patient');
+```
+
+### 2. Optimized Indexing Strategy
+
+```sql
+-- ============================================
+-- COVERING INDEXES (avoid table lookups)
+-- ============================================
+
+-- Read by ID - most common operation (~1ms)
+CREATE UNIQUE INDEX idx_resource_pk_covering
+    ON fhir_resources.resource_data (id, resource_type)
+    INCLUDE (version_id, content, last_updated)
+    WHERE is_deleted = FALSE;
+
+-- ============================================
+-- SEARCH INDEX OPTIMIZATION
+-- ============================================
+
+-- String search (name, address, etc.) - case-insensitive
+CREATE INDEX idx_search_string_normalized
+    ON fhir_resources.search_index (resource_type, param_name, string_value_normalized)
+    INCLUDE (resource_id)
+    WHERE string_value_normalized IS NOT NULL;
+
+-- Token search (identifier, code, etc.) - exact match
+CREATE INDEX idx_search_token
+    ON fhir_resources.search_index (resource_type, param_name, token_system, token_code)
+    INCLUDE (resource_id)
+    WHERE token_code IS NOT NULL;
+
+-- Date range search (birthdate, effective date, etc.)
+CREATE INDEX idx_search_date_range
+    ON fhir_resources.search_index (resource_type, param_name, date_value_start, date_value_end)
+    INCLUDE (resource_id)
+    WHERE date_value_start IS NOT NULL;
+
+-- Reference search (patient, subject, etc.)
+CREATE INDEX idx_search_reference
+    ON fhir_resources.search_index (resource_type, param_name, reference_type, reference_id)
+    INCLUDE (resource_id)
+    WHERE reference_id IS NOT NULL;
+
+-- ============================================
+-- PARTIAL INDEXES (for common queries)
+-- ============================================
+
+-- Active patients only (very common query)
+CREATE INDEX idx_patient_active
+    ON fhir_resources.resource_data_patient (id)
+    INCLUDE (content)
+    WHERE is_deleted = FALSE
+    AND content->>'active' = 'true';
+
+-- Recent observations (last 30 days)
+CREATE INDEX idx_observation_recent
+    ON fhir_resources.resource_data_observation (last_updated DESC)
+    INCLUDE (id, content)
+    WHERE last_updated > CURRENT_TIMESTAMP - INTERVAL '30 days';
+
+-- ============================================
+-- GIN INDEX for flexible JSONB queries
+-- ============================================
+
+-- For ad-hoc queries on JSONB content
+CREATE INDEX idx_resource_content_gin
+    ON fhir_resources.resource_data
+    USING GIN (content jsonb_path_ops);
+
+-- ============================================
+-- BRIN INDEX for time-based columns (very compact)
+-- ============================================
+
+CREATE INDEX idx_resource_created_brin
+    ON fhir_resources.resource_data
+    USING BRIN (created_at)
+    WITH (pages_per_range = 128);
+```
+
+### 3. Multi-Level Caching
+
+```java
+@Configuration
+public class CacheConfiguration {
+
+    // L1: Local in-memory cache (Caffeine) - ~1ms
+    @Bean
+    public Cache<String, IBaseResource> localResourceCache() {
+        return Caffeine.newBuilder()
+            .maximumSize(10_000)
+            .expireAfterWrite(Duration.ofMinutes(5))
+            .recordStats()
+            .build();
+    }
+
+    // L2: Distributed cache (Redis) - ~5ms
+    @Bean
+    public RedisTemplate<String, String> redisTemplate(RedisConnectionFactory factory) {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(factory);
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        return template;
+    }
+}
+
+@Service
+public class CachedResourceService {
+    private final Cache<String, IBaseResource> localCache;
+    private final RedisTemplate<String, String> redisTemplate;
+    private final ResourceRepository repository;
+    private final FhirContextFactory fhirContextFactory;
+
+    private static final Duration REDIS_TTL = Duration.ofMinutes(30);
+
+    public Optional<IBaseResource> read(String resourceType, String id) {
+        String cacheKey = resourceType + "/" + id;
+
+        // L1: Check local cache first (~1ms)
+        IBaseResource cached = localCache.getIfPresent(cacheKey);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
+
+        // L2: Check Redis (~5ms)
+        String redisValue = redisTemplate.opsForValue().get(cacheKey);
+        if (redisValue != null) {
+            IBaseResource resource = deserialize(redisValue);
+            localCache.put(cacheKey, resource);  // Populate L1
+            return Optional.of(resource);
+        }
+
+        // L3: Database query (~20-50ms with good indexes)
+        Optional<ResourceEntity> entity = repository.findByIdAndResourceType(
+            UUID.fromString(id), resourceType);
+
+        if (entity.isPresent()) {
+            IBaseResource resource = deserialize(entity.get());
+
+            // Populate both caches
+            localCache.put(cacheKey, resource);
+            redisTemplate.opsForValue().set(cacheKey, serialize(resource), REDIS_TTL);
+
+            return Optional.of(resource);
+        }
+
+        return Optional.empty();
+    }
+
+    // Cache invalidation on write
+    @CacheEvict(cacheNames = {"resourceCache"}, key = "#resourceType + '/' + #id")
+    public void invalidateCache(String resourceType, String id) {
+        String cacheKey = resourceType + "/" + id;
+        localCache.invalidate(cacheKey);
+        redisTemplate.delete(cacheKey);
+    }
+}
+```
+
+### 4. Query Result Caching
+
+```java
+@Service
+public class SearchResultCache {
+    private final RedisTemplate<String, String> redisTemplate;
+    private static final Duration SEARCH_CACHE_TTL = Duration.ofMinutes(5);
+
+    /**
+     * Cache search results for common queries
+     */
+    public Optional<Bundle> getCachedSearchResult(String resourceType,
+                                                   Map<String, String> params) {
+        String cacheKey = buildSearchCacheKey(resourceType, params);
+        String cached = redisTemplate.opsForValue().get(cacheKey);
+
+        if (cached != null) {
+            return Optional.of(deserializeBundle(cached));
+        }
+        return Optional.empty();
+    }
+
+    public void cacheSearchResult(String resourceType,
+                                   Map<String, String> params,
+                                   Bundle result) {
+        // Only cache if result set is reasonable size
+        if (result.getEntry().size() <= 100) {
+            String cacheKey = buildSearchCacheKey(resourceType, params);
+            redisTemplate.opsForValue().set(cacheKey, serializeBundle(result), SEARCH_CACHE_TTL);
+        }
+    }
+
+    private String buildSearchCacheKey(String resourceType, Map<String, String> params) {
+        // Deterministic key from sorted parameters
+        String paramString = params.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(e -> e.getKey() + "=" + e.getValue())
+            .collect(Collectors.joining("&"));
+        return "search:" + resourceType + "?" + paramString;
+    }
+}
+```
+
+### 5. Read Replica Configuration
+
+```yaml
+# application.yml
+spring:
+  datasource:
+    # Primary for writes
+    primary:
+      url: jdbc:postgresql://primary-db:5432/fhir4java
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+      hikari:
+        maximum-pool-size: 20
+        minimum-idle: 5
+
+    # Read replicas for queries
+    replica:
+      url: jdbc:postgresql://replica-db:5432/fhir4java
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+      hikari:
+        maximum-pool-size: 50
+        minimum-idle: 10
+
+fhir4java:
+  database:
+    read-write-splitting:
+      enabled: true
+      # Route reads to replica, writes to primary
+      read-operations: [read, vread, search, history]
+      write-operations: [create, update, delete, patch]
+```
+
+```java
+@Configuration
+public class ReadWriteRoutingConfiguration {
+
+    @Bean
+    @Primary
+    public DataSource routingDataSource(
+            @Qualifier("primaryDataSource") DataSource primary,
+            @Qualifier("replicaDataSource") DataSource replica) {
+
+        Map<Object, Object> targetDataSources = new HashMap<>();
+        targetDataSources.put(DataSourceType.PRIMARY, primary);
+        targetDataSources.put(DataSourceType.REPLICA, replica);
+
+        RoutingDataSource routingDataSource = new RoutingDataSource();
+        routingDataSource.setTargetDataSources(targetDataSources);
+        routingDataSource.setDefaultTargetDataSource(primary);
+        return routingDataSource;
+    }
+}
+
+public class RoutingDataSource extends AbstractRoutingDataSource {
+    @Override
+    protected Object determineCurrentLookupKey() {
+        return TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+            ? DataSourceType.REPLICA
+            : DataSourceType.PRIMARY;
+    }
+}
+
+// Usage in service
+@Service
+public class ResourceService {
+
+    @Transactional(readOnly = true)  // Routes to replica
+    public Optional<IBaseResource> read(String resourceType, String id) {
+        // ...
+    }
+
+    @Transactional  // Routes to primary
+    public IBaseResource create(String resourceType, IBaseResource resource) {
+        // ...
+    }
+}
+```
+
+### 6. Async Search Index Updates
+
+```java
+@Service
+public class AsyncSearchIndexService {
+    private final SearchIndexRepository searchIndexRepository;
+    private final BlockingQueue<IndexTask> indexQueue = new LinkedBlockingQueue<>(10000);
+    private final ExecutorService indexExecutor = Executors.newFixedThreadPool(4);
+
+    @PostConstruct
+    public void startIndexWorkers() {
+        for (int i = 0; i < 4; i++) {
+            indexExecutor.submit(this::processIndexQueue);
+        }
+    }
+
+    /**
+     * Queue index update for async processing (non-blocking write path)
+     */
+    public void queueIndexUpdate(ResourceEntity resource) {
+        IndexTask task = new IndexTask(resource.getId(), resource.getResourceType(),
+                                        resource.getContent());
+        if (!indexQueue.offer(task)) {
+            // Queue full - process synchronously as fallback
+            processIndexTask(task);
+        }
+    }
+
+    private void processIndexQueue() {
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                IndexTask task = indexQueue.poll(1, TimeUnit.SECONDS);
+                if (task != null) {
+                    processIndexTask(task);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    @Transactional
+    private void processIndexTask(IndexTask task) {
+        // Delete existing index entries
+        searchIndexRepository.deleteByResourceId(task.resourceId());
+
+        // Extract and save new index entries
+        List<SearchIndexEntity> entries = extractSearchIndexEntries(task);
+        searchIndexRepository.saveAll(entries);
+    }
+}
+```
+
+### 7. Performance Monitoring
+
+```java
+@Aspect
+@Component
+public class QueryPerformanceMonitor {
+    private final MeterRegistry meterRegistry;
+    private static final long SLOW_QUERY_THRESHOLD_MS = 100;
+
+    @Around("execution(* com.fhir4java.persistence.repository.*.*(..))")
+    public Object monitorQuery(ProceedingJoinPoint joinPoint) throws Throwable {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String operation = joinPoint.getSignature().getName();
+
+        try {
+            Object result = joinPoint.proceed();
+
+            long durationMs = sample.stop(Timer.builder("fhir.db.query")
+                .tag("operation", operation)
+                .tag("status", "success")
+                .register(meterRegistry));
+
+            if (durationMs > SLOW_QUERY_THRESHOLD_MS) {
+                log.warn("Slow query detected: {} took {}ms", operation, durationMs);
+            }
+
+            return result;
+        } catch (Exception e) {
+            sample.stop(Timer.builder("fhir.db.query")
+                .tag("operation", operation)
+                .tag("status", "error")
+                .register(meterRegistry));
+            throw e;
+        }
+    }
+}
+```
+
+### Performance Summary
+
+| Operation | Target | Technique |
+|-----------|--------|-----------|
+| **Read by ID** | <10ms | L1 cache (1ms) → L2 Redis (5ms) → Covering index |
+| **Search (common)** | <50ms | Query result cache + optimized indexes |
+| **Search (complex)** | <100ms | Partitioned tables + parallel query |
+| **Write** | <50ms | Async index updates + connection pooling |
+| **History** | <100ms | Partitioned history table + time-based indexes |
+
 ### Core Tables
 
 ```sql
