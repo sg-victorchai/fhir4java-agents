@@ -3966,3 +3966,2183 @@ volumes:
    - Add new search parameter YAML file - parameter becomes available
    - Verify new resource/parameters appear in CapabilityStatement
    - Disable interaction in config - interaction returns 405
+
+---
+
+## BDD API Testing with Cucumber
+
+### Overview
+
+The project uses Cucumber BDD framework for API testing with Gherkin syntax. This provides readable, business-focused test scenarios that serve as living documentation.
+
+### Test Module Structure
+
+```
+fhir4java-server/
+└── src/
+    └── test/
+        ├── java/
+        │   └── com/fhir4java/
+        │       └── bdd/
+        │           ├── CucumberTestRunner.java
+        │           ├── SpringIntegrationTest.java
+        │           ├── steps/
+        │           │   ├── CommonSteps.java
+        │           │   ├── PatientSteps.java
+        │           │   ├── ObservationSteps.java
+        │           │   ├── SearchSteps.java
+        │           │   ├── HistorySteps.java
+        │           │   ├── ValidationSteps.java
+        │           │   ├── CacheSteps.java
+        │           │   └── SecuritySteps.java
+        │           └── context/
+        │               └── TestContext.java
+        └── resources/
+            ├── features/
+            │   ├── patient/
+            │   │   ├── patient-crud.feature
+            │   │   ├── patient-search.feature
+            │   │   └── patient-history.feature
+            │   ├── observation/
+            │   │   ├── observation-crud.feature
+            │   │   └── observation-search.feature
+            │   ├── search/
+            │   │   ├── common-search-parameters.feature
+            │   │   ├── search-modifiers.feature
+            │   │   └── search-pagination.feature
+            │   ├── cache/
+            │   │   ├── resource-cache.feature
+            │   │   ├── search-cache.feature
+            │   │   └── cache-invalidation.feature
+            │   ├── validation/
+            │   │   ├── profile-validation.feature
+            │   │   └── resource-validation.feature
+            │   ├── security/
+            │   │   ├── authentication.feature
+            │   │   └── authorization.feature
+            │   └── metadata/
+            │       └── capability-statement.feature
+            ├── test-data/
+            │   ├── patients/
+            │   │   ├── valid-patient.json
+            │   │   ├── invalid-patient.json
+            │   │   └── patient-us-core.json
+            │   └── observations/
+            │       ├── valid-observation.json
+            │       └── vital-signs-observation.json
+            └── application-test.yml
+```
+
+### Maven Dependencies
+
+Add to `fhir4java-server/pom.xml`:
+
+```xml
+<!-- BDD Testing Dependencies -->
+<dependency>
+    <groupId>io.cucumber</groupId>
+    <artifactId>cucumber-java</artifactId>
+    <version>7.18.0</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>io.cucumber</groupId>
+    <artifactId>cucumber-spring</artifactId>
+    <version>7.18.0</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>io.cucumber</groupId>
+    <artifactId>cucumber-junit-platform-engine</artifactId>
+    <version>7.18.0</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.junit.platform</groupId>
+    <artifactId>junit-platform-suite</artifactId>
+    <version>1.10.2</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>io.rest-assured</groupId>
+    <artifactId>rest-assured</artifactId>
+    <version>5.4.0</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.testcontainers</groupId>
+    <artifactId>postgresql</artifactId>
+    <version>1.19.8</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>com.redis</groupId>
+    <artifactId>testcontainers-redis</artifactId>
+    <version>2.0.1</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.awaitility</groupId>
+    <artifactId>awaitility</artifactId>
+    <version>4.2.1</version>
+    <scope>test</scope>
+</dependency>
+```
+
+### Test Runner Configuration
+
+**File: `CucumberTestRunner.java`**
+```java
+package com.fhir4java.bdd;
+
+import org.junit.platform.suite.api.ConfigurationParameter;
+import org.junit.platform.suite.api.IncludeEngines;
+import org.junit.platform.suite.api.SelectClasspathResource;
+import org.junit.platform.suite.api.Suite;
+
+import static io.cucumber.junit.platform.engine.Constants.*;
+
+@Suite
+@IncludeEngines("cucumber")
+@SelectClasspathResource("features")
+@ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "pretty, html:target/cucumber-reports/cucumber.html, json:target/cucumber-reports/cucumber.json")
+@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = "com.fhir4java.bdd.steps")
+@ConfigurationParameter(key = FILTER_TAGS_PROPERTY_NAME, value = "not @ignore")
+public class CucumberTestRunner {
+}
+```
+
+**File: `SpringIntegrationTest.java`**
+```java
+package com.fhir4java.bdd;
+
+import com.redis.testcontainers.RedisContainer;
+import io.cucumber.spring.CucumberContextConfiguration;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@CucumberContextConfiguration
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
+@Testcontainers
+public class SpringIntegrationTest {
+
+    @LocalServerPort
+    protected int port;
+
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+            .withDatabaseName("fhir4java_test")
+            .withUsername("test")
+            .withPassword("test");
+
+    @Container
+    static RedisContainer redis = new RedisContainer(
+            RedisContainer.DEFAULT_IMAGE_NAME.withTag("7.2-alpine"));
+
+    @DynamicPropertySource
+    static void configureProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.data.redis.host", redis::getHost);
+        registry.add("spring.data.redis.port", redis::getFirstMappedPort);
+    }
+}
+```
+
+**File: `TestContext.java`**
+```java
+package com.fhir4java.bdd.context;
+
+import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Component
+public class TestContext {
+    private Response response;
+    private RequestSpecification request;
+    private String authToken;
+    private Map<String, String> createdResources = new HashMap<>();
+    private String currentResourceType;
+    private String currentResourceId;
+    private Map<String, Object> scenarioData = new HashMap<>();
+
+    // Getters and setters
+    public Response getResponse() { return response; }
+    public void setResponse(Response response) { this.response = response; }
+
+    public RequestSpecification getRequest() { return request; }
+    public void setRequest(RequestSpecification request) { this.request = request; }
+
+    public String getAuthToken() { return authToken; }
+    public void setAuthToken(String authToken) { this.authToken = authToken; }
+
+    public void addCreatedResource(String resourceType, String id) {
+        createdResources.put(resourceType + "/" + id, id);
+        this.currentResourceType = resourceType;
+        this.currentResourceId = id;
+    }
+
+    public String getCurrentResourceId() { return currentResourceId; }
+    public String getCurrentResourceType() { return currentResourceType; }
+    public Map<String, String> getCreatedResources() { return createdResources; }
+
+    public void setScenarioData(String key, Object value) { scenarioData.put(key, value); }
+    public Object getScenarioData(String key) { return scenarioData.get(key); }
+    public <T> T getScenarioData(String key, Class<T> type) { return type.cast(scenarioData.get(key)); }
+
+    public void reset() {
+        response = null;
+        request = null;
+        currentResourceId = null;
+        currentResourceType = null;
+        scenarioData.clear();
+    }
+}
+```
+
+---
+
+### Feature Files
+
+#### 1. Patient CRUD Operations
+
+**File: `features/patient/patient-crud.feature`**
+```gherkin
+@patient @crud
+Feature: Patient CRUD Operations
+  As a healthcare application
+  I want to perform CRUD operations on Patient resources
+  So that I can manage patient demographic information
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  @create @smoke
+  Scenario: Create a new Patient resource
+    Given I have a valid Patient resource
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 201
+    And the response should contain a "Patient" resource
+    And the response should have a "Location" header
+    And the resource should have an "id" element
+    And the resource should have a "meta.versionId" element
+    And the resource should have a "meta.lastUpdated" element
+
+  @create
+  Scenario: Create Patient with client-assigned ID using PUT
+    Given I have a valid Patient resource with id "patient-12345"
+    When I send a PUT request to "/fhir/r5/Patient/patient-12345"
+    Then the response status code should be 201
+    And the resource id should be "patient-12345"
+
+  @read @smoke
+  Scenario: Read an existing Patient resource
+    Given a Patient resource exists in the system
+    When I send a GET request to "/fhir/r5/Patient/{id}"
+    Then the response status code should be 200
+    And the response should contain a "Patient" resource
+    And the response should have "ETag" header with version
+
+  @read
+  Scenario: Read a non-existent Patient resource
+    When I send a GET request to "/fhir/r5/Patient/non-existent-id"
+    Then the response status code should be 404
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should have severity "error"
+    And the OperationOutcome should have code "not-found"
+
+  @vread
+  Scenario: Read a specific version of a Patient resource
+    Given a Patient resource exists with multiple versions
+    When I send a GET request to "/fhir/r5/Patient/{id}/_history/1"
+    Then the response status code should be 200
+    And the resource version should be "1"
+
+  @update @smoke
+  Scenario: Update an existing Patient resource
+    Given a Patient resource exists in the system
+    And I modify the Patient family name to "UpdatedName"
+    When I send a PUT request to "/fhir/r5/Patient/{id}"
+    Then the response status code should be 200
+    And the resource family name should be "UpdatedName"
+    And the resource version should be incremented
+
+  @update
+  Scenario: Update with version conflict (optimistic locking)
+    Given a Patient resource exists in the system
+    And another client has updated the resource
+    When I send a PUT request with outdated If-Match header
+    Then the response status code should be 409
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should have code "conflict"
+
+  @update
+  Scenario: Conditional update - resource exists
+    Given a Patient resource exists with identifier "MRN|12345"
+    And I have an updated Patient resource
+    When I send a PUT request to "/fhir/r5/Patient?identifier=MRN|12345"
+    Then the response status code should be 200
+    And the existing resource should be updated
+
+  @update
+  Scenario: Conditional update - resource does not exist
+    Given no Patient exists with identifier "MRN|99999"
+    And I have a valid Patient resource with identifier "MRN|99999"
+    When I send a PUT request to "/fhir/r5/Patient?identifier=MRN|99999"
+    Then the response status code should be 201
+    And a new resource should be created
+
+  @patch
+  Scenario: Patch a Patient resource using JSON Patch
+    Given a Patient resource exists in the system
+    When I send a PATCH request with JSON Patch operations:
+      | op      | path          | value       |
+      | replace | /name/0/given | ["Modified"] |
+    Then the response status code should be 200
+    And the Patient given name should be "Modified"
+
+  @patch
+  Scenario: Patch a Patient resource using FHIR Patch
+    Given a Patient resource exists in the system
+    When I send a PATCH request with FHIR Patch Parameters:
+      """
+      {
+        "resourceType": "Parameters",
+        "parameter": [
+          {
+            "name": "operation",
+            "part": [
+              { "name": "type", "valueCode": "replace" },
+              { "name": "path", "valueString": "Patient.active" },
+              { "name": "value", "valueBoolean": false }
+            ]
+          }
+        ]
+      }
+      """
+    Then the response status code should be 200
+    And the Patient active status should be false
+
+  @delete @smoke
+  Scenario: Delete a Patient resource
+    Given a Patient resource exists in the system
+    When I send a DELETE request to "/fhir/r5/Patient/{id}"
+    Then the response status code should be 204
+    And the resource should not be retrievable
+    And the resource should be available in history
+
+  @delete
+  Scenario: Delete a non-existent Patient resource
+    When I send a DELETE request to "/fhir/r5/Patient/non-existent-id"
+    Then the response status code should be 204
+
+  @delete
+  Scenario: Conditional delete
+    Given a Patient resource exists with identifier "MRN|to-delete"
+    When I send a DELETE request to "/fhir/r5/Patient?identifier=MRN|to-delete"
+    Then the response status code should be 204
+    And no Patient should exist with identifier "MRN|to-delete"
+```
+
+#### 2. Patient Search Operations
+
+**File: `features/patient/patient-search.feature`**
+```gherkin
+@patient @search
+Feature: Patient Search Operations
+  As a healthcare application
+  I want to search for Patient resources using various parameters
+  So that I can find patients matching specific criteria
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the following Patients exist:
+      | id         | family    | given   | birthDate  | gender | identifier     | active |
+      | patient-1  | Smith     | John    | 1980-01-15 | male   | MRN\|12345     | true   |
+      | patient-2  | Smith     | Jane    | 1985-06-20 | female | MRN\|12346     | true   |
+      | patient-3  | Johnson   | Robert  | 1990-03-10 | male   | MRN\|12347     | true   |
+      | patient-4  | Williams  | Sarah   | 1975-11-30 | female | MRN\|12348     | false  |
+      | patient-5  | Brown     | Michael | 2000-07-04 | male   | MRN\|12349     | true   |
+
+  @smoke
+  Scenario: Search patients by family name
+    When I search for Patients with parameter "family" = "Smith"
+    Then the response status code should be 200
+    And the response should be a Bundle of type "searchset"
+    And the Bundle should contain 2 entries
+    And all entries should have family name "Smith"
+
+  Scenario: Search patients by family name with exact modifier
+    When I search for Patients with parameter "family:exact" = "Smith"
+    Then the Bundle should contain 2 entries
+
+  Scenario: Search patients by family name with contains modifier
+    When I search for Patients with parameter "family:contains" = "mit"
+    Then the Bundle should contain 2 entries
+
+  Scenario: Search patients by given name
+    When I search for Patients with parameter "given" = "John"
+    Then the Bundle should contain 1 entry
+    And the entry should have given name "John"
+
+  Scenario: Search patients by name (any part)
+    When I search for Patients with parameter "name" = "Smith"
+    Then the Bundle should contain 2 entries
+
+  @smoke
+  Scenario: Search patients by birthdate
+    When I search for Patients with parameter "birthdate" = "1980-01-15"
+    Then the Bundle should contain 1 entry
+    And the entry should have birthDate "1980-01-15"
+
+  Scenario: Search patients by birthdate range - greater than
+    When I search for Patients with parameter "birthdate" = "gt1990-01-01"
+    Then the Bundle should contain 2 entries
+    And all entries should have birthDate after "1990-01-01"
+
+  Scenario: Search patients by birthdate range - less than or equal
+    When I search for Patients with parameter "birthdate" = "le1985-06-20"
+    Then the Bundle should contain 3 entries
+
+  Scenario: Search patients by birthdate range - between dates
+    When I search for Patients with parameters:
+      | parameter | value            |
+      | birthdate | ge1980-01-01     |
+      | birthdate | le1990-12-31     |
+    Then the Bundle should contain 3 entries
+
+  @smoke
+  Scenario: Search patients by gender
+    When I search for Patients with parameter "gender" = "male"
+    Then the Bundle should contain 3 entries
+    And all entries should have gender "male"
+
+  @smoke
+  Scenario: Search patients by identifier
+    When I search for Patients with parameter "identifier" = "MRN|12345"
+    Then the Bundle should contain 1 entry
+    And the entry should have identifier system "MRN" and value "12345"
+
+  Scenario: Search patients by identifier system only
+    When I search for Patients with parameter "identifier" = "MRN|"
+    Then the Bundle should contain 5 entries
+
+  Scenario: Search patients by active status
+    When I search for Patients with parameter "active" = "true"
+    Then the Bundle should contain 4 entries
+    And all entries should have active status true
+
+  Scenario: Search with multiple parameters (AND logic)
+    When I search for Patients with parameters:
+      | parameter | value  |
+      | family    | Smith  |
+      | gender    | female |
+    Then the Bundle should contain 1 entry
+    And the entry should have family name "Smith"
+    And the entry should have gender "female"
+
+  Scenario: Search with missing modifier
+    When I search for Patients with parameter "organization:missing" = "true"
+    Then all entries should not have managingOrganization
+
+  Scenario: Search with not modifier
+    When I search for Patients with parameter "gender:not" = "male"
+    Then all entries should have gender "female"
+
+  Scenario: Search returns empty bundle when no matches
+    When I search for Patients with parameter "family" = "NonExistentName"
+    Then the response status code should be 200
+    And the Bundle should contain 0 entries
+
+  Scenario: Search with invalid parameter returns error
+    When I search for Patients with parameter "invalid_param" = "value"
+    Then the response status code should be 400
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should indicate invalid search parameter
+```
+
+#### 3. Common Search Parameters
+
+**File: `features/search/common-search-parameters.feature`**
+```gherkin
+@search @common-params
+Feature: Common FHIR Search Parameters
+  As a healthcare application
+  I want to use common search parameters across all resource types
+  So that I can query resources using standard FHIR mechanisms
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  @_id @smoke
+  Scenario: Search by _id parameter
+    Given a Patient resource exists with id "test-patient-001"
+    When I search for Patients with parameter "_id" = "test-patient-001"
+    Then the Bundle should contain 1 entry
+    And the entry id should be "test-patient-001"
+
+  Scenario: Search by multiple _id values
+    Given Patients exist with ids "patient-a", "patient-b", "patient-c"
+    When I search for Patients with parameter "_id" = "patient-a,patient-b"
+    Then the Bundle should contain 2 entries
+
+  @_lastUpdated
+  Scenario: Search by _lastUpdated - exact match
+    Given a Patient was last updated at "2024-01-15T10:30:00Z"
+    When I search for Patients with parameter "_lastUpdated" = "2024-01-15T10:30:00Z"
+    Then the Bundle should contain the matching Patient
+
+  Scenario: Search by _lastUpdated - greater than
+    Given resources were updated at various times
+    When I search for Patients with parameter "_lastUpdated" = "gt2024-01-01"
+    Then the Bundle should contain resources updated after "2024-01-01"
+
+  @_tag
+  Scenario: Search by _tag parameter
+    Given a Patient exists with tag "http://example.org/tags|important"
+    When I search for Patients with parameter "_tag" = "http://example.org/tags|important"
+    Then the Bundle should contain the tagged Patient
+
+  Scenario: Search by _tag code only
+    Given a Patient exists with tag "http://example.org/tags|important"
+    When I search for Patients with parameter "_tag" = "important"
+    Then the Bundle should contain the tagged Patient
+
+  @_profile
+  Scenario: Search by _profile parameter
+    Given a Patient exists claiming profile "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"
+    When I search for Patients with parameter "_profile" = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"
+    Then the Bundle should contain the profiled Patient
+
+  @_security
+  Scenario: Search by _security label
+    Given a Patient exists with security label "http://terminology.hl7.org/CodeSystem/v3-Confidentiality|R"
+    When I search for Patients with parameter "_security" = "http://terminology.hl7.org/CodeSystem/v3-Confidentiality|R"
+    Then the Bundle should contain the labeled Patient
+
+  @_source
+  Scenario: Search by _source parameter
+    Given a Patient exists with source "http://hospital.example.org/ehr"
+    When I search for Patients with parameter "_source" = "http://hospital.example.org/ehr"
+    Then the Bundle should contain the sourced Patient
+```
+
+#### 4. Search Pagination and Sorting
+
+**File: `features/search/search-pagination.feature`**
+```gherkin
+@search @pagination
+Feature: Search Pagination and Sorting
+  As a healthcare application
+  I want to paginate and sort search results
+  So that I can efficiently navigate large result sets
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And 50 Patient resources exist in the system
+
+  @_count @smoke
+  Scenario: Limit search results with _count
+    When I search for Patients with parameter "_count" = "10"
+    Then the Bundle should contain exactly 10 entries
+    And the Bundle should have a "next" link
+
+  Scenario: Default page size is applied
+    When I search for all Patients
+    Then the Bundle should contain at most the default page size entries
+
+  @_offset
+  Scenario: Paginate with _offset
+    When I search for Patients with parameters:
+      | parameter | value |
+      | _count    | 10    |
+      | _offset   | 20    |
+    Then the Bundle should contain results starting from position 21
+
+  Scenario: Navigate using Bundle links
+    Given I search for Patients with parameter "_count" = "10"
+    When I follow the "next" link in the Bundle
+    Then I should receive the next page of results
+    And the Bundle should have a "previous" link
+
+  @_sort @smoke
+  Scenario: Sort results by family name ascending
+    When I search for Patients with parameter "_sort" = "family"
+    Then the results should be sorted by family name in ascending order
+
+  Scenario: Sort results by family name descending
+    When I search for Patients with parameter "_sort" = "-family"
+    Then the results should be sorted by family name in descending order
+
+  Scenario: Sort by multiple fields
+    When I search for Patients with parameter "_sort" = "family,-birthdate"
+    Then the results should be sorted by family ascending, then birthdate descending
+
+  Scenario: Sort by _lastUpdated
+    When I search for Patients with parameter "_sort" = "-_lastUpdated"
+    Then the results should be sorted by most recently updated first
+
+  @_total
+  Scenario: Request total count with _total=accurate
+    When I search for Patients with parameter "_total" = "accurate"
+    Then the Bundle should have a "total" element with accurate count
+
+  Scenario: Request estimated count with _total=estimate
+    When I search for Patients with parameter "_total" = "estimate"
+    Then the Bundle should have a "total" element
+
+  Scenario: Disable total count with _total=none
+    When I search for Patients with parameter "_total" = "none"
+    Then the Bundle should not have a "total" element
+```
+
+#### 5. Search Includes
+
+**File: `features/search/search-includes.feature`**
+```gherkin
+@search @include
+Feature: Search Include and RevInclude
+  As a healthcare application
+  I want to include related resources in search results
+  So that I can reduce the number of API calls
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  @_include @smoke
+  Scenario: Include referenced Organization in Patient search
+    Given a Patient exists with a managingOrganization reference
+    When I search for Patients with parameter "_include" = "Patient:organization"
+    Then the Bundle should contain the Patient
+    And the Bundle should contain the referenced Organization
+    And the Organization entry should have search mode "include"
+
+  Scenario: Include multiple reference types
+    Given a Patient exists with organization and general-practitioner references
+    When I search for Patients with parameters:
+      | parameter | value                          |
+      | _include  | Patient:organization           |
+      | _include  | Patient:general-practitioner   |
+    Then the Bundle should contain all referenced resources
+
+  Scenario: Recursive include with _include:iterate
+    Given an Organization with a partOf reference to another Organization
+    When I search for Organizations with parameter "_include:iterate" = "Organization:partof"
+    Then the Bundle should contain the entire Organization hierarchy
+
+  @_revinclude
+  Scenario: Reverse include Observations for Patient
+    Given a Patient exists with related Observations
+    When I search for Patients with parameter "_revinclude" = "Observation:patient"
+    Then the Bundle should contain the Patient
+    And the Bundle should contain the related Observations
+    And the Observation entries should have search mode "include"
+
+  Scenario: Include with specific target type
+    Given a Patient with generalPractitioner referencing both Practitioner and Organization
+    When I search for Patients with parameter "_include" = "Patient:general-practitioner:Practitioner"
+    Then the Bundle should only include Practitioner resources, not Organizations
+```
+
+#### 6. Cache Operations
+
+**File: `features/cache/resource-cache.feature`**
+```gherkin
+@cache @resource-cache
+Feature: Resource Cache Operations
+  As a FHIR server
+  I want to cache frequently accessed resources
+  So that I can improve read performance and reduce database load
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the cache is cleared
+
+  @l1-cache @smoke
+  Scenario: First read populates L1 local cache
+    Given a Patient resource exists with id "cache-test-001"
+    When I read the Patient "cache-test-001"
+    Then the response status code should be 200
+    And the resource should be stored in L1 local cache
+    And the cache key should be "Patient/cache-test-001"
+
+  Scenario: Second read serves from L1 local cache
+    Given a Patient resource exists with id "cache-test-002"
+    And I have read the Patient "cache-test-002" once
+    When I read the Patient "cache-test-002" again
+    Then the response should be served from L1 cache
+    And the response time should be less than 5 milliseconds
+    And no database query should be executed
+
+  @l2-cache @smoke
+  Scenario: L1 cache miss falls back to L2 Redis cache
+    Given a Patient resource exists with id "cache-test-003"
+    And the resource is in L2 Redis cache but not L1
+    When I read the Patient "cache-test-003"
+    Then the response should be served from L2 Redis cache
+    And the resource should be populated in L1 cache
+    And the response time should be less than 10 milliseconds
+
+  Scenario: Cache miss queries database and populates both caches
+    Given a Patient resource exists with id "cache-test-004"
+    And the resource is not in any cache
+    When I read the Patient "cache-test-004"
+    Then a database query should be executed
+    And the resource should be stored in L1 local cache
+    And the resource should be stored in L2 Redis cache
+
+  @cache-headers
+  Scenario: Response includes cache-related headers
+    Given a Patient resource exists with id "cache-test-005"
+    When I read the Patient "cache-test-005"
+    Then the response should have "ETag" header
+    And the response should have "Last-Modified" header
+    And the response should have "Cache-Control" header
+
+  @conditional-read
+  Scenario: Conditional read with If-None-Match returns 304
+    Given a Patient resource exists with id "cache-test-006"
+    And I have the ETag from a previous read
+    When I read the Patient "cache-test-006" with If-None-Match header
+    Then the response status code should be 304
+    And the response body should be empty
+
+  Scenario: Conditional read with changed resource returns 200
+    Given a Patient resource exists with id "cache-test-007"
+    And I have an outdated ETag
+    When I read the Patient "cache-test-007" with If-None-Match header
+    Then the response status code should be 200
+    And the response should contain the updated resource
+
+  @cache-ttl
+  Scenario: L1 cache expires after configured TTL
+    Given a Patient resource exists with id "cache-test-008"
+    And L1 cache TTL is configured to 60 seconds
+    And the resource has been cached for 61 seconds
+    When I read the Patient "cache-test-008"
+    Then the L1 cache should have expired
+    And the resource should be fetched from L2 or database
+
+  Scenario: L2 Redis cache expires after configured TTL
+    Given a Patient resource exists with id "cache-test-009"
+    And L2 Redis cache TTL is configured to 300 seconds
+    And the resource has been in Redis cache for 301 seconds
+    When I read the Patient "cache-test-009"
+    Then the L2 cache should have expired
+    And a database query should be executed
+
+  @vread-cache
+  Scenario: Version read (vread) is cached separately
+    Given a Patient resource exists with id "cache-test-010" and version "2"
+    When I read version 1 of the Patient "cache-test-010"
+    And I read version 2 of the Patient "cache-test-010"
+    Then both versions should be cached separately
+    And cache key for version 1 should be "Patient/cache-test-010/_history/1"
+    And cache key for version 2 should be "Patient/cache-test-010/_history/2"
+```
+
+**File: `features/cache/search-cache.feature`**
+```gherkin
+@cache @search-cache
+Feature: Search Result Cache Operations
+  As a FHIR server
+  I want to cache search results for common queries
+  So that I can improve search performance for repeated queries
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the cache is cleared
+    And the following Patients exist:
+      | id         | family    | given   | gender |
+      | search-p1  | Smith     | John    | male   |
+      | search-p2  | Smith     | Jane    | female |
+      | search-p3  | Johnson   | Robert  | male   |
+
+  @smoke
+  Scenario: Search results are cached
+    When I search for Patients with parameter "family" = "Smith"
+    Then the response status code should be 200
+    And the search result should be cached
+    And the cache key should include "search:Patient?family=Smith"
+
+  Scenario: Repeated search serves from cache
+    Given I have searched for Patients with parameter "family" = "Smith"
+    When I search for Patients with parameter "family" = "Smith" again
+    Then the response should be served from search cache
+    And no database query should be executed
+
+  Scenario: Search cache key is deterministic regardless of parameter order
+    When I search for Patients with parameters:
+      | parameter | value  |
+      | family    | Smith  |
+      | gender    | male   |
+    And I search for Patients with parameters:
+      | parameter | value  |
+      | gender    | male   |
+      | family    | Smith  |
+    Then both searches should use the same cache key
+    And the second search should be served from cache
+
+  @cache-size-limit
+  Scenario: Large search results are not cached
+    Given 200 Patient resources exist in the system
+    When I search for all Patients without pagination
+    Then the search result should NOT be cached
+    And a warning should be logged about result size
+
+  Scenario: Search results within size limit are cached
+    When I search for Patients with parameter "_count" = "50"
+    Then the search result should be cached
+
+  @search-cache-ttl
+  Scenario: Search cache expires after configured TTL
+    Given search cache TTL is configured to 300 seconds
+    And I have cached a search for "family=Smith" 301 seconds ago
+    When I search for Patients with parameter "family" = "Smith"
+    Then the search cache should have expired
+    And a fresh database query should be executed
+    And the new result should be cached
+
+  @cache-miss
+  Scenario: Different search parameters result in cache miss
+    Given I have searched for Patients with parameter "family" = "Smith"
+    When I search for Patients with parameter "family" = "Johnson"
+    Then the search should NOT be served from cache
+    And a database query should be executed
+
+  @pagination-cache
+  Scenario: Each page of search results is cached separately
+    Given 50 Patient resources exist
+    When I search for Patients with "_count=10&_offset=0"
+    And I search for Patients with "_count=10&_offset=10"
+    Then each page should be cached with its own key
+    And page 1 cache key should include "_offset=0"
+    And page 2 cache key should include "_offset=10"
+```
+
+**File: `features/cache/cache-invalidation.feature`**
+```gherkin
+@cache @cache-invalidation
+Feature: Cache Invalidation
+  As a FHIR server
+  I want to invalidate cached resources when they are modified
+  So that clients always receive current data
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the cache is cleared
+
+  @update-invalidation @smoke
+  Scenario: Update invalidates resource cache
+    Given a Patient resource exists with id "inv-test-001"
+    And the Patient "inv-test-001" is cached in L1 and L2
+    When I update the Patient "inv-test-001"
+    Then the response status code should be 200
+    And the L1 cache for "Patient/inv-test-001" should be invalidated
+    And the L2 Redis cache for "Patient/inv-test-001" should be invalidated
+
+  Scenario: Update populates cache with new version
+    Given a Patient resource exists with id "inv-test-002"
+    And the Patient "inv-test-002" is cached
+    When I update the Patient "inv-test-002" with new family name "NewName"
+    Then the cache should contain the updated resource
+    And subsequent reads should return the updated resource
+
+  @delete-invalidation @smoke
+  Scenario: Delete invalidates resource cache
+    Given a Patient resource exists with id "inv-test-003"
+    And the Patient "inv-test-003" is cached in L1 and L2
+    When I delete the Patient "inv-test-003"
+    Then the response status code should be 204
+    And the L1 cache for "Patient/inv-test-003" should be invalidated
+    And the L2 Redis cache for "Patient/inv-test-003" should be invalidated
+
+  @patch-invalidation
+  Scenario: Patch invalidates resource cache
+    Given a Patient resource exists with id "inv-test-004"
+    And the Patient "inv-test-004" is cached
+    When I patch the Patient "inv-test-004" to change active status
+    Then the response status code should be 200
+    And the cache should be invalidated
+    And the cache should be repopulated with patched resource
+
+  @search-cache-invalidation @smoke
+  Scenario: Create invalidates related search caches
+    Given the following Patients exist:
+      | id        | family | given |
+      | inv-p1    | Smith  | John  |
+      | inv-p2    | Smith  | Jane  |
+    And I have cached a search for "family=Smith" returning 2 results
+    When I create a new Patient with family name "Smith"
+    Then the search cache for "family=Smith" should be invalidated
+    And subsequent search should return 3 results
+
+  Scenario: Update invalidates related search caches
+    Given a Patient "inv-test-005" exists with family "Jones"
+    And I have cached a search for "family=Jones"
+    And I have cached a search for "family=Smith"
+    When I update Patient "inv-test-005" to have family "Smith"
+    Then the search cache for "family=Jones" should be invalidated
+    And the search cache for "family=Smith" should be invalidated
+
+  Scenario: Delete invalidates related search caches
+    Given a Patient "inv-test-006" exists with family "Williams"
+    And I have cached a search for "family=Williams"
+    When I delete Patient "inv-test-006"
+    Then the search cache for "family=Williams" should be invalidated
+
+  @cascade-invalidation
+  Scenario: Invalidation cascades to related resource caches
+    Given a Patient "inv-test-007" exists
+    And Observations exist referencing Patient "inv-test-007"
+    And I have cached searches including Patient "inv-test-007"
+    When I update Patient "inv-test-007"
+    Then all related search caches should be invalidated
+
+  @bulk-invalidation
+  Scenario: Bulk update invalidates multiple cache entries
+    Given Patients "bulk-1", "bulk-2", "bulk-3" exist and are cached
+    When I perform a bulk update on all three Patients
+    Then all three Patient caches should be invalidated
+    And all three should be repopulated with updated data
+
+  @concurrent-invalidation
+  Scenario: Concurrent updates properly invalidate cache
+    Given a Patient "inv-test-008" exists and is cached
+    When two concurrent updates are made to Patient "inv-test-008"
+    Then the cache should reflect the final state
+    And no stale data should be served
+
+  @cache-stampede-prevention
+  Scenario: Cache stampede prevention on invalidation
+    Given a frequently accessed Patient "inv-test-009" is cached
+    And 100 concurrent read requests are in flight
+    When the cache is invalidated
+    Then only one database query should be executed
+    And all requests should receive the refreshed data
+
+  @cross-node-invalidation
+  Scenario: Cache invalidation propagates across cluster nodes
+    Given the FHIR server runs in a 3-node cluster
+    And a Patient "inv-test-010" is cached on all nodes
+    When node 1 updates Patient "inv-test-010"
+    Then the cache on node 2 should be invalidated
+    And the cache on node 3 should be invalidated
+    And all nodes should serve the updated resource
+```
+
+#### 7. History Operations
+
+**File: `features/patient/patient-history.feature`**
+```gherkin
+@patient @history
+Feature: Patient History Operations
+  As a healthcare application
+  I want to retrieve the history of Patient resources
+  So that I can track changes over time
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  @instance-history @smoke
+  Scenario: Get history of a specific Patient
+    Given a Patient resource with id "patient-hist-001" has been updated 3 times
+    When I send a GET request to "/fhir/r5/Patient/patient-hist-001/_history"
+    Then the response status code should be 200
+    And the response should be a Bundle of type "history"
+    And the Bundle should contain 4 entries
+    And entries should be ordered by version descending
+
+  Scenario: Get specific version from history
+    Given a Patient with id "patient-hist-002" has version 2
+    When I send a GET request to "/fhir/r5/Patient/patient-hist-002/_history/2"
+    Then the response status code should be 200
+    And the resource version should be "2"
+
+  Scenario: History includes deleted resources
+    Given a Patient "patient-hist-003" was created then deleted
+    When I send a GET request to "/fhir/r5/Patient/patient-hist-003/_history"
+    Then the Bundle should contain a deleted entry
+    And the deleted entry should have request method "DELETE"
+
+  @type-history
+  Scenario: Get history of all Patients
+    When I send a GET request to "/fhir/r5/Patient/_history"
+    Then the response status code should be 200
+    And the response should be a Bundle of type "history"
+    And the Bundle should contain Patient history entries
+
+  Scenario: Filter history by _since parameter
+    Given Patients were modified at various times
+    When I send a GET request to "/fhir/r5/Patient/_history?_since=2024-01-01T00:00:00Z"
+    Then all entries should have lastUpdated after "2024-01-01T00:00:00Z"
+
+  Scenario: Filter history by _at parameter
+    When I send a GET request to "/fhir/r5/Patient/_history?_at=2024-01-15T12:00:00Z"
+    Then the Bundle should contain resource states at that point in time
+
+  Scenario: Paginate history results
+    Given a Patient has more than 10 versions
+    When I send a GET request to "/fhir/r5/Patient/{id}/_history?_count=5"
+    Then the Bundle should contain 5 entries
+    And the Bundle should have pagination links
+
+  @system-history
+  Scenario: Get system-level history
+    When I send a GET request to "/fhir/r5/_history"
+    Then the response status code should be 200
+    And the Bundle should contain history entries for all resource types
+```
+
+#### 8. Validation Feature
+
+**File: `features/validation/resource-validation.feature`**
+```gherkin
+@validation
+Feature: Resource Validation
+  As a healthcare application
+  I want resources to be validated before persistence
+  So that data integrity is maintained
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  @structure @smoke
+  Scenario: Reject resource with invalid structure
+    Given I have a Patient resource missing required elements
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 400
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should have severity "error"
+
+  Scenario: Reject resource with invalid data type
+    Given I have a Patient resource with birthDate "not-a-date"
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid date format
+
+  Scenario: Reject resource with invalid code value
+    Given I have a Patient resource with gender "invalid-gender"
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid code
+
+  @profile
+  Scenario: Validate against required profile
+    Given the server requires US Core Patient profile for Patient resources
+    And I have a Patient resource not conforming to US Core
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate profile violation
+
+  Scenario: Accept resource conforming to required profile
+    Given the server requires US Core Patient profile for Patient resources
+    And I have a Patient resource conforming to US Core
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 201
+
+  @validate-operation
+  Scenario: Validate resource without persisting using $validate
+    Given I have a Patient resource to validate
+    When I send a POST request to "/fhir/r5/Patient/$validate" with the resource
+    Then the response status code should be 200
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should indicate validation result
+
+  Scenario: Validate resource against specific profile
+    Given I have a Patient resource
+    When I send a POST request to "/fhir/r5/Patient/$validate?profile=http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"
+    Then the OperationOutcome should indicate conformance to US Core profile
+```
+
+#### 9. Authentication and Authorization
+
+**File: `features/security/authentication.feature`**
+```gherkin
+@security @authentication
+Feature: Authentication
+  As a healthcare application
+  I want the FHIR server to enforce authentication
+  So that only authenticated clients can access resources
+
+  Background:
+    Given the FHIR server is running
+    And I set the FHIR version to "R5"
+
+  @smoke
+  Scenario: Reject request without authentication
+    Given I am not authenticated
+    When I send a GET request to "/fhir/r5/Patient"
+    Then the response status code should be 401
+    And the response should contain WWW-Authenticate header
+
+  Scenario: Reject request with invalid token
+    Given I have an invalid JWT token
+    When I send a GET request to "/fhir/r5/Patient" with the token
+    Then the response status code should be 401
+    And the OperationOutcome should indicate authentication failure
+
+  Scenario: Reject request with expired token
+    Given I have an expired JWT token
+    When I send a GET request to "/fhir/r5/Patient" with the token
+    Then the response status code should be 401
+    And the OperationOutcome should indicate token expired
+
+  @smoke
+  Scenario: Accept request with valid token
+    Given I have a valid JWT token
+    When I send a GET request to "/fhir/r5/Patient" with the token
+    Then the response status code should not be 401
+
+  Scenario: Metadata endpoint is accessible without authentication
+    Given I am not authenticated
+    When I send a GET request to "/fhir/r5/metadata"
+    Then the response status code should be 200
+```
+
+**File: `features/security/authorization.feature`**
+```gherkin
+@security @authorization
+Feature: Authorization
+  As a healthcare application
+  I want the FHIR server to enforce authorization
+  So that clients can only access resources they are permitted to
+
+  Background:
+    Given the FHIR server is running
+    And I set the FHIR version to "R5"
+
+  @scope @smoke
+  Scenario: Reject read without patient read scope
+    Given I am authenticated without "patient/*.read" scope
+    When I send a GET request to "/fhir/r5/Patient/123"
+    Then the response status code should be 403
+    And the OperationOutcome should indicate insufficient scope
+
+  Scenario: Allow read with patient read scope
+    Given I am authenticated with "patient/Patient.read" scope
+    And a Patient resource exists
+    When I send a GET request to "/fhir/r5/Patient/{id}"
+    Then the response status code should be 200
+
+  Scenario: Reject write without write scope
+    Given I am authenticated with only "patient/Patient.read" scope
+    And I have a valid Patient resource
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 403
+
+  Scenario: Allow write with write scope
+    Given I am authenticated with "patient/Patient.write" scope
+    And I have a valid Patient resource
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 201
+
+  @compartment
+  Scenario: Enforce patient compartment access
+    Given I am authenticated with access to patient "patient-123" only
+    When I send a GET request to "/fhir/r5/Patient/patient-456"
+    Then the response status code should be 403
+
+  Scenario: Allow access within authorized compartment
+    Given I am authenticated with access to patient "patient-123" only
+    When I send a GET request to "/fhir/r5/Patient/patient-123"
+    Then the response status code should be 200
+
+  @search
+  Scenario: Search filters results to authorized resources
+    Given I am authenticated with access to patient "patient-123" only
+    And multiple Patients exist in the system
+    When I search for all Patients
+    Then the Bundle should only contain resources I am authorized to access
+```
+
+#### 10. Capability Statement
+
+**File: `features/metadata/capability-statement.feature`**
+```gherkin
+@metadata @capability
+Feature: Capability Statement
+  As a healthcare application
+  I want to retrieve the server's CapabilityStatement
+  So that I can discover supported features and resources
+
+  Background:
+    Given the FHIR server is running
+    And I set the FHIR version to "R5"
+
+  @smoke
+  Scenario: Retrieve CapabilityStatement via GET metadata
+    When I send a GET request to "/fhir/r5/metadata"
+    Then the response status code should be 200
+    And the response should contain a "CapabilityStatement" resource
+    And the CapabilityStatement fhirVersion should be "5.0.0"
+    And the CapabilityStatement status should be "active"
+    And the CapabilityStatement kind should be "instance"
+
+  Scenario: Retrieve CapabilityStatement via OPTIONS
+    When I send an OPTIONS request to "/fhir/r5"
+    Then the response status code should be 200
+    And the response should contain a "CapabilityStatement" resource
+
+  @resources
+  Scenario: CapabilityStatement lists all supported resources
+    When I retrieve the CapabilityStatement
+    Then the CapabilityStatement should list resource "Patient"
+    And the CapabilityStatement should list resource "Observation"
+    And each resource should list supported interactions
+
+  @interactions
+  Scenario: CapabilityStatement shows enabled interactions
+    Given Patient resource has read, create, update, delete enabled
+    When I retrieve the CapabilityStatement
+    Then the Patient resource should list interaction "read"
+    And the Patient resource should list interaction "create"
+    And the Patient resource should list interaction "update"
+    And the Patient resource should list interaction "delete"
+    And the Patient resource should list interaction "search-type"
+
+  @search-params
+  Scenario: CapabilityStatement lists search parameters
+    When I retrieve the CapabilityStatement
+    Then the Patient resource should list search parameter "family"
+    And the Patient resource should list search parameter "given"
+    And the Patient resource should list search parameter "birthdate"
+    And the Patient resource should list search parameter "_id"
+    And the Patient resource should list search parameter "_lastUpdated"
+
+  @operations
+  Scenario: CapabilityStatement lists extended operations
+    Given $validate operation is enabled for Patient
+    When I retrieve the CapabilityStatement
+    Then the Patient resource should list operation "$validate"
+
+  @formats
+  Scenario: CapabilityStatement indicates supported formats
+    When I retrieve the CapabilityStatement
+    Then the CapabilityStatement should list format "application/fhir+json"
+    And the CapabilityStatement should list format "application/fhir+xml"
+```
+
+---
+
+### Step Definitions
+
+**File: `CommonSteps.java`**
+```java
+package com.fhir4java.bdd.steps;
+
+import com.fhir4java.bdd.context.TestContext;
+import io.cucumber.java.Before;
+import io.cucumber.java.After;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.When;
+import io.cucumber.java.en.Then;
+import io.restassured.RestAssured;
+import io.restassured.http.ContentType;
+import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.web.server.LocalServerPort;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class CommonSteps {
+
+    @LocalServerPort
+    private int port;
+
+    @Autowired
+    private TestContext testContext;
+
+    private String baseUrl;
+
+    @Before
+    public void setUp() {
+        baseUrl = "http://localhost:" + port;
+        RestAssured.baseURI = baseUrl;
+        testContext.reset();
+    }
+
+    @After
+    public void tearDown() {
+        // Clean up created resources if needed
+    }
+
+    @Given("the FHIR server is running")
+    public void theFhirServerIsRunning() {
+        given()
+            .when()
+            .get("/actuator/health")
+            .then()
+            .statusCode(200);
+    }
+
+    @Given("I am authenticated with valid credentials")
+    public void iAmAuthenticatedWithValidCredentials() {
+        String token = generateTestToken("patient/*.read", "patient/*.write");
+        testContext.setAuthToken(token);
+    }
+
+    @Given("I am not authenticated")
+    public void iAmNotAuthenticated() {
+        testContext.setAuthToken(null);
+    }
+
+    @Given("I set the FHIR version to {string}")
+    public void iSetTheFhirVersionTo(String version) {
+        // Store version in context for URL construction
+    }
+
+    @When("I send a GET request to {string}")
+    public void iSendAGetRequestTo(String path) {
+        String resolvedPath = resolvePath(path);
+        RequestSpecification request = buildRequest();
+
+        Response response = request
+            .when()
+            .get(resolvedPath);
+
+        testContext.setResponse(response);
+    }
+
+    @When("I send a POST request to {string}")
+    public void iSendAPostRequestTo(String path) {
+        String resolvedPath = resolvePath(path);
+        RequestSpecification request = buildRequest();
+
+        Response response = request
+            .contentType("application/fhir+json")
+            .when()
+            .post(resolvedPath);
+
+        testContext.setResponse(response);
+    }
+
+    @When("I send a PUT request to {string}")
+    public void iSendAPutRequestTo(String path) {
+        String resolvedPath = resolvePath(path);
+        RequestSpecification request = buildRequest();
+
+        Response response = request
+            .contentType("application/fhir+json")
+            .when()
+            .put(resolvedPath);
+
+        testContext.setResponse(response);
+    }
+
+    @When("I send a DELETE request to {string}")
+    public void iSendADeleteRequestTo(String path) {
+        String resolvedPath = resolvePath(path);
+        RequestSpecification request = buildRequest();
+
+        Response response = request
+            .when()
+            .delete(resolvedPath);
+
+        testContext.setResponse(response);
+    }
+
+    @Then("the response status code should be {int}")
+    public void theResponseStatusCodeShouldBe(int statusCode) {
+        assertEquals(statusCode, testContext.getResponse().getStatusCode());
+    }
+
+    @Then("the response should contain a {string} resource")
+    public void theResponseShouldContainAResource(String resourceType) {
+        testContext.getResponse()
+            .then()
+            .body("resourceType", equalTo(resourceType));
+    }
+
+    @Then("the response should contain an {string} resource")
+    public void theResponseShouldContainAnResource(String resourceType) {
+        theResponseShouldContainAResource(resourceType);
+    }
+
+    @Then("the response should have a {string} header")
+    public void theResponseShouldHaveAHeader(String headerName) {
+        assertNotNull(testContext.getResponse().getHeader(headerName));
+    }
+
+    @Then("the resource should have an {string} element")
+    public void theResourceShouldHaveAnElement(String elementPath) {
+        testContext.getResponse()
+            .then()
+            .body(elementPath, notNullValue());
+    }
+
+    @Then("the resource should have a {string} element")
+    public void theResourceShouldHaveAElement(String elementPath) {
+        theResourceShouldHaveAnElement(elementPath);
+    }
+
+    @Then("the response should be a Bundle of type {string}")
+    public void theResponseShouldBeABundleOfType(String bundleType) {
+        testContext.getResponse()
+            .then()
+            .body("resourceType", equalTo("Bundle"))
+            .body("type", equalTo(bundleType));
+    }
+
+    @Then("the Bundle should contain {int} entries")
+    public void theBundleShouldContainEntries(int count) {
+        testContext.getResponse()
+            .then()
+            .body("entry.size()", equalTo(count));
+    }
+
+    @Then("the Bundle should contain {int} entry")
+    public void theBundleShouldContainEntry(int count) {
+        theBundleShouldContainEntries(count);
+    }
+
+    @Then("the Bundle should contain exactly {int} entries")
+    public void theBundleShouldContainExactlyEntries(int count) {
+        theBundleShouldContainEntries(count);
+    }
+
+    @Then("the OperationOutcome should have severity {string}")
+    public void theOperationOutcomeShouldHaveSeverity(String severity) {
+        testContext.getResponse()
+            .then()
+            .body("issue[0].severity", equalTo(severity));
+    }
+
+    @Then("the OperationOutcome should have code {string}")
+    public void theOperationOutcomeShouldHaveCode(String code) {
+        testContext.getResponse()
+            .then()
+            .body("issue[0].code", equalTo(code));
+    }
+
+    private RequestSpecification buildRequest() {
+        RequestSpecification request = given()
+            .accept("application/fhir+json");
+
+        if (testContext.getAuthToken() != null) {
+            request = request.header("Authorization", "Bearer " + testContext.getAuthToken());
+        }
+
+        return request;
+    }
+
+    private String resolvePath(String path) {
+        if (path.contains("{id}")) {
+            path = path.replace("{id}", testContext.getCurrentResourceId());
+        }
+        return path;
+    }
+
+    private String generateTestToken(String... scopes) {
+        // Generate JWT token for testing
+        return "test-token";
+    }
+}
+```
+
+**File: `CacheSteps.java`**
+```java
+package com.fhir4java.bdd.steps;
+
+import com.fhir4java.bdd.context.TestContext;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.When;
+import io.cucumber.java.en.Then;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
+import com.github.benmanes.caffeine.cache.Cache;
+
+import static io.restassured.RestAssured.given;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class CacheSteps {
+
+    @Autowired
+    private TestContext testContext;
+
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
+
+    @Autowired
+    private Cache<String, Object> localCache;
+
+    @Given("the cache is cleared")
+    public void theCacheIsCleared() {
+        localCache.invalidateAll();
+        redisTemplate.getConnectionFactory().getConnection().flushAll();
+    }
+
+    @Given("a Patient resource exists with id {string}")
+    public void aPatientResourceExistsWithId(String id) {
+        String patientJson = String.format("""
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "name": [{"family": "CacheTest", "given": ["Test"]}],
+                "gender": "male"
+            }
+            """, id);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .body(patientJson)
+            .when()
+            .put("/fhir/r5/Patient/" + id);
+
+        testContext.addCreatedResource("Patient", id);
+    }
+
+    @When("I read the Patient {string}")
+    public void iReadThePatient(String id) {
+        long startTime = System.currentTimeMillis();
+
+        var response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .when()
+            .get("/fhir/r5/Patient/" + id);
+
+        long endTime = System.currentTimeMillis();
+        testContext.setResponse(response);
+        testContext.setScenarioData("responseTime", endTime - startTime);
+    }
+
+    @Given("I have read the Patient {string} once")
+    public void iHaveReadThePatientOnce(String id) {
+        iReadThePatient(id);
+    }
+
+    @When("I read the Patient {string} again")
+    public void iReadThePatientAgain(String id) {
+        iReadThePatient(id);
+    }
+
+    @Then("the resource should be stored in L1 local cache")
+    public void theResourceShouldBeStoredInL1LocalCache() {
+        String cacheKey = "Patient/" + testContext.getCurrentResourceId();
+        assertNotNull(localCache.getIfPresent(cacheKey),
+            "Resource should be in L1 cache");
+    }
+
+    @Then("the cache key should be {string}")
+    public void theCacheKeyShouldBe(String expectedKey) {
+        String resolvedKey = expectedKey.replace("{id}", testContext.getCurrentResourceId());
+        assertNotNull(localCache.getIfPresent(resolvedKey),
+            "Cache key " + resolvedKey + " should exist");
+    }
+
+    @Then("the response should be served from L1 cache")
+    public void theResponseShouldBeServedFromL1Cache() {
+        // Verify via response time or cache hit metrics
+        Long responseTime = testContext.getScenarioData("responseTime", Long.class);
+        assertTrue(responseTime < 5, "Response should be fast when served from L1 cache");
+    }
+
+    @Then("the response time should be less than {int} milliseconds")
+    public void theResponseTimeShouldBeLessThanMilliseconds(int maxMs) {
+        Long responseTime = testContext.getScenarioData("responseTime", Long.class);
+        assertTrue(responseTime < maxMs,
+            String.format("Response time %dms should be less than %dms", responseTime, maxMs));
+    }
+
+    @Then("no database query should be executed")
+    public void noDatabaseQueryShouldBeExecuted() {
+        // Verify via metrics or trace logs
+        // This would typically check a query counter metric
+    }
+
+    @Given("the resource is in L2 Redis cache but not L1")
+    public void theResourceIsInL2RedisCacheButNotL1() {
+        String id = testContext.getCurrentResourceId();
+        String cacheKey = "Patient/" + id;
+
+        // Clear L1 but keep L2
+        localCache.invalidate(cacheKey);
+
+        // Verify L2 still has it
+        assertNotNull(redisTemplate.opsForValue().get(cacheKey),
+            "Resource should be in Redis cache");
+    }
+
+    @Then("the response should be served from L2 Redis cache")
+    public void theResponseShouldBeServedFromL2RedisCache() {
+        Long responseTime = testContext.getScenarioData("responseTime", Long.class);
+        assertTrue(responseTime < 10, "Response should be fast when served from L2 cache");
+    }
+
+    @Then("the resource should be populated in L1 cache")
+    public void theResourceShouldBePopulatedInL1Cache() {
+        theResourceShouldBeStoredInL1LocalCache();
+    }
+
+    @Given("the resource is not in any cache")
+    public void theResourceIsNotInAnyCache() {
+        String cacheKey = "Patient/" + testContext.getCurrentResourceId();
+        localCache.invalidate(cacheKey);
+        redisTemplate.delete(cacheKey);
+    }
+
+    @Then("a database query should be executed")
+    public void aDatabaseQueryShouldBeExecuted() {
+        // Verify via metrics - query count should increase
+    }
+
+    @Then("the resource should be stored in L2 Redis cache")
+    public void theResourceShouldBeStoredInL2RedisCache() {
+        String cacheKey = "Patient/" + testContext.getCurrentResourceId();
+        assertNotNull(redisTemplate.opsForValue().get(cacheKey),
+            "Resource should be in Redis cache");
+    }
+
+    @Given("the Patient {string} is cached in L1 and L2")
+    public void thePatientIsCachedInL1AndL2(String id) {
+        // Read the resource to populate caches
+        iReadThePatient(id);
+
+        // Verify both caches have it
+        String cacheKey = "Patient/" + id;
+        assertNotNull(localCache.getIfPresent(cacheKey));
+        assertNotNull(redisTemplate.opsForValue().get(cacheKey));
+    }
+
+    @When("I update the Patient {string}")
+    public void iUpdateThePatient(String id) {
+        String updatedJson = String.format("""
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "name": [{"family": "Updated", "given": ["Test"]}],
+                "gender": "male"
+            }
+            """, id);
+
+        var response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .body(updatedJson)
+            .when()
+            .put("/fhir/r5/Patient/" + id);
+
+        testContext.setResponse(response);
+    }
+
+    @Then("the L1 cache for {string} should be invalidated")
+    public void theL1CacheForShouldBeInvalidated(String cacheKey) {
+        assertNull(localCache.getIfPresent(cacheKey),
+            "L1 cache should be invalidated for " + cacheKey);
+    }
+
+    @Then("the L2 Redis cache for {string} should be invalidated")
+    public void theL2RedisCacheForShouldBeInvalidated(String cacheKey) {
+        assertNull(redisTemplate.opsForValue().get(cacheKey),
+            "L2 Redis cache should be invalidated for " + cacheKey);
+    }
+
+    @Given("I have cached a search for {string} returning {int} results")
+    public void iHaveCachedASearchForReturningResults(String searchParams, int resultCount) {
+        // Execute search to populate cache
+        String[] parts = searchParams.split("=");
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .queryParam(parts[0], parts[1])
+            .when()
+            .get("/fhir/r5/Patient");
+
+        testContext.setScenarioData("cachedSearchParams", searchParams);
+    }
+
+    @Then("the search cache for {string} should be invalidated")
+    public void theSearchCacheForShouldBeInvalidated(String searchParams) {
+        String cacheKey = "search:Patient?" + searchParams;
+        assertNull(redisTemplate.opsForValue().get(cacheKey),
+            "Search cache should be invalidated for " + searchParams);
+    }
+
+    @Then("the search result should be cached")
+    public void theSearchResultShouldBeCached() {
+        // Verify search result is in Redis cache
+        // The exact key format depends on implementation
+    }
+
+    @Then("the search result should NOT be cached")
+    public void theSearchResultShouldNotBeCached() {
+        // Verify search result is not in cache due to size
+    }
+
+    @Then("the cache should contain the updated resource")
+    public void theCacheShouldContainTheUpdatedResource() {
+        String cacheKey = "Patient/" + testContext.getCurrentResourceId();
+        Object cached = localCache.getIfPresent(cacheKey);
+        assertNotNull(cached, "Cache should contain updated resource");
+        // Could also verify the content matches the update
+    }
+
+    @Then("subsequent reads should return the updated resource")
+    public void subsequentReadsShouldReturnTheUpdatedResource() {
+        iReadThePatient(testContext.getCurrentResourceId());
+        testContext.getResponse()
+            .then()
+            .body("name[0].family", org.hamcrest.Matchers.equalTo("Updated"));
+    }
+}
+```
+
+**File: `PatientSteps.java`**
+```java
+package com.fhir4java.bdd.steps;
+
+import com.fhir4java.bdd.context.TestContext;
+import io.cucumber.datatable.DataTable;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.When;
+import io.cucumber.java.en.Then;
+import io.restassured.response.Response;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.util.List;
+import java.util.Map;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
+
+public class PatientSteps {
+
+    @Autowired
+    private TestContext testContext;
+
+    private String patientJson;
+
+    @Given("I have a valid Patient resource")
+    public void iHaveAValidPatientResource() {
+        patientJson = """
+            {
+                "resourceType": "Patient",
+                "name": [{
+                    "family": "TestFamily",
+                    "given": ["TestGiven"]
+                }],
+                "gender": "male",
+                "birthDate": "1990-01-15"
+            }
+            """;
+    }
+
+    @Given("I have a valid Patient resource with id {string}")
+    public void iHaveAValidPatientResourceWithId(String id) {
+        patientJson = String.format("""
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "name": [{
+                    "family": "TestFamily",
+                    "given": ["TestGiven"]
+                }],
+                "gender": "male",
+                "birthDate": "1990-01-15"
+            }
+            """, id);
+    }
+
+    @Given("a Patient resource exists in the system")
+    public void aPatientResourceExistsInTheSystem() {
+        iHaveAValidPatientResource();
+
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .body(patientJson)
+            .when()
+            .post("/fhir/r5/Patient");
+
+        String id = response.jsonPath().getString("id");
+        testContext.addCreatedResource("Patient", id);
+    }
+
+    @Given("the following Patients exist:")
+    public void theFollowingPatientsExist(DataTable dataTable) {
+        List<Map<String, String>> patients = dataTable.asMaps();
+
+        for (Map<String, String> patient : patients) {
+            String json = buildPatientJson(patient);
+
+            given()
+                .header("Authorization", "Bearer " + testContext.getAuthToken())
+                .contentType("application/fhir+json")
+                .body(json)
+                .when()
+                .put("/fhir/r5/Patient/" + patient.get("id"));
+
+            testContext.addCreatedResource("Patient", patient.get("id"));
+        }
+    }
+
+    @Given("I modify the Patient family name to {string}")
+    public void iModifyThePatientFamilyNameTo(String newName) {
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .when()
+            .get("/fhir/r5/Patient/" + testContext.getCurrentResourceId());
+
+        String currentJson = response.asString();
+        patientJson = currentJson.replaceFirst("\"family\":\"[^\"]+\"",
+            "\"family\":\"" + newName + "\"");
+    }
+
+    @When("I search for Patients with parameter {string} = {string}")
+    public void iSearchForPatientsWithParameter(String param, String value) {
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .queryParam(param, value)
+            .when()
+            .get("/fhir/r5/Patient");
+
+        testContext.setResponse(response);
+    }
+
+    @When("I search for Patients with parameters:")
+    public void iSearchForPatientsWithParameters(DataTable dataTable) {
+        List<Map<String, String>> params = dataTable.asMaps();
+
+        var request = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken());
+
+        for (Map<String, String> param : params) {
+            request = request.queryParam(param.get("parameter"), param.get("value"));
+        }
+
+        Response response = request
+            .when()
+            .get("/fhir/r5/Patient");
+
+        testContext.setResponse(response);
+    }
+
+    @Then("the resource family name should be {string}")
+    public void theResourceFamilyNameShouldBe(String expectedName) {
+        testContext.getResponse()
+            .then()
+            .body("name[0].family", equalTo(expectedName));
+    }
+
+    @Then("all entries should have family name {string}")
+    public void allEntriesShouldHaveFamilyName(String expectedName) {
+        testContext.getResponse()
+            .then()
+            .body("entry.resource.name[0].family", everyItem(equalTo(expectedName)));
+    }
+
+    @Then("all entries should have gender {string}")
+    public void allEntriesShouldHaveGender(String expectedGender) {
+        testContext.getResponse()
+            .then()
+            .body("entry.resource.gender", everyItem(equalTo(expectedGender)));
+    }
+
+    private String buildPatientJson(Map<String, String> data) {
+        String identifier = data.get("identifier");
+        String[] idParts = identifier != null ? identifier.split("\\|") : new String[]{"", ""};
+
+        return String.format("""
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "identifier": [{
+                    "system": "%s",
+                    "value": "%s"
+                }],
+                "name": [{
+                    "family": "%s",
+                    "given": ["%s"]
+                }],
+                "gender": "%s",
+                "birthDate": "%s",
+                "active": %s
+            }
+            """,
+            data.get("id"),
+            idParts[0].replace("\\", ""),
+            idParts.length > 1 ? idParts[1] : "",
+            data.get("family"),
+            data.get("given"),
+            data.get("gender"),
+            data.get("birthDate"),
+            data.get("active")
+        );
+    }
+}
+```
+
+**File: `SearchSteps.java`**
+```java
+package com.fhir4java.bdd.steps;
+
+import com.fhir4java.bdd.context.TestContext;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.When;
+import io.cucumber.java.en.Then;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.time.LocalDate;
+import java.util.List;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class SearchSteps {
+
+    @Autowired
+    private TestContext testContext;
+
+    @Then("the Bundle should have a {string} link")
+    public void theBundleShouldHaveALink(String linkRelation) {
+        testContext.getResponse()
+            .then()
+            .body("link.findAll { it.relation == '" + linkRelation + "' }.size()",
+                greaterThan(0));
+    }
+
+    @Then("the Bundle should not have a {string} element")
+    public void theBundleShouldNotHaveAElement(String element) {
+        Object value = testContext.getResponse().jsonPath().get(element);
+        assertNull(value);
+    }
+
+    @Then("the results should be sorted by family name in ascending order")
+    public void theResultsShouldBeSortedByFamilyNameInAscendingOrder() {
+        List<String> familyNames = testContext.getResponse()
+            .jsonPath()
+            .getList("entry.resource.name[0].family", String.class);
+
+        for (int i = 1; i < familyNames.size(); i++) {
+            assertTrue(familyNames.get(i-1).compareToIgnoreCase(familyNames.get(i)) <= 0,
+                "Results not sorted in ascending order");
+        }
+    }
+
+    @Then("the results should be sorted by family name in descending order")
+    public void theResultsShouldBeSortedByFamilyNameInDescendingOrder() {
+        List<String> familyNames = testContext.getResponse()
+            .jsonPath()
+            .getList("entry.resource.name[0].family", String.class);
+
+        for (int i = 1; i < familyNames.size(); i++) {
+            assertTrue(familyNames.get(i-1).compareToIgnoreCase(familyNames.get(i)) >= 0,
+                "Results not sorted in descending order");
+        }
+    }
+
+    @Then("all entries should have birthDate after {string}")
+    public void allEntriesShouldHaveBirthDateAfter(String dateStr) {
+        LocalDate threshold = LocalDate.parse(dateStr);
+        List<String> birthDates = testContext.getResponse()
+            .jsonPath()
+            .getList("entry.resource.birthDate", String.class);
+
+        for (String birthDate : birthDates) {
+            LocalDate bd = LocalDate.parse(birthDate);
+            assertTrue(bd.isAfter(threshold),
+                "BirthDate " + birthDate + " is not after " + dateStr);
+        }
+    }
+
+    @When("I follow the {string} link in the Bundle")
+    public void iFollowTheLinkInTheBundle(String linkRelation) {
+        String nextUrl = testContext.getResponse()
+            .jsonPath()
+            .getString("link.find { it.relation == '" + linkRelation + "' }.url");
+
+        assertNotNull(nextUrl, "No " + linkRelation + " link found in Bundle");
+
+        testContext.setResponse(
+            given()
+                .header("Authorization", "Bearer " + testContext.getAuthToken())
+                .when()
+                .get(nextUrl)
+        );
+    }
+
+    @Then("the Bundle should contain the referenced Organization")
+    public void theBundleShouldContainTheReferencedOrganization() {
+        testContext.getResponse()
+            .then()
+            .body("entry.resource.resourceType", hasItem("Organization"));
+    }
+
+    @Then("the Organization entry should have search mode {string}")
+    public void theOrganizationEntryShouldHaveSearchMode(String mode) {
+        testContext.getResponse()
+            .then()
+            .body("entry.find { it.resource.resourceType == 'Organization' }.search.mode",
+                equalTo(mode));
+    }
+}
+```
+
+---
+
+### Running BDD Tests
+
+```bash
+# Run all BDD tests
+./mvnw test -Dtest=CucumberTestRunner
+
+# Run specific feature
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@patient and @crud"
+
+# Run smoke tests only
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@smoke"
+
+# Run cache tests only
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@cache"
+
+# Run tests excluding ignored
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="not @ignore"
+
+# Generate HTML report
+./mvnw test -Dtest=CucumberTestRunner
+# Report available at: target/cucumber-reports/cucumber.html
+```
+
+### Test Data Files
+
+**File: `test-data/patients/valid-patient.json`**
+```json
+{
+  "resourceType": "Patient",
+  "identifier": [
+    {
+      "system": "http://hospital.example.org/mrn",
+      "value": "12345"
+    }
+  ],
+  "name": [
+    {
+      "use": "official",
+      "family": "Smith",
+      "given": ["John", "Jacob"]
+    }
+  ],
+  "gender": "male",
+  "birthDate": "1980-01-15",
+  "address": [
+    {
+      "use": "home",
+      "line": ["123 Main St"],
+      "city": "Anytown",
+      "state": "CA",
+      "postalCode": "12345"
+    }
+  ],
+  "telecom": [
+    {
+      "system": "phone",
+      "value": "555-555-5555",
+      "use": "home"
+    },
+    {
+      "system": "email",
+      "value": "john.smith@example.com"
+    }
+  ],
+  "active": true
+}
+```
+
+**File: `test-data/patients/patient-us-core.json`**
+```json
+{
+  "resourceType": "Patient",
+  "meta": {
+    "profile": [
+      "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"
+    ]
+  },
+  "identifier": [
+    {
+      "system": "http://hospital.example.org/mrn",
+      "value": "US-12345"
+    }
+  ],
+  "name": [
+    {
+      "use": "official",
+      "family": "USCorePatient",
+      "given": ["Test"]
+    }
+  ],
+  "gender": "female",
+  "birthDate": "1985-06-20",
+  "extension": [
+    {
+      "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+      "extension": [
+        {
+          "url": "ombCategory",
+          "valueCoding": {
+            "system": "urn:oid:2.16.840.1.113883.6.238",
+            "code": "2106-3",
+            "display": "White"
+          }
+        },
+        {
+          "url": "text",
+          "valueString": "White"
+        }
+      ]
+    },
+    {
+      "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity",
+      "extension": [
+        {
+          "url": "ombCategory",
+          "valueCoding": {
+            "system": "urn:oid:2.16.840.1.113883.6.238",
+            "code": "2186-5",
+            "display": "Not Hispanic or Latino"
+          }
+        },
+        {
+          "url": "text",
+          "valueString": "Not Hispanic or Latino"
+        }
+      ]
+    }
+  ]
+}
+```
