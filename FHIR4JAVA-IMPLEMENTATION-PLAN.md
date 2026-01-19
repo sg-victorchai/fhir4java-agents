@@ -2035,35 +2035,82 @@ public class ResourceService {
 }
 ```
 
-### History Table Optimization
+### History Table Schema
 
 ```sql
--- Optimized history table with partitioning by time
+-- ============================================
+-- HISTORY TABLE
+-- ============================================
+-- Stores all previous versions of FHIR resources
+-- Partitioned by changed_at (time) for efficient archival
+
 CREATE TABLE fhir_resources.resource_history (
+    -- History record identifier
     history_id BIGSERIAL,
-    resource_id UUID NOT NULL,
+
+    -- Reference to the resource
+    resource_id UUID NOT NULL,               -- References resource_data.id
     resource_type VARCHAR(100) NOT NULL,
     version_id INTEGER NOT NULL,
-    fhir_version VARCHAR(10) NOT NULL,
+    fhir_version VARCHAR(10) NOT NULL,       -- R4B, R5
+
+    -- External system reference (copied from main table)
+    external_id VARCHAR(255),
+    external_system VARCHAR(255),
+
+    -- FHIR resource content (snapshot at this version)
     content JSONB NOT NULL,
-    operation VARCHAR(20) NOT NULL,
-    changed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+
+    -- Operation that created this history record
+    operation VARCHAR(20) NOT NULL,          -- CREATE, UPDATE, DELETE
+
+    -- Timestamp when this version was superseded
+    changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Who made this change
     changed_by VARCHAR(255),
+
+    -- Composite primary key for partitioning
     PRIMARY KEY (history_id, changed_at)
 ) PARTITION BY RANGE (changed_at);
 
--- Create monthly partitions for history (auto-managed)
+-- ============================================
+-- HISTORY PARTITIONS (Monthly)
+-- ============================================
+-- Auto-managed by pg_partman or scheduled job
+
 CREATE TABLE fhir_resources.resource_history_2025_01
     PARTITION OF fhir_resources.resource_history
     FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
 
--- Index for vread (get specific version)
+CREATE TABLE fhir_resources.resource_history_2025_02
+    PARTITION OF fhir_resources.resource_history
+    FOR VALUES FROM ('2025-02-01') TO ('2025-03-01');
+
+-- Default partition for future data
+CREATE TABLE fhir_resources.resource_history_default
+    PARTITION OF fhir_resources.resource_history
+    DEFAULT;
+
+-- ============================================
+-- HISTORY INDEXES
+-- ============================================
+
+-- Index for vread: GET /Patient/123/_history/2
 CREATE INDEX idx_history_resource_version
     ON fhir_resources.resource_history(resource_id, version_id);
 
--- Index for history operation (get all versions of a resource)
+-- Index for history: GET /Patient/123/_history
 CREATE INDEX idx_history_resource_time
     ON fhir_resources.resource_history(resource_id, changed_at DESC);
+
+-- Index for type-level history: GET /Patient/_history
+CREATE INDEX idx_history_type_time
+    ON fhir_resources.resource_history(resource_type, changed_at DESC);
+
+-- Index for system-level history: GET /_history
+CREATE INDEX idx_history_system_time
+    ON fhir_resources.resource_history(changed_at DESC);
 ```
 
 ---
@@ -2322,34 +2369,84 @@ search-parameter-states:
 ### 1. Table Partitioning Strategy
 
 ```sql
--- Partition main resource table by resource_type (list) and time (range)
+-- ============================================
+-- MAIN RESOURCE TABLE
+-- ============================================
+-- Stores current version of all FHIR resources
+-- Partitioned by resource_type for query performance
+
 CREATE TABLE fhir_resources.resource_data (
-    id UUID NOT NULL,
+    -- Primary identifier
+    id UUID PRIMARY KEY,
+
+    -- Resource metadata
     resource_type VARCHAR(100) NOT NULL,
     version_id INTEGER NOT NULL DEFAULT 1,
-    fhir_version VARCHAR(10) NOT NULL,
+    fhir_version VARCHAR(10) NOT NULL,        -- R4B, R5
+
+    -- External system reference (for integrations)
+    external_id VARCHAR(255),                  -- e.g., MRN, legacy system ID
+    external_system VARCHAR(255),              -- e.g., "HIS", "EMR", "LAB"
+
+    -- FHIR resource content
     content JSONB NOT NULL,
-    last_updated TIMESTAMP WITH TIME ZONE NOT NULL,
+
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Soft delete flag
     is_deleted BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    PRIMARY KEY (id, resource_type, created_at)
+    deleted_at TIMESTAMP WITH TIME ZONE,
+
+    -- Audit columns
+    created_by VARCHAR(255),                   -- User/system who created
+    updated_by VARCHAR(255)                    -- User/system who last updated
 ) PARTITION BY LIST (resource_type);
 
--- Create partition for each major resource type
+-- Unique constraint on external_id per system (if provided)
+CREATE UNIQUE INDEX idx_resource_external_id
+    ON fhir_resources.resource_data (external_system, external_id)
+    WHERE external_id IS NOT NULL;
+
+-- ============================================
+-- RESOURCE TYPE PARTITIONS
+-- ============================================
+
+-- Patient partition
 CREATE TABLE fhir_resources.resource_data_patient
     PARTITION OF fhir_resources.resource_data
-    FOR VALUES IN ('Patient')
-    PARTITION BY RANGE (created_at);
+    FOR VALUES IN ('Patient');
 
+-- Observation partition (high volume - consider sub-partitioning)
 CREATE TABLE fhir_resources.resource_data_observation
     PARTITION OF fhir_resources.resource_data
-    FOR VALUES IN ('Observation')
-    PARTITION BY RANGE (created_at);
+    FOR VALUES IN ('Observation');
 
--- Sub-partition by quarter for high-volume resources
-CREATE TABLE fhir_resources.resource_data_observation_2025q1
-    PARTITION OF fhir_resources.resource_data_observation
-    FOR VALUES FROM ('2025-01-01') TO ('2025-04-01');
+-- Encounter partition
+CREATE TABLE fhir_resources.resource_data_encounter
+    PARTITION OF fhir_resources.resource_data
+    FOR VALUES IN ('Encounter');
+
+-- Condition partition
+CREATE TABLE fhir_resources.resource_data_condition
+    PARTITION OF fhir_resources.resource_data
+    FOR VALUES IN ('Condition');
+
+-- MedicationRequest partition
+CREATE TABLE fhir_resources.resource_data_medicationrequest
+    PARTITION OF fhir_resources.resource_data
+    FOR VALUES IN ('MedicationRequest');
+
+-- DiagnosticReport partition
+CREATE TABLE fhir_resources.resource_data_diagnosticreport
+    PARTITION OF fhir_resources.resource_data
+    FOR VALUES IN ('DiagnosticReport');
+
+-- Default partition for other resource types
+CREATE TABLE fhir_resources.resource_data_default
+    PARTITION OF fhir_resources.resource_data
+    DEFAULT;
 
 -- Search index table - also partitioned
 CREATE TABLE fhir_resources.search_index (
