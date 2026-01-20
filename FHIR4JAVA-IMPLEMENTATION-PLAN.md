@@ -21,11 +21,35 @@ Build a configuration-driven, plugin-based FHIR server supporting HL7 FHIR R4B a
 
 ```
 fhir4java/
+├── db/                                # Database scripts (all SQL in one place)
+│   ├── init/                          # Initial schema setup
+│   │   ├── 00-init-schemas.sql        # Create schemas (fhir_resources, fhir_audit, etc.)
+│   │   ├── 01-resource-tables.sql     # Main resource_data table with partitions
+│   │   ├── 02-history-tables.sql      # History table with time-based partitions
+│   │   ├── 03-search-index.sql        # Search index table with partitions
+│   │   └── 04-audit-tables.sql        # Audit and performance tracking tables
+│   ├── indexes/                       # Index definitions
+│   │   ├── 01-covering-indexes.sql    # Covering indexes for common queries
+│   │   ├── 02-search-indexes.sql      # Search parameter indexes
+│   │   ├── 03-partial-indexes.sql     # Partial indexes for common patterns
+│   │   └── 04-gin-brin-indexes.sql    # GIN and BRIN indexes
+│   ├── partitions/                    # Partition management
+│   │   ├── create-resource-partitions.sql
+│   │   ├── create-history-partitions.sql
+│   │   └── partition-maintenance.sql  # Scripts for adding/dropping partitions
+│   ├── functions/                     # Stored procedures and functions
+│   │   ├── history-functions.sql      # History management functions
+│   │   └── maintenance-functions.sql  # Vacuum, analyze, etc.
+│   ├── migrations/                    # Flyway migrations (versioned)
+│   │   ├── V1__initial_schema.sql
+│   │   ├── V2__add_search_index.sql
+│   │   └── V3__add_sync_tables.sql
+│   └── seeds/                         # Test/development data
+│       ├── sample-patients.sql
+│       └── sample-observations.sql
 ├── docker/
 │   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── init-db/
-│       └── 00-init-schemas.sql
+│   └── docker-compose.yml
 ├── fhir4java-core/                    # Core FHIR processing engine
 │   └── src/main/java/com/fhir4java/core/
 │       ├── config/                    # Configuration classes
@@ -72,7 +96,7 @@ fhir4java/
 │           │   └── profiles/          # StructureDefinition files (FHIR JSON)
 │           │       ├── patient-profile.json
 │           │       └── ...
-│           └── db/migration/          # Flyway migrations
+│           └── application-test.yml   # Test configuration
 └── pom.xml                            # Parent POM
 ```
 
@@ -3682,6 +3706,16 @@ spring:
       hibernate:
         default_schema: fhir_resources
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: true
+    locations: filesystem:./db/migrations    # Top-level db/migrations folder
+    baseline-on-migrate: true
+    schemas:
+      - fhir_resources
+      - fhir_audit
+      - fhir_performance
+      - fhir_sync
 ```
 
 ---
@@ -3731,7 +3765,7 @@ services:
       - POSTGRES_USER=fhir4java
       - POSTGRES_PASSWORD=fhir4java
     volumes:
-      - ./docker/init-db:/docker-entrypoint-initdb.d
+      - ./db/init:/docker-entrypoint-initdb.d    # DB init scripts from top-level db folder
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fhir4java"]
@@ -3854,6 +3888,15 @@ volumes:
 | server | `fhir-config/profiles/custom-patient-profile.json` | Custom Patient StructureDefinition |
 | server | `fhir-config/operations/patient-merge.json` | Patient merge OperationDefinition |
 | docker | `docker-compose.yml` | Container orchestration |
+| db | `init/00-init-schemas.sql` | Create database schemas |
+| db | `init/01-resource-tables.sql` | Main resource_data table with partitions |
+| db | `init/02-history-tables.sql` | History table with time-based partitions |
+| db | `init/03-search-index.sql` | Search index table with partitions |
+| db | `init/04-audit-tables.sql` | Audit and performance tracking tables |
+| db | `indexes/01-covering-indexes.sql` | Covering indexes for common queries |
+| db | `indexes/02-search-indexes.sql` | Search parameter indexes |
+| db | `migrations/V1__initial_schema.sql` | Flyway initial migration |
+| db | `partitions/partition-maintenance.sql` | Partition management scripts |
 
 ---
 
