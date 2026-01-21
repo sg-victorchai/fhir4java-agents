@@ -4586,6 +4586,611 @@ Feature: Common FHIR Search Parameters
     Given a Patient exists with source "http://hospital.example.org/ehr"
     When I search for Patients with parameter "_source" = "http://hospital.example.org/ehr"
     Then the Bundle should contain the sourced Patient
+
+  @_text
+  Scenario: Search by _text parameter (full-text on narrative)
+    Given a Patient exists with narrative containing "diabetes management"
+    When I search for Patients with parameter "_text" = "diabetes"
+    Then the Bundle should contain the Patient with matching narrative
+
+  @_content
+  Scenario: Search by _content parameter (full-text on entire resource)
+    Given a Patient exists with extension containing "special-program"
+    When I search for Patients with parameter "_content" = "special-program"
+    Then the Bundle should contain the Patient with matching content
+
+  @_list
+  Scenario: Search by _list parameter
+    Given a List "high-risk-patients" contains Patients "patient-1", "patient-2"
+    When I search for Patients with parameter "_list" = "high-risk-patients"
+    Then the Bundle should contain exactly 2 entries
+    And the Bundle should contain Patient "patient-1"
+    And the Bundle should contain Patient "patient-2"
+
+  @_has
+  Scenario: Search using _has for reverse chaining
+    Given Patient "patient-has-001" has Observations with code "1234-5"
+    And Patient "patient-has-002" has no Observations
+    When I search for Patients with parameter "_has:Observation:patient:code" = "1234-5"
+    Then the Bundle should contain 1 entry
+    And the entry should be Patient "patient-has-001"
+
+  @_has
+  Scenario: Search using _has with multiple levels
+    Given Patient "patient-has-003" has Encounter with Condition code "diabetes"
+    When I search for Patients with parameter "_has:Encounter:patient:_has:Condition:encounter:code" = "diabetes"
+    Then the Bundle should contain Patient "patient-has-003"
+
+  @_type
+  Scenario: Search across multiple resource types with _type
+    Given Patient "multi-001" and Practitioner "multi-002" exist
+    When I search across all resources with parameters:
+      | parameter | value              |
+      | _type     | Patient,Practitioner |
+      | name      | Smith              |
+    Then the Bundle should contain resources of type Patient and Practitioner
+
+  @_summary
+  Scenario: Search with _summary=true returns summary elements only
+    Given a Patient resource exists with full data
+    When I search for Patients with parameter "_summary" = "true"
+    Then the response entries should contain only summary elements
+    And the response should not contain non-summary elements like "contact"
+
+  @_summary
+  Scenario: Search with _summary=text returns text and mandatory elements
+    Given a Patient resource exists with narrative
+    When I search for Patients with parameter "_summary" = "text"
+    Then the response entries should contain "text", "id", and "meta"
+
+  @_summary
+  Scenario: Search with _summary=count returns only count
+    Given 10 Patient resources exist
+    When I search for Patients with parameter "_summary" = "count"
+    Then the Bundle total should be 10
+    And the Bundle should contain 0 entries
+
+  @_summary
+  Scenario: Search with _summary=data excludes text element
+    Given a Patient resource exists with narrative
+    When I search for Patients with parameter "_summary" = "data"
+    Then the response entries should not contain "text" element
+
+  @_elements
+  Scenario: Search with _elements returns only specified elements
+    Given a Patient resource exists with name, birthDate, and address
+    When I search for Patients with parameter "_elements" = "name,birthDate"
+    Then the response entries should contain "name" and "birthDate"
+    And the response entries should not contain "address"
+
+  @_elements
+  Scenario: Search with _elements always includes mandatory elements
+    Given a Patient resource exists
+    When I search for Patients with parameter "_elements" = "name"
+    Then the response entries should contain "id" and "meta"
+
+  @_contained
+  Scenario: Search with _contained=true searches contained resources
+    Given a Patient resource with contained Organization
+    When I search for Patients with parameter "_contained" = "true"
+    Then the search should include contained resources
+
+  @_contained
+  Scenario: Search with _contained=both searches all
+    Given a Patient resource with and without contained resources
+    When I search for Patients with parameter "_contained" = "both"
+    Then the Bundle should contain both types of Patients
+```
+
+#### 3b. Search Modifiers
+
+**File: `features/search/search-modifiers.feature`**
+```gherkin
+@search @modifiers
+Feature: FHIR Search Modifiers
+  As a healthcare application
+  I want to use search modifiers to refine my searches
+  So that I can precisely control how search parameters are matched
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the following Patients exist:
+      | id          | family     | given    | birthDate  | gender | identifier        | active |
+      | mod-test-1  | Smith      | John     | 1980-01-15 | male   | MRN\|12345        | true   |
+      | mod-test-2  | SMITH      | Jane     | 1985-06-20 | female | MRN\|12346        | true   |
+      | mod-test-3  | Smithson   | Robert   | 1990-03-10 | male   | SSN\|123-45-6789  | true   |
+      | mod-test-4  | VanSmith   | Sarah    | 1975-11-30 | female | MRN\|12348        | false  |
+      | mod-test-5  | Jones      | Michael  | 2000-07-04 | male   |                   | true   |
+
+  # :missing modifier
+  @missing @smoke
+  Scenario: Search with :missing=true finds resources without the element
+    When I search for Patients with parameter "identifier:missing" = "true"
+    Then the Bundle should contain 1 entry
+    And the entry should be Patient "mod-test-5"
+
+  Scenario: Search with :missing=false finds resources with the element
+    When I search for Patients with parameter "identifier:missing" = "false"
+    Then the Bundle should contain 4 entries
+    And all entries should have an identifier element
+
+  Scenario: Search with :missing on optional element
+    Given Patient "mod-test-6" has no managingOrganization
+    When I search for Patients with parameter "organization:missing" = "true"
+    Then the Bundle should contain Patient "mod-test-6"
+
+  # :exact modifier
+  @exact @smoke
+  Scenario: Search with :exact matches case-sensitively
+    When I search for Patients with parameter "family:exact" = "Smith"
+    Then the Bundle should contain 1 entry
+    And the entry should have family name "Smith"
+
+  Scenario: Search with :exact does not match different case
+    When I search for Patients with parameter "family:exact" = "smith"
+    Then the Bundle should contain 0 entries
+
+  Scenario: Search with :exact does not match partial strings
+    When I search for Patients with parameter "family:exact" = "Smit"
+    Then the Bundle should contain 0 entries
+
+  # :contains modifier
+  @contains @smoke
+  Scenario: Search with :contains matches substring anywhere
+    When I search for Patients with parameter "family:contains" = "Smith"
+    Then the Bundle should contain 3 entries
+    And all entries should have family name containing "Smith"
+
+  Scenario: Search with :contains is case-insensitive
+    When I search for Patients with parameter "family:contains" = "smith"
+    Then the Bundle should contain 3 entries
+
+  Scenario: Search with :contains matches at start
+    When I search for Patients with parameter "family:contains" = "Van"
+    Then the Bundle should contain 1 entry
+    And the entry should be Patient "mod-test-4"
+
+  # :text modifier
+  @text
+  Scenario: Search token with :text matches on display text
+    Given an Observation exists with code display "Blood Pressure"
+    When I search for Observations with parameter "code:text" = "Blood"
+    Then the Bundle should contain the Observation with Blood Pressure code
+
+  Scenario: Search reference with :text matches on display
+    Given a Patient exists with generalPractitioner display "Dr. Smith"
+    When I search for Patients with parameter "general-practitioner:text" = "Smith"
+    Then the Bundle should contain the Patient
+
+  # :not modifier
+  @not @smoke
+  Scenario: Search with :not excludes matching values
+    When I search for Patients with parameter "gender:not" = "male"
+    Then the Bundle should contain 2 entries
+    And all entries should have gender "female"
+
+  Scenario: Search with :not on token with system
+    When I search for Patients with parameter "identifier:not" = "MRN|12345"
+    Then the Bundle should not contain Patient "mod-test-1"
+    And the Bundle should contain Patients with other identifiers
+
+  # :above modifier (hierarchical)
+  @above
+  Scenario: Search with :above finds ancestors
+    Given Locations with hierarchy "Building A > Floor 1 > Room 101"
+    When I search for Locations with parameter "partof:above" = "Room-101"
+    Then the Bundle should contain "Floor-1" and "Building-A"
+
+  Scenario: Search token with :above for code system hierarchy
+    Given Conditions with SNOMED codes in hierarchy
+    When I search for Conditions with parameter "code:above" = "http://snomed.info/sct|73211009"
+    Then the Bundle should contain Conditions with ancestor codes
+
+  # :below modifier (hierarchical)
+  @below
+  Scenario: Search with :below finds descendants
+    Given Locations with hierarchy "Building A > Floor 1 > Room 101"
+    When I search for Locations with parameter "partof:below" = "Building-A"
+    Then the Bundle should contain "Floor-1" and "Room-101"
+
+  Scenario: Search token with :below for code system hierarchy
+    Given Conditions with SNOMED codes in hierarchy
+    When I search for Conditions with parameter "code:below" = "http://snomed.info/sct|404684003"
+    Then the Bundle should contain Conditions with descendant codes
+
+  # :in modifier (ValueSet membership)
+  @in
+  Scenario: Search with :in matches codes in ValueSet
+    Given a ValueSet "vital-signs-codes" contains codes "85354-9", "8480-6", "8462-4"
+    And Observations exist with those codes
+    When I search for Observations with parameter "code:in" = "vital-signs-codes"
+    Then the Bundle should contain Observations with those codes only
+
+  Scenario: Search with :in using ValueSet URL
+    When I search for Observations with parameter "code:in" = "http://hl7.org/fhir/ValueSet/observation-vitalsignresult"
+    Then the Bundle should contain Observations with vital sign codes
+
+  # :not-in modifier (ValueSet non-membership)
+  @not-in
+  Scenario: Search with :not-in excludes codes in ValueSet
+    Given a ValueSet "excluded-codes" contains codes "X", "Y", "Z"
+    And Observations exist with codes "A", "X", "B"
+    When I search for Observations with parameter "code:not-in" = "excluded-codes"
+    Then the Bundle should contain Observations with codes "A" and "B"
+    And the Bundle should not contain Observations with code "X"
+
+  # :of-type modifier (Identifier type)
+  @of-type
+  Scenario: Search identifier with :of-type matches by type
+    Given Patient "ot-001" has identifier type "MR" with value "12345"
+    And Patient "ot-002" has identifier type "SS" with value "12345"
+    When I search for Patients with parameter "identifier:of-type" = "http://terminology.hl7.org/CodeSystem/v2-0203|MR|12345"
+    Then the Bundle should contain 1 entry
+    And the entry should be Patient "ot-001"
+
+  # :identifier modifier (Reference by identifier)
+  @identifier
+  Scenario: Search reference with :identifier matches Reference.identifier
+    Given Patient "ref-id-001" has generalPractitioner with identifier "NPI|1234567890"
+    When I search for Patients with parameter "general-practitioner:identifier" = "NPI|1234567890"
+    Then the Bundle should contain Patient "ref-id-001"
+
+  Scenario: Search reference with :identifier without system
+    Given Patient "ref-id-002" has organization with identifier value "ORG-001"
+    When I search for Patients with parameter "organization:identifier" = "ORG-001"
+    Then the Bundle should contain Patient "ref-id-002"
+
+  # :[type] modifier (Reference type restriction)
+  @type-modifier
+  Scenario: Search reference with type modifier restricts target type
+    Given Patient "type-001" has generalPractitioner referencing Practitioner "prac-001"
+    And Patient "type-002" has generalPractitioner referencing Organization "org-001"
+    When I search for Patients with parameter "general-practitioner:Practitioner" = "prac-001"
+    Then the Bundle should contain 1 entry
+    And the entry should be Patient "type-001"
+
+  Scenario: Search reference with type modifier using ID only
+    Given Observation "obs-001" has subject referencing Patient "pat-001"
+    When I search for Observations with parameter "subject:Patient" = "pat-001"
+    Then the Bundle should contain Observation "obs-001"
+
+  # :code-text modifier
+  @code-text
+  Scenario: Search with :code-text matches code display starting with value
+    Given Observations with code displays "Systolic blood pressure", "Diastolic blood pressure"
+    When I search for Observations with parameter "code:code-text" = "Systolic"
+    Then the Bundle should contain 1 entry
+    And the entry should have code display starting with "Systolic"
+
+  # Modifier validation
+  @validation
+  Scenario: Invalid modifier returns error
+    When I search for Patients with parameter "family:invalid" = "Smith"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid modifier
+
+  Scenario: Modifier not applicable to parameter type returns error
+    When I search for Patients with parameter "birthdate:exact" = "1980-01-15"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate modifier not applicable
+
+  # SQL Injection prevention
+  @security @sql-injection
+  Scenario: Modifier value with SQL injection attempt is safely handled
+    When I search for Patients with parameter "family" = "Smith'; DROP TABLE patients;--"
+    Then the response status code should be 200
+    And the Bundle should contain 0 entries
+    And no database error should occur
+
+  Scenario: Parameter name with SQL injection attempt is rejected
+    When I search for Patients with parameter "family; DROP TABLE" = "Smith"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid parameter name
+```
+
+#### 3c. Search Prefixes (Comparators)
+
+**File: `features/search/search-prefixes.feature`**
+```gherkin
+@search @prefixes
+Feature: FHIR Search Prefixes (Comparators)
+  As a healthcare application
+  I want to use search prefixes for comparison operations
+  So that I can search for resources with values in specific ranges
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  # Date prefixes
+  @date-prefix
+  Scenario Outline: Search dates with prefix <prefix>
+    Given Patients with birthDates "1980-01-15", "1990-06-20", "2000-12-25"
+    When I search for Patients with parameter "birthdate" = "<prefix>1990-06-20"
+    Then the Bundle should contain <count> entries
+    And <assertion>
+
+    Examples:
+      | prefix | count | assertion                                          |
+      | eq     | 1     | the entry should have birthDate "1990-06-20"       |
+      | ne     | 2     | no entry should have birthDate "1990-06-20"        |
+      | gt     | 1     | all entries should have birthDate after 1990-06-20 |
+      | lt     | 1     | all entries should have birthDate before 1990-06-20|
+      | ge     | 2     | all entries should have birthDate on or after 1990-06-20 |
+      | le     | 2     | all entries should have birthDate on or before 1990-06-20 |
+
+  @date-prefix @smoke
+  Scenario: Search with eq prefix (default) matches date range
+    Given Patient with birthDate "1990-06-20"
+    When I search for Patients with parameter "birthdate" = "1990-06-20"
+    Then the Bundle should contain 1 entry
+    And the entry birthDate should be within 1990-06-20
+
+  Scenario: Search with eq prefix on partial date matches entire period
+    Given Patients with birthDates "1990-01-15", "1990-06-20", "1990-12-25"
+    When I search for Patients with parameter "birthdate" = "eq1990"
+    Then the Bundle should contain 3 entries
+    And all entries should have birthDate in year 1990
+
+  Scenario: Search with sa (starts after) prefix
+    Given Observations with effectiveDateTime "2024-01-01", "2024-06-15", "2024-12-31"
+    When I search for Observations with parameter "date" = "sa2024-06-15"
+    Then the Bundle should contain 1 entry
+    And the entry should have effectiveDateTime after "2024-06-15"
+
+  Scenario: Search with eb (ends before) prefix
+    Given Observations with effectiveDateTime "2024-01-01", "2024-06-15", "2024-12-31"
+    When I search for Observations with parameter "date" = "eb2024-06-15"
+    Then the Bundle should contain 1 entry
+    And the entry should have effectiveDateTime before "2024-06-15"
+
+  Scenario: Search with ap (approximately) prefix on date
+    Given Observations with effectiveDateTime "2024-06-01", "2024-06-15", "2024-07-01"
+    When I search for Observations with parameter "date" = "ap2024-06-15"
+    Then the Bundle should contain Observations with dates approximately "2024-06-15"
+
+  # Number prefixes
+  @number-prefix
+  Scenario Outline: Search numbers with prefix <prefix>
+    Given Observations with valueQuantity values 50, 100, 150
+    When I search for Observations with parameter "value-quantity" = "<prefix>100"
+    Then the Bundle should contain <count> entries
+
+    Examples:
+      | prefix | count |
+      | eq     | 1     |
+      | ne     | 2     |
+      | gt     | 1     |
+      | lt     | 1     |
+      | ge     | 2     |
+      | le     | 2     |
+
+  @number-prefix @smoke
+  Scenario: Search with eq prefix considers precision
+    Given Observations with valueQuantity values 99.5, 100.0, 100.4
+    When I search for Observations with parameter "value-quantity" = "eq100"
+    Then the Bundle should contain 3 entries
+    And all values should be within implicit range of 100 (99.5-100.5)
+
+  Scenario: Search with ap (approximately) prefix on number
+    Given Observations with valueQuantity values 90, 100, 110, 150
+    When I search for Observations with parameter "value-quantity" = "ap100"
+    Then the Bundle should contain Observations with values within 10% of 100
+    And the Bundle should contain values 90, 100, 110
+    And the Bundle should not contain value 150
+
+  Scenario: Search number with high precision
+    Given Observations with valueQuantity values 99.95, 100.00, 100.05
+    When I search for Observations with parameter "value-quantity" = "eq100.00"
+    Then the Bundle should contain Observations within range 99.995-100.005
+
+  # Quantity prefixes
+  @quantity-prefix
+  Scenario: Search quantity with unit consideration
+    Given Observations with values "100 mg", "0.1 g", "100000 mcg"
+    When I search for Observations with parameter "value-quantity" = "eq100|http://unitsofmeasure.org|mg"
+    Then the Bundle should contain 1 entry with "100 mg"
+
+  Scenario: Search quantity without unit matches any unit
+    Given Observations with values "100 mg", "100 kg", "100 mL"
+    When I search for Observations with parameter "value-quantity" = "eq100"
+    Then the Bundle should contain 3 entries
+
+  Scenario: Search quantity with gt prefix
+    Given Observations with values "50 mg", "100 mg", "150 mg"
+    When I search for Observations with parameter "value-quantity" = "gt100|http://unitsofmeasure.org|mg"
+    Then the Bundle should contain 1 entry with "150 mg"
+
+  # Combined prefix usage
+  @combined-prefixes
+  Scenario: Search with multiple prefixed values (OR logic)
+    Given Patients with birthDates "1970-01-01", "1985-06-15", "2000-12-31"
+    When I search for Patients with parameter "birthdate" = "lt1980,gt1990"
+    Then the Bundle should contain 2 entries
+    And one entry should have birthDate before 1980
+    And one entry should have birthDate after 1990
+
+  Scenario: Search with multiple parameters using prefixes (AND logic)
+    Given Observations with dates and values
+    When I search for Observations with parameters:
+      | parameter      | value              |
+      | date           | ge2024-01-01       |
+      | date           | le2024-12-31       |
+      | value-quantity | gt50               |
+    Then the Bundle should contain Observations matching all criteria
+
+  # Date range searches
+  @date-range
+  Scenario: Search for date range using ge and le
+    Given Patients with birthDates spanning 1970 to 2020
+    When I search for Patients with parameters:
+      | parameter | value           |
+      | birthdate | ge1980-01-01    |
+      | birthdate | le1989-12-31    |
+    Then the Bundle should contain Patients born in the 1980s
+
+  Scenario: Search date with timezone handling
+    Given Observation with effectiveDateTime "2024-06-15T10:30:00+05:00"
+    When I search for Observations with parameter "date" = "eq2024-06-15T05:30:00Z"
+    Then the Bundle should contain the Observation (same instant)
+
+  # Edge cases
+  @edge-cases
+  Scenario: Search with no prefix defaults to eq
+    Given Patients with birthDates "1990-06-20"
+    When I search for Patients with parameter "birthdate" = "1990-06-20"
+    Then the search should behave as "birthdate=eq1990-06-20"
+
+  Scenario: Prefix only applies to immediately following value
+    Given Observations with values 50, 100, 150
+    When I search for Observations with parameter "value-quantity" = "lt100,150"
+    Then the Bundle should contain values less than 100 OR equal to 150
+
+  # Validation
+  @validation
+  Scenario: Invalid prefix on non-ordered type returns error
+    When I search for Patients with parameter "family" = "gt1990"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate prefix not applicable to string type
+
+  Scenario: Invalid date format with prefix returns error
+    When I search for Patients with parameter "birthdate" = "gtinvalid-date"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid date format
+
+  # SQL Injection prevention with prefixes
+  @security @sql-injection
+  Scenario: Prefix value with SQL injection attempt is safely handled
+    When I search for Patients with parameter "birthdate" = "gt1990'; DROP TABLE patients;--"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid date format
+    And no database error should occur
+
+  Scenario: Numeric value with SQL injection attempt is safely handled
+    When I search for Observations with parameter "value-quantity" = "gt100; DELETE FROM observations"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid number format
+```
+
+#### 3d. Advanced Search Features
+
+**File: `features/search/search-advanced.feature`**
+```gherkin
+@search @advanced
+Feature: Advanced FHIR Search Features
+  As a healthcare application
+  I want to use advanced search capabilities
+  So that I can perform complex queries
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  # _filter parameter
+  @_filter
+  Scenario: Search using _filter with simple expression
+    Given Patients exist with various attributes
+    When I search for Patients with parameter "_filter" = "family co \"smith\""
+    Then the Bundle should contain Patients with family name containing "smith"
+
+  Scenario: Search using _filter with AND logic
+    When I search for Patients with parameter "_filter" = "family co \"smith\" and gender eq \"male\""
+    Then all entries should have family containing "smith" AND gender "male"
+
+  Scenario: Search using _filter with OR logic
+    When I search for Patients with parameter "_filter" = "gender eq \"male\" or gender eq \"female\""
+    Then the Bundle should contain Patients with either gender
+
+  Scenario: Search using _filter with NOT logic
+    When I search for Patients with parameter "_filter" = "not (gender eq \"male\")"
+    Then no entries should have gender "male"
+
+  Scenario: Search using _filter with nested expressions
+    When I search for Patients with parameter "_filter" = "(family co \"smith\" or family co \"jones\") and active eq true"
+    Then all entries should match the nested filter conditions
+
+  Scenario: Search using _filter with date comparisons
+    When I search for Patients with parameter "_filter" = "birthdate ge 1990-01-01 and birthdate lt 2000-01-01"
+    Then all entries should have birthDate in the 1990s
+
+  # Chained searches
+  @chaining
+  Scenario: Search with chained parameter
+    Given Patient "chain-001" has organization "General Hospital"
+    When I search for Patients with parameter "organization.name" = "General Hospital"
+    Then the Bundle should contain Patient "chain-001"
+
+  Scenario: Search with multiple level chaining
+    Given Observation referencing Patient with organization "Mayo Clinic"
+    When I search for Observations with parameter "patient.organization.name" = "Mayo Clinic"
+    Then the Bundle should contain the matching Observation
+
+  # Composite search parameters
+  @composite
+  Scenario: Search with composite parameter
+    Given Observations with code-value pairs
+    When I search for Observations with parameter "code-value-quantity" = "http://loinc.org|8480-6$gt100"
+    Then the Bundle should contain Observations matching both code AND value
+
+  # Security - SQL Injection Prevention
+  @security @sql-injection
+  Scenario: _filter with SQL injection attempt is safely handled
+    When I search for Patients with parameter "_filter" = "family eq \"Smith'; DROP TABLE patients;--\""
+    Then the response status code should be 200
+    And the Bundle should contain 0 entries
+    And no database error should occur
+
+  Scenario: Chained parameter with SQL injection attempt is safely handled
+    When I search for Patients with parameter "organization.name" = "Hospital'; DELETE FROM organizations;--"
+    Then the response status code should be 200
+    And the Bundle should contain 0 entries
+    And no database error should occur
+
+  Scenario: Resource ID with SQL injection attempt is rejected
+    When I search for Patients with parameter "_id" = "123; DROP TABLE patients"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid ID format
+
+  Scenario: Sort parameter with SQL injection attempt is rejected
+    When I search for Patients with parameter "_sort" = "family; DROP TABLE patients"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid sort parameter
+
+  Scenario: _count with SQL injection attempt is safely handled
+    When I search for Patients with parameter "_count" = "10; DROP TABLE patients"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid count value
+
+  Scenario: _elements with SQL injection attempt is safely handled
+    When I search for Patients with parameter "_elements" = "name; DROP TABLE patients"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid elements parameter
+
+  # Input validation
+  @validation
+  Scenario: Parameter name validation rejects special characters
+    When I search for Patients with parameter "family<script>" = "Smith"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid parameter name
+
+  Scenario: Resource type validation prevents injection
+    When I search for resource type "Patient; DROP TABLE users" with parameter "name" = "Smith"
+    Then the response status code should be 400
+    And the OperationOutcome should indicate invalid resource type
+
+  Scenario: Maximum query length is enforced
+    When I search with a query string longer than 10000 characters
+    Then the response status code should be 400
+    And the OperationOutcome should indicate query too long
+
+  Scenario: Maximum parameter count is enforced
+    When I search with more than 100 parameters
+    Then the response status code should be 400
+    And the OperationOutcome should indicate too many parameters
 ```
 
 #### 4. Search Pagination and Sorting
