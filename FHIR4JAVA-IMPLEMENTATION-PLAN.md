@@ -398,67 +398,217 @@ public class ResourceRegistry {
 
 ### 2b. Search Parameter Registry
 
-Loads search parameters from FHIR Bundle JSON files containing SearchParameter resources.
+Loads search parameters from individual FHIR R5 SearchParameter JSON files (one search parameter per file).
+
+**File Naming Convention:**
+- Resource-specific: `SearchParameter-<ResourceType>-<param-name>.json` (e.g., `SearchParameter-Patient-death-date.json`)
+- Common parameters for all resources: `SearchParameter-Resource-<param-name>.json` (e.g., `SearchParameter-Resource-id.json`)
+- Common parameters for DomainResource subtypes: `SearchParameter-DomainResource-<param-name>.json` (e.g., `SearchParameter-DomainResource-text.json`)
+
+**Search Parameter Name:**
+The search parameter name used in queries is taken from the `name` element in the JSON file (e.g., `_id`, `_text`, `death-date`).
+
+**Inheritance Rules:**
+| Resource Type | Inherits From |
+|--------------|---------------|
+| Bundle, Parameters, Binary | `SearchParameter-Resource-*` only |
+| All other resources (DomainResource subtypes) | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` |
+
+**Common Search Parameters (SearchParameter-Resource-*):**
+- `_id` - Logical id of the resource
+- `_lastUpdated` - When the resource version last changed
+- `_tag` - Tags applied to this resource
+- `_profile` - Profiles this resource claims to conform to
+- `_security` - Security labels applied to this resource
+- `_source` - Identifies where the resource comes from
+- `_text` - Text search against the narrative (Resource level)
+- `_content` - Text search against the entire resource content
+- `_list` - Return resources on the list
+- `_has` - Reverse chaining
+- `_type` - Resource type filter
+- `_filter` - Filter expression
+- `_query` - Named query
+- `_language` - Language of the resource content
+- `_in` - Inclusion in a compartment
+
+**DomainResource-specific Common Search Parameters (SearchParameter-DomainResource-*):**
+- `_text` - Search on the narrative of the resource (DomainResource level)
 
 ```java
 @Component
 public class SearchParameterRegistry {
+    private static final Logger log = LoggerFactory.getLogger(SearchParameterRegistry.class);
+
+    // Resource types that inherit only from Resource (not DomainResource)
+    private static final Set<String> NON_DOMAIN_RESOURCES = Set.of("Bundle", "Parameters", "Binary");
+
     private final FhirContextFactory fhirContextFactory;
     private final ResourceLoader resourceLoader;
 
-    // Base parameters applicable to all resources (_id, _lastUpdated, etc.)
-    private final List<SearchParameter> baseParameters = new ArrayList<>();
+    // Common parameters from SearchParameter-Resource-*.json (applies to ALL resources)
+    private final List<SearchParameter> resourceBaseParams = new ArrayList<>();
+    // Common parameters from SearchParameter-DomainResource-*.json (applies to DomainResource subtypes)
+    private final List<SearchParameter> domainResourceParams = new ArrayList<>();
     // Resource-specific parameters (key: resourceType, value: list of SearchParameter)
-    private final Map<String, List<SearchParameter>> resourceParameters = new ConcurrentHashMap<>();
+    private final Map<String, List<SearchParameter>> resourceSpecificParams = new ConcurrentHashMap<>();
+    // Quick lookup map: key = "resourceType:paramName", value = SearchParameter
+    private final Map<String, SearchParameter> parameterLookup = new ConcurrentHashMap<>();
 
     @Value("${fhir4java.searchparameters.path:classpath:fhir-config/searchparameters/}")
     private String searchParamsPath;
 
     @PostConstruct
-    public void loadSearchParameters() {
+    public void loadSearchParameters() throws IOException {
         FhirContext ctx = fhirContextFactory.getContext(FhirVersion.R5);
         IParser parser = ctx.newJsonParser();
 
-        // Load base parameters from _base-searchparameters.json
-        loadBundleFromFile(parser, "_base-searchparameters.json", true);
+        // Scan all SearchParameter-*.json files
+        Resource[] resources = resourceLoader.getResources(searchParamsPath + "SearchParameter-*.json");
 
-        // Load all resource-specific parameter bundles (*-searchparameters.json)
-        loadResourceParameterBundles(parser);
+        for (Resource resource : resources) {
+            loadSearchParameterFile(parser, resource);
+        }
+
+        log.info("Loaded {} Resource base parameters, {} DomainResource parameters, {} resource-specific parameters",
+            resourceBaseParams.size(), domainResourceParams.size(),
+            resourceSpecificParams.values().stream().mapToInt(List::size).sum());
     }
 
-    private void loadBundleFromFile(IParser parser, String filename, boolean isBase) {
-        Resource resource = resourceLoader.getResource(searchParamsPath + filename);
-        Bundle bundle = parser.parseResource(Bundle.class, resource.getInputStream());
+    private void loadSearchParameterFile(IParser parser, Resource resource) {
+        try (InputStream is = resource.getInputStream()) {
+            SearchParameter sp = parser.parseResource(SearchParameter.class, is);
+            String filename = resource.getFilename();
 
-        for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
-            if (entry.getResource() instanceof SearchParameter sp) {
-                if (isBase) {
-                    baseParameters.add(sp);
-                } else {
-                    // Add to each base resource type
-                    for (String baseType : sp.getBase()) {
-                        resourceParameters.computeIfAbsent(baseType, k -> new ArrayList<>()).add(sp);
-                    }
+            if (filename.startsWith("SearchParameter-Resource-")) {
+                // Common parameter for ALL resources (e.g., _id, _lastUpdated)
+                resourceBaseParams.add(sp);
+                log.debug("Loaded Resource base parameter: {} ({})", sp.getName(), filename);
+            } else if (filename.startsWith("SearchParameter-DomainResource-")) {
+                // Common parameter for DomainResource subtypes only
+                domainResourceParams.add(sp);
+                log.debug("Loaded DomainResource parameter: {} ({})", sp.getName(), filename);
+            } else {
+                // Resource-specific parameter (e.g., SearchParameter-Patient-death-date.json)
+                for (Enumeration<VersionIndependentResourceTypesAll> base : sp.getBase()) {
+                    String resourceType = base.getCode();
+                    resourceSpecificParams
+                        .computeIfAbsent(resourceType, k -> new ArrayList<>())
+                        .add(sp);
+                    // Build lookup index
+                    parameterLookup.put(resourceType + ":" + sp.getName(), sp);
                 }
+                log.debug("Loaded resource-specific parameter: {} for {} ({})",
+                    sp.getName(), sp.getBase(), filename);
             }
+        } catch (Exception e) {
+            log.warn("Failed to load search parameter from {}: {}", resource.getFilename(), e.getMessage());
         }
     }
 
+    /**
+     * Get all search parameters applicable to a resource type.
+     *
+     * @param resourceType The FHIR resource type (e.g., "Patient")
+     * @return List of applicable SearchParameter definitions
+     */
     public List<SearchParameter> getSearchParameters(String resourceType) {
-        List<SearchParameter> params = new ArrayList<>(baseParameters);
-        params.addAll(resourceParameters.getOrDefault(resourceType, Collections.emptyList()));
+        List<SearchParameter> params = new ArrayList<>();
+
+        // 1. Add Resource base parameters (applies to ALL resources)
+        params.addAll(resourceBaseParams);
+
+        // 2. Add DomainResource parameters (only for non-Bundle/Parameters/Binary resources)
+        if (!NON_DOMAIN_RESOURCES.contains(resourceType)) {
+            params.addAll(domainResourceParams);
+        }
+
+        // 3. Add resource-specific parameters
+        params.addAll(resourceSpecificParams.getOrDefault(resourceType, Collections.emptyList()));
+
         return params;
     }
 
+    /**
+     * Check if a search parameter is defined for a resource type.
+     * Uses the 'name' element from SearchParameter JSON.
+     */
     public boolean isSearchParameterDefined(String resourceType, String paramName) {
-        return getSearchParameters(resourceType).stream()
-            .anyMatch(sp -> sp.getCode().equals(paramName));
+        return getSearchParameter(resourceType, paramName).isPresent();
     }
 
+    /**
+     * Get a specific search parameter by resource type and parameter name.
+     * The paramName should match the 'name' element in the SearchParameter JSON.
+     */
     public Optional<SearchParameter> getSearchParameter(String resourceType, String paramName) {
-        return getSearchParameters(resourceType).stream()
-            .filter(sp -> sp.getCode().equals(paramName))
+        // Check lookup cache first
+        SearchParameter cached = parameterLookup.get(resourceType + ":" + paramName);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
+
+        // Search in base parameters
+        for (SearchParameter sp : resourceBaseParams) {
+            if (sp.getName().equals(paramName)) {
+                return Optional.of(sp);
+            }
+        }
+
+        // Search in DomainResource parameters (if applicable)
+        if (!NON_DOMAIN_RESOURCES.contains(resourceType)) {
+            for (SearchParameter sp : domainResourceParams) {
+                if (sp.getName().equals(paramName)) {
+                    return Optional.of(sp);
+                }
+            }
+        }
+
+        // Search in resource-specific parameters
+        return resourceSpecificParams.getOrDefault(resourceType, Collections.emptyList())
+            .stream()
+            .filter(sp -> sp.getName().equals(paramName))
             .findFirst();
+    }
+
+    /**
+     * Get the search parameter type (token, string, date, reference, etc.)
+     */
+    public Optional<Enumerations.SearchParamType> getSearchParameterType(String resourceType, String paramName) {
+        return getSearchParameter(resourceType, paramName)
+            .map(SearchParameter::getType);
+    }
+
+    /**
+     * Get the FHIRPath expression for a search parameter.
+     */
+    public Optional<String> getSearchParameterExpression(String resourceType, String paramName) {
+        return getSearchParameter(resourceType, paramName)
+            .map(SearchParameter::getExpression);
+    }
+
+    /**
+     * Get supported comparators for a search parameter (eq, ne, gt, lt, ge, le, sa, eb, ap).
+     */
+    public Set<SearchParameter.SearchComparator> getSupportedComparators(String resourceType, String paramName) {
+        return getSearchParameter(resourceType, paramName)
+            .map(sp -> new HashSet<>(sp.getComparator()))
+            .orElse(Collections.emptySet());
+    }
+
+    /**
+     * Get supported modifiers for a search parameter (:exact, :contains, :missing, etc.).
+     */
+    public Set<SearchParameter.SearchModifierCode> getSupportedModifiers(String resourceType, String paramName) {
+        return getSearchParameter(resourceType, paramName)
+            .map(sp -> new HashSet<>(sp.getModifier()))
+            .orElse(Collections.emptySet());
+    }
+
+    /**
+     * Check if a resource type inherits from DomainResource.
+     */
+    public boolean isDomainResource(String resourceType) {
+        return !NON_DOMAIN_RESOURCES.contains(resourceType);
     }
 }
 ```
