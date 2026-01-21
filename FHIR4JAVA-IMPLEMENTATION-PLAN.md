@@ -131,254 +131,146 @@ profiles:
 # NOTE: Search parameters are NOT defined here - see fhir-config/searchparameters/
 ```
 
-### 1b. Search Parameter Configuration (FHIR Bundle Format)
+### 1b. Search Parameter Configuration (Individual FHIR R5 JSON Files)
 
-Search parameters are organized in `fhir-config/searchparameters/` as **FHIR Bundle resources in JSON format**:
-1. **Base search parameters** - Bundle containing common FHIR SearchParameter resources applicable to all resources
-2. **Resource-specific search parameters** - Bundle containing SearchParameter resources specific to each resource type
+Search parameters are loaded from `fhir-config/searchparameters/` as **individual FHIR R5 SearchParameter JSON files** (one search parameter per file), using the official HL7 FHIR R5 definitions.
 
-**File: `fhir-config/searchparameters/_base-searchparameters.json`** (Common search parameters as FHIR Bundle)
+**File Naming Convention:**
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| `SearchParameter-Resource-<param>.json` | Common params for ALL resources | `SearchParameter-Resource-id.json` |
+| `SearchParameter-DomainResource-<param>.json` | Common params for DomainResource subtypes | `SearchParameter-DomainResource-text.json` |
+| `SearchParameter-<ResourceType>-<param>.json` | Resource-specific params | `SearchParameter-Patient-death-date.json` |
+
+**Inheritance Rules:**
+| Resource Type | Inherits Search Parameters From |
+|--------------|--------------------------------|
+| Bundle, Parameters, Binary | `SearchParameter-Resource-*` only |
+| All other resources | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` |
+
+**Search Parameter Name:** The `name` element in the JSON file defines the search parameter name used in queries (e.g., `_id`, `_lastUpdated`, `death-date`).
+
+---
+
+**Example: `SearchParameter-Resource-id.json`** (Common parameter for ALL resources)
 ```json
 {
-  "resourceType": "Bundle",
-  "id": "base-searchparameters",
-  "type": "collection",
-  "entry": [
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Resource-id",
-        "url": "http://hl7.org/fhir/SearchParameter/Resource-id",
-        "name": "_id",
-        "status": "active",
-        "description": "Logical id of this artifact",
-        "code": "_id",
-        "base": ["Resource"],
-        "type": "token",
-        "expression": "Resource.id"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Resource-lastUpdated",
-        "url": "http://hl7.org/fhir/SearchParameter/Resource-lastUpdated",
-        "name": "_lastUpdated",
-        "status": "active",
-        "description": "When the resource version last changed",
-        "code": "_lastUpdated",
-        "base": ["Resource"],
-        "type": "date",
-        "expression": "Resource.meta.lastUpdated"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Resource-tag",
-        "url": "http://hl7.org/fhir/SearchParameter/Resource-tag",
-        "name": "_tag",
-        "status": "active",
-        "description": "Tags applied to this resource",
-        "code": "_tag",
-        "base": ["Resource"],
-        "type": "token",
-        "expression": "Resource.meta.tag"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Resource-profile",
-        "url": "http://hl7.org/fhir/SearchParameter/Resource-profile",
-        "name": "_profile",
-        "status": "active",
-        "description": "Profiles this resource claims to conform to",
-        "code": "_profile",
-        "base": ["Resource"],
-        "type": "reference",
-        "expression": "Resource.meta.profile"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Resource-security",
-        "url": "http://hl7.org/fhir/SearchParameter/Resource-security",
-        "name": "_security",
-        "status": "active",
-        "description": "Security Labels applied to this resource",
-        "code": "_security",
-        "base": ["Resource"],
-        "type": "token",
-        "expression": "Resource.meta.security"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Resource-source",
-        "url": "http://hl7.org/fhir/SearchParameter/Resource-source",
-        "name": "_source",
-        "status": "active",
-        "description": "Identifies where the resource comes from",
-        "code": "_source",
-        "base": ["Resource"],
-        "type": "uri",
-        "expression": "Resource.meta.source"
-      }
-    }
-  ]
+  "resourceType": "SearchParameter",
+  "id": "Resource-id",
+  "url": "http://hl7.org/fhir/SearchParameter/Resource-id",
+  "version": "5.0.0",
+  "name": "_id",
+  "status": "active",
+  "description": "Logical id of this artifact",
+  "code": "_id",
+  "base": ["Resource"],
+  "type": "token",
+  "expression": "Resource.id",
+  "processingMode": "normal"
 }
 ```
 
-**File: `fhir-config/searchparameters/patient-searchparameters.json`** (Patient-specific as FHIR Bundle)
+**Example: `SearchParameter-Resource-lastUpdated.json`** (Common parameter for ALL resources)
 ```json
 {
-  "resourceType": "Bundle",
-  "id": "patient-searchparameters",
-  "type": "collection",
-  "meta": {
-    "tag": [
-      {
-        "system": "http://fhir4java.org/tags",
-        "code": "include-base",
-        "display": "Include base search parameters"
-      }
-    ]
-  },
-  "entry": [
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-family",
-        "url": "http://hl7.org/fhir/SearchParameter/individual-family",
-        "name": "family",
-        "status": "active",
-        "description": "A portion of the family name of the patient",
-        "code": "family",
-        "base": ["Patient"],
-        "type": "string",
-        "expression": "Patient.name.family"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-given",
-        "url": "http://hl7.org/fhir/SearchParameter/individual-given",
-        "name": "given",
-        "status": "active",
-        "description": "A portion of the given name of the patient",
-        "code": "given",
-        "base": ["Patient"],
-        "type": "string",
-        "expression": "Patient.name.given"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-name",
-        "url": "http://hl7.org/fhir/SearchParameter/Patient-name",
-        "name": "name",
-        "status": "active",
-        "description": "A server defined search that may match any of the string fields in the HumanName",
-        "code": "name",
-        "base": ["Patient"],
-        "type": "string",
-        "expression": "Patient.name"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-birthdate",
-        "url": "http://hl7.org/fhir/SearchParameter/individual-birthdate",
-        "name": "birthdate",
-        "status": "active",
-        "description": "The patient's date of birth",
-        "code": "birthdate",
-        "base": ["Patient"],
-        "type": "date",
-        "expression": "Patient.birthDate"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-gender",
-        "url": "http://hl7.org/fhir/SearchParameter/individual-gender",
-        "name": "gender",
-        "status": "active",
-        "description": "Gender of the patient",
-        "code": "gender",
-        "base": ["Patient"],
-        "type": "token",
-        "expression": "Patient.gender"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-identifier",
-        "url": "http://hl7.org/fhir/SearchParameter/Patient-identifier",
-        "name": "identifier",
-        "status": "active",
-        "description": "A patient identifier",
-        "code": "identifier",
-        "base": ["Patient"],
-        "type": "token",
-        "expression": "Patient.identifier"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-active",
-        "url": "http://hl7.org/fhir/SearchParameter/Patient-active",
-        "name": "active",
-        "status": "active",
-        "description": "Whether the patient record is active",
-        "code": "active",
-        "base": ["Patient"],
-        "type": "token",
-        "expression": "Patient.active"
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-organization",
-        "url": "http://hl7.org/fhir/SearchParameter/Patient-organization",
-        "name": "organization",
-        "status": "active",
-        "description": "The organization that is the custodian of the patient record",
-        "code": "organization",
-        "base": ["Patient"],
-        "type": "reference",
-        "expression": "Patient.managingOrganization",
-        "target": ["Organization"]
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "SearchParameter",
-        "id": "Patient-general-practitioner",
-        "url": "http://hl7.org/fhir/SearchParameter/Patient-general-practitioner",
-        "name": "general-practitioner",
-        "status": "active",
-        "description": "Patient's nominated primary care provider",
-        "code": "general-practitioner",
-        "base": ["Patient"],
-        "type": "reference",
-        "expression": "Patient.generalPractitioner",
-        "target": ["Organization", "Practitioner", "PractitionerRole"]
-      }
-    }
-  ]
+  "resourceType": "SearchParameter",
+  "id": "Resource-lastUpdated",
+  "url": "http://hl7.org/fhir/SearchParameter/Resource-lastUpdated",
+  "version": "5.0.0",
+  "name": "_lastUpdated",
+  "status": "active",
+  "description": "When the resource version last changed",
+  "code": "_lastUpdated",
+  "base": ["Resource"],
+  "type": "date",
+  "expression": "Resource.meta.lastUpdated",
+  "processingMode": "normal",
+  "comparator": ["eq", "ne", "gt", "ge", "lt", "le", "sa", "eb", "ap"]
 }
 ```
+
+**Example: `SearchParameter-DomainResource-text.json`** (Common parameter for DomainResource subtypes only)
+```json
+{
+  "resourceType": "SearchParameter",
+  "id": "DomainResource-text",
+  "url": "http://hl7.org/fhir/SearchParameter/DomainResource-text",
+  "version": "5.0.0",
+  "name": "_text",
+  "status": "draft",
+  "description": "Search on the narrative of the resource",
+  "code": "_text",
+  "base": ["DomainResource"],
+  "type": "special",
+  "processingMode": "normal"
+}
+```
+
+**Example: `SearchParameter-Patient-death-date.json`** (Resource-specific parameter)
+```json
+{
+  "resourceType": "SearchParameter",
+  "id": "Patient-death-date",
+  "url": "http://hl7.org/fhir/SearchParameter/Patient-death-date",
+  "version": "5.0.0",
+  "name": "death-date",
+  "status": "active",
+  "description": "The date of death has been provided and satisfies this search value",
+  "code": "death-date",
+  "base": ["Patient"],
+  "type": "date",
+  "expression": "(Patient.deceased.ofType(dateTime))",
+  "processingMode": "normal",
+  "comparator": ["eq", "ne", "gt", "ge", "lt", "le", "sa", "eb", "ap"]
+}
+```
+
+**Example: `SearchParameter-Patient-identifier.json`** (Resource-specific parameter with modifiers)
+```json
+{
+  "resourceType": "SearchParameter",
+  "id": "Patient-identifier",
+  "url": "http://hl7.org/fhir/SearchParameter/Patient-identifier",
+  "version": "5.0.0",
+  "name": "identifier",
+  "status": "active",
+  "description": "A patient identifier",
+  "code": "identifier",
+  "base": ["Patient"],
+  "type": "token",
+  "expression": "Patient.identifier",
+  "processingMode": "normal",
+  "modifier": ["missing", "text", "not", "in", "not-in", "of-type"]
+}
+```
+
+---
+
+**Common Search Parameters (SearchParameter-Resource-*):**
+
+| File | Parameter | Type | Description |
+|------|-----------|------|-------------|
+| `SearchParameter-Resource-id.json` | `_id` | token | Logical id of this artifact |
+| `SearchParameter-Resource-lastUpdated.json` | `_lastUpdated` | date | When the resource version last changed |
+| `SearchParameter-Resource-tag.json` | `_tag` | token | Tags applied to this resource |
+| `SearchParameter-Resource-profile.json` | `_profile` | reference | Profiles this resource claims to conform to |
+| `SearchParameter-Resource-security.json` | `_security` | token | Security Labels applied to this resource |
+| `SearchParameter-Resource-source.json` | `_source` | uri | Identifies where the resource comes from |
+| `SearchParameter-Resource-text.json` | `_text` | special | Text search against the narrative |
+| `SearchParameter-Resource-content.json` | `_content` | special | Text search against the entire resource |
+| `SearchParameter-Resource-list.json` | `_list` | special | Return resources on the list |
+| `SearchParameter-Resource-has.json` | `_has` | special | Reverse chaining |
+| `SearchParameter-Resource-type.json` | `_type` | special | Resource type filter (system-level search) |
+| `SearchParameter-Resource-filter.json` | `_filter` | special | Filter expression |
+| `SearchParameter-Resource-query.json` | `_query` | special | Named query |
+| `SearchParameter-Resource-language.json` | `_language` | token | Language of the resource content |
+| `SearchParameter-Resource-in.json` | `_in` | special | Inclusion in a compartment |
+
+**DomainResource-specific Parameters (SearchParameter-DomainResource-*):**
+
+| File | Parameter | Type | Description |
+|------|-----------|------|-------------|
+| `SearchParameter-DomainResource-text.json` | `_text` | special | Search on the narrative (DomainResource level) |
 
 ### 2. Resource Registry
 
