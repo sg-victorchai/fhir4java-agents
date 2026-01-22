@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Maven wrapper distribution (will be downloaded during build)
+.mvn/wrapper/dists/
+.mvn/wrapper/maven-wrapper.jar
+
+# Build outputs
+target/
+**/target/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Documentation
+*.md
+!README.md
+
+# Docker files (prevent recursive copying)
+docker-compose.yml
+docker-compose.override.yml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test outputs
+test-output/
+surefire-reports/
+
+# FHIR R5 core resources (not needed for build)
+fhir-r5-core/
