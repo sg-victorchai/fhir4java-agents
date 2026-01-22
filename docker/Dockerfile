@@ -15,8 +15,13 @@ COPY fhir4java-plugin/pom.xml fhir4java-plugin/
 COPY fhir4java-api/pom.xml fhir4java-api/
 COPY fhir4java-server/pom.xml fhir4java-server/
 
-# Download dependencies
-RUN chmod +x mvnw
+# Make mvnw executable and create unzip wrapper to handle overwrites
+RUN chmod +x mvnw && \
+    mv /usr/bin/unzip /usr/bin/unzip-orig && \
+    echo '#!/bin/sh\n/usr/bin/unzip-orig -o "$@"' > /usr/bin/unzip && \
+    chmod +x /usr/bin/unzip
+
+# Download dependencies (for better layer caching)
 RUN ./mvnw dependency:go-offline -B
 
 # Copy source code
