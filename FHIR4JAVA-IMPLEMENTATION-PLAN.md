@@ -4299,7 +4299,7 @@ volumes:
 
 ### Phase 1: Project Foundation
 1. Create Maven multi-module project structure
-2. Configure parent POM with Java 25, Spring Boot 3.4, HAPI FHIR dependencies
+2. Configure parent POM with Java 21, Spring Boot 3.4, HAPI FHIR dependencies
 3. Set up Docker and docker-compose files
 4. Create database initialization scripts with schema setup
 5. Configure Spring Boot application with JPA
@@ -4310,38 +4310,66 @@ volumes:
 3. Implement InteractionGuard for enable/disable checking
 4. Create FhirContext factory for R4B and R5 support
 5. Build basic JPA entities and repositories
+6. Implement SearchParameterRegistry with individual JSON file loading:
+   - Load `SearchParameter-Resource-*.json` for common parameters (all resources)
+   - Load `SearchParameter-DomainResource-*.json` for DomainResource subtypes
+   - Load `SearchParameter-<ResourceType>-*.json` for resource-specific parameters
+   - Implement inheritance rules (Bundle/Parameters/Binary inherit Resource-* only)
 
 ### Phase 3: API Layer
 1. Implement FhirResourceController with all CRUD endpoints
 2. Create request/response interceptors
 3. Build content negotiation (JSON/XML)
 4. Implement error handling with OperationOutcome responses
+5. Implement extended operation endpoints (`/$operation`, `/{id}/$operation`)
 
 ### Phase 4: Validation Framework
 1. Integrate HAPI FHIR validation with StructureDefinition support
-2. Implement search parameter validation
-3. Build OperationDefinition validation
+2. Implement search parameter validation using SearchParameterRegistry
+3. Build OperationDefinition validation for extended operations
 4. Create validation result to OperationOutcome converter
 
 ### Phase 5: Plugin System
-1. Define plugin SPI interfaces
-2. Implement PluginManager with Spring autowiring
-3. Build default AuditPlugin with database logging
-4. Build default TelemetryPlugin with metrics
-5. Build default PerformancePlugin with step tracking
-6. Create BusinessLogicPlugin interface for custom implementations
+1. Define plugin SPI interfaces:
+   - FhirPlugin (base interface)
+   - AuthenticationPlugin, AuthorizationPlugin, CachePlugin
+   - AuditPlugin, TelemetryPlugin, PerformancePlugin
+   - **BusinessLogicPlugin** with OperationDescriptor-based routing
+2. Implement OperationType enum (READ, CREATE, UPDATE, DELETE, SEARCH, OPERATION)
+3. Implement OperationDescriptor for flexible plugin matching:
+   - Support CRUD operations by resourceType + operationType
+   - Support extended operations by resourceType + operationCode
+4. Implement PluginOrchestrator with:
+   - `executeCrudRequest()` for standard CRUD operations
+   - `executeExtendedOperation()` for $merge, $validate, etc.
+   - Unified pipeline with descriptor-based plugin routing
+5. Build default plugins: AuditPlugin, TelemetryPlugin, PerformancePlugin
+6. Create BusinessLogicPlugin with before/after hooks for both CRUD and extended operations
 
 ### Phase 6: Extended Operations
 1. Implement ExtendedOperationRegistry
 2. Build OperationDefinition loader and validator
 3. Create InternalOperationExecutor for patch/search
-4. Implement example extended operations
+4. Implement Extended Operations Pipeline:
+   - Operation resolution and input validation
+   - **BusinessLogicPlugin BEFORE hooks** (validation, transformation, abort)
+   - Core operation execution via ExtendedOperationHandler
+   - **BusinessLogicPlugin AFTER hooks** (enrichment, notifications, sync)
+5. Implement example extended operations ($merge, $validate, $everything)
+6. Add BDD tests for extended operations (features/operations/*.feature)
 
 ### Phase 7: Advanced Features
-1. Implement search functionality with index tables
+1. Implement search functionality with index tables:
+   - Load search parameters from individual FHIR R5 JSON files
+   - Support all common parameters (_id, _lastUpdated, _tag, _profile, etc.)
+   - Support search modifiers (:exact, :contains, :missing, :not, etc.)
+   - Support search prefixes (eq, ne, gt, lt, ge, le, sa, eb, ap)
 2. Add history/vread support
-3. Build CapabilityStatement generator
+3. Build CapabilityStatement generator with:
+   - Auto-discovery of search parameters from SearchParameterRegistry
+   - Extended operations listing from ExtendedOperationRegistry
 4. Add batch/transaction support (optional)
+5. Add BDD tests for plugins (features/plugins/*.feature)
 
 ---
 
@@ -4395,6 +4423,10 @@ volumes:
 | plugin | `PerformancePlugin.java` | Performance tracking interface |
 | plugin | `DatabasePerformancePlugin.java` | Database performance tracking |
 | plugin | `BusinessLogicPlugin.java` | Business logic plugin interface |
+| plugin | `OperationType.java` | Enum for CRUD + OPERATION types |
+| plugin | `OperationDescriptor.java` | Descriptor for plugin matching (resourceType, opType, opCode) |
+| plugin | `BusinessContext.java` | Context for business logic plugins (request, resource, params) |
+| plugin | `OperationResult.java` | Result from core operation (resource, params, outcome) |
 | plugin | `McpPluginManager.java` | MCP plugin manager for external plugins |
 | plugin | `HybridPluginOrchestrator.java` | Orchestrator for Spring + MCP plugins |
 | plugin | `McpPluginConfig.java` | MCP plugin configuration |
@@ -4414,6 +4446,16 @@ volumes:
 | db | `indexes/02-search-indexes.sql` | Search parameter indexes |
 | db | `migrations/V1__initial_schema.sql` | Flyway initial migration |
 | db | `partitions/partition-maintenance.sql` | Partition management scripts |
+| test | `features/operations/patient-merge.feature` | BDD tests for $merge operation |
+| test | `features/operations/resource-validate.feature` | BDD tests for $validate operation |
+| test | `features/operations/patient-everything.feature` | BDD tests for $everything operation |
+| test | `features/operations/operation-errors.feature` | BDD tests for operation error handling |
+| test | `features/plugins/before-operation-plugins.feature` | BDD tests for before-operation hooks |
+| test | `features/plugins/after-operation-plugins.feature` | BDD tests for after-operation hooks |
+| test | `features/plugins/plugin-chain-execution.feature` | BDD tests for plugin chain ordering |
+| test | `features/plugins/plugin-crud-operations.feature` | BDD tests for plugins with CRUD |
+| test | `steps/ExtendedOperationSteps.java` | Step definitions for extended operations |
+| test | `steps/BusinessLogicPluginSteps.java` | Step definitions for business logic plugins |
 
 ---
 
@@ -4447,11 +4489,26 @@ volumes:
    - Submit resource not matching required profile - validation error
    - Submit resource matching required profile - succeeds
 
-6. **Extended Operation Testing**
-   - Call defined extended operation - executes successfully
-   - Call undefined extended operation - returns 404 error
+6. **Extended Operation Testing** (BDD: `features/operations/*.feature`)
+   - **$merge Operation** (`@operations @merge`):
+     - Type-level and instance-level invocation
+     - Validation: source/target exist, not same patient, source is active
+     - Error handling: missing params, non-existent patients
+     - BusinessLogicPlugin BEFORE hooks execute (validation, transformation)
+     - BusinessLogicPlugin AFTER hooks execute (notifications, sync)
+   - **$validate Operation** (`@operations @validate`):
+     - Validate resource against base spec
+     - Validate against specific profile
+     - Validate with mode (create, update)
+   - **$everything Operation** (`@operations @everything`):
+     - Return all related resources
+     - Support date range and _type filters
+   - **Error Handling** (`@operations @errors`):
+     - Call undefined operation - returns 404
+     - Call operation on wrong resource type - returns 404
+     - Invalid parameter types - returns 400
 
-7. **Plugin Testing**
+7. **Plugin Testing** (BDD: `features/plugins/*.feature`)
    - **Cache Plugin**:
      - First GET returns from database, second GET returns from cache (verify with trace logs)
      - Cache invalidation on PUT/DELETE
@@ -4476,11 +4533,28 @@ volumes:
    - **Performance Plugin**:
      - Verify performance traces are created in fhir_performance schema
      - Verify each step (auth, cache, business, core) is traced
-   - **Business Logic Plugin**:
-     - Multiple plugins execute in order (by @Order annotation)
-     - Plugin can abort operation (continueChain=false)
-     - Plugin can modify resource before create/update
-     - Async plugins (afterOperation) don't block response
+   - **Business Logic Plugin** (BDD: `features/plugins/*.feature`):
+     - **Before Operation Plugins** (`@plugins @before-operation`):
+       - Plugins execute in order (by @Order annotation)
+       - Plugin can abort operation (PluginResult.failure())
+       - Plugin can modify resource/parameters before operation
+       - Plugin can validate business rules and return errors
+       - Short-circuit: continueChain=false stops chain but continues operation
+     - **After Operation Plugins** (`@plugins @after-operation`):
+       - Plugins execute after core operation completes
+       - Plugin can transform/enrich output
+       - Plugin can trigger notifications, webhooks, sync
+       - Async plugins don't block response
+       - Plugin errors logged but don't fail operation
+     - **Plugin Chain Execution** (`@plugins @chain`):
+       - Plugins execute in order priority
+       - Context attributes shared across plugins
+       - Selective execution based on OperationDescriptor matching
+     - **Extended Operation Support**:
+       - BusinessLogicPlugin.supports(OperationDescriptor) matches by operationCode
+       - Before hooks can validate/transform input Parameters
+       - After hooks can enrich output, trigger side effects
+       - Example: PatientMergeValidationPlugin for $merge
    - **Telemetry/OTEL Plugin**:
      - Verify MINIMAL level only traces request lifecycle
      - Verify STANDARD level traces auth, cache, validation, business, core steps
