@@ -4554,7 +4554,13 @@ fhir4java-server/
         │           │   ├── HistorySteps.java
         │           │   ├── ValidationSteps.java
         │           │   ├── CacheSteps.java
-        │           │   └── SecuritySteps.java
+        │           │   ├── SecuritySteps.java
+        │           │   ├── ExtendedOperationSteps.java      # Extended operation steps
+        │           │   └── BusinessLogicPluginSteps.java    # Business logic plugin steps
+        │           ├── plugins/
+        │           │   ├── TestPatientConsentPlugin.java    # Test plugin for consent validation
+        │           │   ├── TestPatientMergePlugin.java      # Test plugin for $merge
+        │           │   └── TestAuditCapturePlugin.java      # Test plugin to capture audit events
         │           └── context/
         │               └── TestContext.java
         └── resources/
@@ -4580,16 +4586,31 @@ fhir4java-server/
             │   ├── security/
             │   │   ├── authentication.feature
             │   │   └── authorization.feature
+            │   ├── operations/                              # Extended operations tests
+            │   │   ├── patient-merge.feature                # Patient $merge operation
+            │   │   ├── patient-everything.feature           # Patient $everything operation
+            │   │   ├── resource-validate.feature            # $validate operation
+            │   │   └── operation-errors.feature             # Operation error handling
+            │   ├── plugins/                                 # Business logic plugin tests
+            │   │   ├── before-operation-plugins.feature     # Before operation plugin tests
+            │   │   ├── after-operation-plugins.feature      # After operation plugin tests
+            │   │   ├── plugin-chain-execution.feature       # Plugin chain ordering
+            │   │   └── plugin-crud-operations.feature       # Plugins with CRUD operations
             │   └── metadata/
             │       └── capability-statement.feature
             ├── test-data/
             │   ├── patients/
             │   │   ├── valid-patient.json
             │   │   ├── invalid-patient.json
-            │   │   └── patient-us-core.json
-            │   └── observations/
-            │       ├── valid-observation.json
-            │       └── vital-signs-observation.json
+            │   │   ├── patient-us-core.json
+            │   │   ├── patient-for-merge-source.json        # Source patient for merge tests
+            │   │   └── patient-for-merge-target.json        # Target patient for merge tests
+            │   ├── observations/
+            │   │   ├── valid-observation.json
+            │   │   └── vital-signs-observation.json
+            │   └── operations/
+            │       ├── merge-parameters.json                # $merge input parameters
+            │       └── validate-parameters.json             # $validate input parameters
             └── application-test.yml
 ```
 
@@ -6422,6 +6443,704 @@ Feature: Capability Statement
 
 ---
 
+### Extended Operations Feature Files
+
+#### 1. Patient $merge Operation
+
+**File: `features/operations/patient-merge.feature`**
+```gherkin
+@operations @merge @patient
+Feature: Patient $merge Extended Operation
+  As a healthcare administrator
+  I want to merge duplicate Patient records
+  So that I can maintain clean patient data
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the $merge operation is enabled for Patient
+
+  @smoke
+  Scenario: Successfully merge two Patient records (type-level)
+    Given a source Patient exists with id "patient-source-1"
+    And a target Patient exists with id "patient-target-1"
+    When I invoke the $merge operation on Patient type with parameters:
+      """
+      {
+        "resourceType": "Parameters",
+        "parameter": [
+          {
+            "name": "source-patient",
+            "valueReference": { "reference": "Patient/patient-source-1" }
+          },
+          {
+            "name": "target-patient",
+            "valueReference": { "reference": "Patient/patient-target-1" }
+          }
+        ]
+      }
+      """
+    Then the response status code should be 200
+    And the response should contain a "Parameters" resource
+    And the output should contain parameter "return" with a Patient reference
+    And the source Patient should be marked as inactive
+    And the source Patient should have a link to the target Patient
+
+  Scenario: Successfully merge two Patient records (instance-level)
+    Given a source Patient exists with id "patient-source-2"
+    And a target Patient exists with id "patient-target-2"
+    When I invoke the $merge operation on Patient instance "patient-target-2" with parameters:
+      """
+      {
+        "resourceType": "Parameters",
+        "parameter": [
+          {
+            "name": "source-patient",
+            "valueReference": { "reference": "Patient/patient-source-2" }
+          }
+        ]
+      }
+      """
+    Then the response status code should be 200
+    And the source Patient should be merged into target
+
+  @error-handling
+  Scenario: Merge fails when source patient does not exist
+    Given a target Patient exists with id "patient-target-3"
+    When I invoke the $merge operation with non-existent source patient "non-existent-source"
+    Then the response status code should be 404
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should have severity "error"
+    And the OperationOutcome should have code "not-found"
+    And the OperationOutcome message should contain "Source patient not found"
+
+  @error-handling
+  Scenario: Merge fails when target patient does not exist
+    Given a source Patient exists with id "patient-source-4"
+    When I invoke the $merge operation with non-existent target patient "non-existent-target"
+    Then the response status code should be 404
+    And the OperationOutcome message should contain "Target patient not found"
+
+  @validation
+  Scenario: Merge fails when merging patient with themselves
+    Given a Patient exists with id "patient-self"
+    When I invoke the $merge operation with source and target both "patient-self"
+    Then the response status code should be 400
+    And the OperationOutcome should have code "invalid"
+    And the OperationOutcome message should contain "Cannot merge patient with themselves"
+
+  @validation
+  Scenario: Merge fails when source patient is inactive
+    Given an inactive source Patient exists with id "inactive-source"
+    And a target Patient exists with id "patient-target-5"
+    When I invoke the $merge operation on Patient type with parameters:
+      """
+      {
+        "resourceType": "Parameters",
+        "parameter": [
+          { "name": "source-patient", "valueReference": { "reference": "Patient/inactive-source" } },
+          { "name": "target-patient", "valueReference": { "reference": "Patient/patient-target-5" } }
+        ]
+      }
+      """
+    Then the response status code should be 422
+    And the OperationOutcome message should contain "Source patient is not active"
+
+  @validation
+  Scenario: Merge fails with missing required parameters
+    When I invoke the $merge operation on Patient type with empty parameters
+    Then the response status code should be 400
+    And the OperationOutcome should have code "required"
+    And the OperationOutcome message should contain "source-patient"
+
+  @authorization
+  Scenario: Merge requires appropriate permissions
+    Given I am authenticated as a user without merge permissions
+    And a source Patient exists with id "patient-source-6"
+    And a target Patient exists with id "patient-target-6"
+    When I invoke the $merge operation on Patient type
+    Then the response status code should be 403
+    And the OperationOutcome should have code "forbidden"
+```
+
+#### 2. Resource $validate Operation
+
+**File: `features/operations/resource-validate.feature`**
+```gherkin
+@operations @validate
+Feature: Resource $validate Extended Operation
+  As a healthcare developer
+  I want to validate FHIR resources against profiles
+  So that I can ensure data quality before persisting
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the $validate operation is enabled
+
+  @smoke @patient
+  Scenario: Validate a valid Patient resource
+    Given I have a valid Patient resource
+    When I invoke the $validate operation on Patient type with the resource
+    Then the response status code should be 200
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should have no errors
+    And the OperationOutcome should have severity "information" or "warning" only
+
+  @patient
+  Scenario: Validate an invalid Patient resource
+    Given I have a Patient resource missing required elements
+    When I invoke the $validate operation on Patient type with the resource
+    Then the response status code should be 200
+    And the OperationOutcome should have severity "error"
+    And the OperationOutcome should describe the validation errors
+
+  @profile
+  Scenario: Validate Patient against US Core profile
+    Given I have a Patient resource
+    When I invoke the $validate operation with profile "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"
+    Then the response status code should be 200
+    And the OperationOutcome should indicate profile validation results
+
+  @mode
+  Scenario: Validate in create mode
+    Given I have a valid Patient resource without an id
+    When I invoke the $validate operation with mode "create"
+    Then the response status code should be 200
+    And the validation should apply create-mode rules
+
+  @mode
+  Scenario: Validate in update mode
+    Given a Patient resource exists with id "existing-patient"
+    And I have an updated Patient resource for "existing-patient"
+    When I invoke the $validate operation with mode "update"
+    Then the response status code should be 200
+    And the validation should apply update-mode rules
+
+  @observation
+  Scenario: Validate Observation with reference to existing Patient
+    Given a Patient resource exists with id "referenced-patient"
+    And I have an Observation referencing "Patient/referenced-patient"
+    When I invoke the $validate operation on Observation type with the resource
+    Then the response status code should be 200
+    And the reference validation should pass
+
+  @instance-level
+  Scenario: Validate existing resource instance
+    Given a Patient resource exists with id "validate-instance"
+    When I send a GET request to "/fhir/r5/Patient/validate-instance/$validate"
+    Then the response status code should be 200
+    And the response should contain an "OperationOutcome" resource
+```
+
+#### 3. Patient $everything Operation
+
+**File: `features/operations/patient-everything.feature`**
+```gherkin
+@operations @everything @patient
+Feature: Patient $everything Extended Operation
+  As a healthcare application
+  I want to retrieve all data for a patient
+  So that I can provide a complete patient summary
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And the $everything operation is enabled for Patient
+
+  @smoke
+  Scenario: Retrieve all resources for a patient
+    Given a Patient exists with id "everything-patient"
+    And the Patient has 3 related Observations
+    And the Patient has 2 related Conditions
+    And the Patient has 1 related Encounter
+    When I invoke the $everything operation on Patient instance "everything-patient"
+    Then the response status code should be 200
+    And the response should be a Bundle of type "searchset"
+    And the Bundle should contain the Patient resource
+    And the Bundle should contain 3 Observation resources
+    And the Bundle should contain 2 Condition resources
+    And the Bundle should contain 1 Encounter resource
+
+  Scenario: $everything with date range filter
+    Given a Patient exists with id "dated-patient"
+    And the Patient has Observations from various dates
+    When I invoke the $everything operation with parameters:
+      | parameter | value      |
+      | start     | 2024-01-01 |
+      | end       | 2024-06-30 |
+    Then the Bundle should only contain resources within the date range
+
+  Scenario: $everything with _type filter
+    Given a Patient exists with id "typed-patient"
+    And the Patient has various related resources
+    When I invoke the $everything operation with parameter "_type" = "Observation,Condition"
+    Then the Bundle should only contain Patient, Observation, and Condition resources
+
+  Scenario: $everything with pagination
+    Given a Patient exists with many related resources
+    When I invoke the $everything operation with parameter "_count" = "10"
+    Then the Bundle should contain at most 10 entries
+    And the Bundle should have pagination links if more resources exist
+
+  @authorization
+  Scenario: $everything respects access controls
+    Given a Patient exists with id "restricted-patient"
+    And the Patient has some resources I am not authorized to see
+    When I invoke the $everything operation on Patient instance "restricted-patient"
+    Then the Bundle should only contain resources I am authorized to access
+```
+
+#### 4. Operation Error Handling
+
+**File: `features/operations/operation-errors.feature`**
+```gherkin
+@operations @errors
+Feature: Extended Operation Error Handling
+  As a FHIR client
+  I want clear error responses from operations
+  So that I can handle failures appropriately
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  Scenario: Invoke undefined operation
+    When I invoke an undefined operation "$undefined-op" on Patient type
+    Then the response status code should be 404
+    And the response should contain an "OperationOutcome" resource
+    And the OperationOutcome should have code "not-supported"
+    And the OperationOutcome message should contain "Operation $undefined-op is not supported"
+
+  Scenario: Invoke operation on wrong resource type
+    Given $merge operation is only enabled for Patient
+    When I invoke the $merge operation on Observation type
+    Then the response status code should be 404
+    And the OperationOutcome message should contain "not supported for Observation"
+
+  Scenario: Invoke instance-level operation on type level
+    Given $everything is only available at instance level
+    When I invoke the $everything operation on Patient type (not instance)
+    Then the response status code should be 405
+    And the OperationOutcome should have code "not-supported"
+
+  Scenario: Invoke type-level operation on instance level
+    Given $bulk-export is only available at type level
+    When I invoke the $bulk-export operation on Patient instance "some-patient"
+    Then the response status code should be 405
+
+  Scenario: Operation with invalid parameter type
+    When I invoke the $merge operation with invalid parameter type:
+      """
+      {
+        "resourceType": "Parameters",
+        "parameter": [
+          {
+            "name": "source-patient",
+            "valueString": "not-a-reference"
+          }
+        ]
+      }
+      """
+    Then the response status code should be 400
+    And the OperationOutcome should have code "invalid"
+    And the OperationOutcome message should contain "Expected Reference"
+
+  Scenario: Operation timeout handling
+    Given an operation that takes longer than timeout
+    When I invoke the slow operation with a 5 second timeout
+    Then the response status code should be 408 or 504
+    And the OperationOutcome should indicate timeout
+```
+
+---
+
+### Business Logic Plugin Feature Files
+
+#### 1. Before Operation Plugins
+
+**File: `features/plugins/before-operation-plugins.feature`**
+```gherkin
+@plugins @before-operation
+Feature: Before Operation Business Logic Plugins
+  As a FHIR server administrator
+  I want to execute business logic before operations
+  So that I can enforce rules, validate data, and transform inputs
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  # ===== CRUD Operation Plugins =====
+
+  @crud @create
+  Scenario: Before-plugin validates Patient consent on create
+    Given the PatientConsentPlugin is enabled
+    And I have a Patient resource without consent flag
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 422
+    And the OperationOutcome should have severity "error"
+    And the OperationOutcome message should contain "Patient consent not provided"
+
+  @crud @create
+  Scenario: Before-plugin allows Patient create with valid consent
+    Given the PatientConsentPlugin is enabled
+    And I have a Patient resource with consent flag set to true
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 201
+    And the Patient resource should be created successfully
+
+  @crud @update
+  Scenario: Before-plugin validates on update
+    Given the PatientConsentPlugin is enabled
+    And a Patient resource exists with id "consent-update-test"
+    And I modify the Patient to remove consent flag
+    When I send a PUT request to "/fhir/r5/Patient/consent-update-test"
+    Then the response status code should be 422
+    And the OperationOutcome message should contain "consent"
+
+  @crud @create
+  Scenario: Before-plugin enriches Observation on create
+    Given the ObservationEnrichmentPlugin is enabled
+    And I have an Observation with a numeric value but no interpretation
+    When I send a POST request to "/fhir/r5/Observation"
+    Then the response status code should be 201
+    And the Observation should have an auto-populated interpretation
+
+  # ===== Extended Operation Plugins =====
+
+  @operations @merge
+  Scenario: Before-plugin validates $merge business rules
+    Given the PatientMergeValidationPlugin is enabled
+    And a source Patient exists with id "merge-source-plugin"
+    And a target Patient exists with id "merge-target-plugin"
+    And the source patient has an open encounter
+    When I invoke the $merge operation
+    Then the response status code should be 422
+    And the OperationOutcome message should contain "Cannot merge patient with open encounters"
+
+  @operations @merge
+  Scenario: Before-plugin transforms $merge input parameters
+    Given the PatientMergeTransformPlugin is enabled
+    And source and target Patients exist
+    When I invoke the $merge operation
+    Then the plugin should resolve patient references before execution
+    And the resolved patients should be available to the operation handler
+
+  @operations @validate
+  Scenario: Before-plugin adds custom validation rules
+    Given the CustomValidationPlugin is enabled
+    And I have a Patient resource
+    When I invoke the $validate operation
+    Then the plugin should apply custom business validation rules
+    And the validation output should include custom check results
+
+  @abort
+  Scenario: Before-plugin can abort operation with failure
+    Given a before-plugin that always fails is enabled
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the response status code should be 422
+    And the response should contain an "OperationOutcome" resource
+    And the core operation should NOT have been executed
+    And after-plugins should NOT have been executed
+```
+
+#### 2. After Operation Plugins
+
+**File: `features/plugins/after-operation-plugins.feature`**
+```gherkin
+@plugins @after-operation
+Feature: After Operation Business Logic Plugins
+  As a FHIR server administrator
+  I want to execute business logic after operations
+  So that I can transform outputs, trigger notifications, and log events
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  # ===== CRUD Operation Plugins =====
+
+  @crud @create
+  Scenario: After-plugin triggers notification on Patient create
+    Given the PatientNotificationPlugin is enabled
+    And the notification service is mocked
+    When I create a new Patient resource
+    Then the response status code should be 201
+    And a notification should have been sent with event "patient.created"
+    And the notification should contain the Patient resource id
+
+  @crud @update
+  Scenario: After-plugin logs audit event on update
+    Given the AuditLoggingPlugin is enabled
+    And a Patient exists with id "audit-update-test"
+    When I update the Patient resource
+    Then the response status code should be 200
+    And an audit event should be logged with action "update"
+    And the audit event should contain before and after resource versions
+
+  @crud @delete
+  Scenario: After-plugin triggers cleanup on delete
+    Given the ResourceCleanupPlugin is enabled
+    And a Patient exists with related Observations
+    When I delete the Patient resource
+    Then the response status code should be 204
+    And the cleanup plugin should have been notified
+    And related resources cleanup should be scheduled
+
+  # ===== Extended Operation Plugins =====
+
+  @operations @merge
+  Scenario: After-plugin triggers notification on successful merge
+    Given the PatientMergeNotificationPlugin is enabled
+    And source and target Patients exist
+    When I invoke the $merge operation successfully
+    Then a notification should be sent with event "patient.merged"
+    And the notification should contain source and target patient ids
+
+  @operations @merge
+  Scenario: After-plugin syncs merge to external system
+    Given the ExternalSystemSyncPlugin is enabled
+    And source and target Patients exist
+    When I invoke the $merge operation successfully
+    Then the plugin should sync the merge to the external system
+    And the sync request should contain merge details
+
+  @operations @validate
+  Scenario: After-plugin enriches validation output
+    Given the ValidationEnrichmentPlugin is enabled
+    And I have a Patient resource
+    When I invoke the $validate operation
+    Then the response should contain additional validation metadata
+    And the output should include "validation-duration-ms" parameter
+
+  @async
+  Scenario: After-plugin runs asynchronously without blocking response
+    Given an async NotificationPlugin is enabled
+    When I create a new Patient resource
+    Then the response should be returned immediately
+    And the notification should be sent asynchronously
+    And response time should not include notification processing time
+
+  @transform
+  Scenario: After-plugin can transform operation result
+    Given the ResultTransformPlugin is enabled
+    When I read a Patient resource
+    Then the response should include additional computed fields
+    And the "fullName" field should be populated from name components
+```
+
+#### 3. Plugin Chain Execution
+
+**File: `features/plugins/plugin-chain-execution.feature`**
+```gherkin
+@plugins @chain
+Feature: Plugin Chain Execution Order
+  As a FHIR server administrator
+  I want plugins to execute in a defined order
+  So that I can control the processing pipeline
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+
+  @order
+  Scenario: Before-plugins execute in order priority
+    Given the following before-plugins are enabled with orders:
+      | plugin                     | order |
+      | ValidationPlugin           | 100   |
+      | EnrichmentPlugin           | 200   |
+      | AuditPrepPlugin            | 300   |
+    When I create a new Patient resource
+    Then plugins should execute in order: ValidationPlugin, EnrichmentPlugin, AuditPrepPlugin
+
+  @order
+  Scenario: After-plugins execute in order priority
+    Given the following after-plugins are enabled with orders:
+      | plugin                     | order |
+      | TransformPlugin            | 100   |
+      | NotificationPlugin         | 200   |
+      | AuditLogPlugin             | 300   |
+    When I create a new Patient resource
+    Then after-plugins should execute in order: TransformPlugin, NotificationPlugin, AuditLogPlugin
+
+  @short-circuit
+  Scenario: Before-plugin can stop chain but continue operation
+    Given plugins A (order 100), B (order 200), C (order 300) are enabled
+    And plugin B returns continueChain=false but success=true
+    When I create a new Patient resource
+    Then plugin A should execute
+    And plugin B should execute
+    And plugin C should NOT execute
+    And the core operation should execute
+    And the Patient should be created
+
+  @abort
+  Scenario: Before-plugin failure stops entire pipeline
+    Given plugins A (order 100), B (order 200), C (order 300) are enabled
+    And plugin A returns failure
+    When I create a new Patient resource
+    Then plugin A should execute
+    And plugin B should NOT execute
+    And the core operation should NOT execute
+    And after-plugins should NOT execute
+
+  @selective
+  Scenario: Plugins only execute for supported operations
+    Given PatientPlugin supports only Patient resources
+    And ObservationPlugin supports only Observation resources
+    When I create a new Patient resource
+    Then PatientPlugin should execute
+    And ObservationPlugin should NOT execute
+
+  @extended-operation
+  Scenario: Plugin chain works for extended operations
+    Given the following plugins support $merge:
+      | plugin                     | order | phase  |
+      | MergeValidationPlugin      | 100   | before |
+      | MergeTransformPlugin       | 200   | before |
+      | MergeNotificationPlugin    | 100   | after  |
+      | MergeAuditPlugin           | 200   | after  |
+    When I invoke the $merge operation
+    Then before-plugins execute: MergeValidationPlugin, MergeTransformPlugin
+    And after-plugins execute: MergeNotificationPlugin, MergeAuditPlugin
+
+  @context-sharing
+  Scenario: Plugins share context attributes
+    Given PluginA stores attribute "validatedAt" in context
+    And PluginB reads attribute "validatedAt" from context
+    When I create a new Patient resource
+    Then PluginB should have access to the "validatedAt" attribute
+
+  @error-handling
+  Scenario: After-plugin errors are logged but don't fail operation
+    Given an after-plugin that throws an exception
+    When I create a new Patient resource
+    Then the response status code should be 201
+    And the Patient should be created
+    And the plugin error should be logged
+```
+
+#### 4. Plugins with CRUD Operations
+
+**File: `features/plugins/plugin-crud-operations.feature`**
+```gherkin
+@plugins @crud
+Feature: Business Logic Plugins with CRUD Operations
+  As a FHIR server administrator
+  I want plugins to integrate with all CRUD operations
+  So that I can apply consistent business logic
+
+  Background:
+    Given the FHIR server is running
+    And I am authenticated with valid credentials
+    And I set the FHIR version to "R5"
+    And business logic plugins are enabled
+
+  # ===== CREATE =====
+  @create
+  Scenario: Plugin executes before and after CREATE
+    Given the audit capture plugin is enabled
+    When I create a new Patient resource
+    Then the before-create hook should have been called
+    And the after-create hook should have been called
+    And audit should capture operationType "CREATE"
+
+  @create
+  Scenario: Plugin can modify resource before CREATE
+    Given the AutoTimestampPlugin is enabled
+    And I have a Patient resource without meta.tag
+    When I send a POST request to "/fhir/r5/Patient"
+    Then the created Patient should have meta.tag "created-by-system"
+
+  # ===== READ =====
+  @read
+  Scenario: Plugin executes after READ
+    Given a Patient exists with id "read-plugin-test"
+    And the read logging plugin is enabled
+    When I read the Patient resource
+    Then the after-read hook should have been called
+    And the access should be logged
+
+  @read
+  Scenario: Plugin can filter fields on READ
+    Given a Patient exists with sensitive data
+    And the SensitiveDataFilterPlugin is enabled
+    When I read the Patient resource
+    Then sensitive fields should be redacted from response
+
+  # ===== UPDATE =====
+  @update
+  Scenario: Plugin executes before and after UPDATE
+    Given a Patient exists with id "update-plugin-test"
+    And the audit capture plugin is enabled
+    When I update the Patient resource
+    Then the before-update hook should have been called with old and new resource
+    And the after-update hook should have been called
+    And audit should capture operationType "UPDATE"
+
+  @update
+  Scenario: Plugin can prevent update based on business rules
+    Given a Patient exists with status "deceased"
+    And the DeceasedPatientProtectionPlugin is enabled
+    When I attempt to update the Patient
+    Then the response status code should be 422
+    And the OperationOutcome message should contain "Cannot modify deceased patient"
+
+  # ===== DELETE =====
+  @delete
+  Scenario: Plugin executes before and after DELETE
+    Given a Patient exists with id "delete-plugin-test"
+    And the audit capture plugin is enabled
+    When I delete the Patient resource
+    Then the before-delete hook should have been called
+    And the after-delete hook should have been called
+    And audit should capture operationType "DELETE"
+
+  @delete
+  Scenario: Plugin can prevent delete based on business rules
+    Given a Patient exists with active encounters
+    And the ActiveEncounterProtectionPlugin is enabled
+    When I attempt to delete the Patient
+    Then the response status code should be 422
+    And the OperationOutcome message should contain "Cannot delete patient with active encounters"
+
+  # ===== SEARCH =====
+  @search
+  Scenario: Plugin executes after SEARCH
+    Given multiple Patients exist
+    And the search logging plugin is enabled
+    When I search for Patients
+    Then the after-search hook should have been called
+    And the search parameters should be logged
+
+  @search
+  Scenario: Plugin can filter search results
+    Given the PatientAccessControlPlugin is enabled
+    And Patients exist from different departments
+    When I search for all Patients
+    Then only Patients from my authorized departments should be returned
+
+  # ===== PATCH =====
+  @patch
+  Scenario: Plugin executes before and after PATCH
+    Given a Patient exists with id "patch-plugin-test"
+    And the audit capture plugin is enabled
+    When I patch the Patient resource
+    Then the before-patch hook should have been called
+    And the after-patch hook should have been called
+    And audit should capture operationType "PATCH"
+```
+
+---
+
 ### Step Definitions
 
 **File: `CommonSteps.java`**
@@ -7179,6 +7898,605 @@ public class SearchSteps {
 }
 ```
 
+**File: `ExtendedOperationSteps.java`**
+```java
+package com.fhir4java.bdd.steps;
+
+import com.fhir4java.bdd.context.TestContext;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.When;
+import io.cucumber.java.en.Then;
+import io.restassured.http.ContentType;
+import io.restassured.response.Response;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class ExtendedOperationSteps {
+
+    @Autowired
+    private TestContext testContext;
+
+    // ===== Setup Steps =====
+
+    @Given("the ${operationName} operation is enabled for {resourceType}")
+    public void theOperationIsEnabledForResource(String operationName, String resourceType) {
+        // Verify operation is enabled via CapabilityStatement
+        testContext.setScenarioData("operationName", operationName);
+        testContext.setScenarioData("operationResourceType", resourceType);
+    }
+
+    @Given("the ${operationName} operation is enabled")
+    public void theOperationIsEnabled(String operationName) {
+        testContext.setScenarioData("operationName", operationName);
+    }
+
+    @Given("a source Patient exists with id {string}")
+    public void aSourcePatientExistsWithId(String patientId) {
+        // Create or ensure source patient exists
+        String patientJson = """
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "active": true,
+                "name": [{"family": "SourceFamily", "given": ["SourceGiven"]}]
+            }
+            """.formatted(patientId);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType(ContentType.JSON)
+            .body(patientJson)
+            .when()
+            .put("/fhir/r5/Patient/" + patientId)
+            .then()
+            .statusCode(anyOf(equalTo(200), equalTo(201)));
+
+        testContext.setScenarioData("sourcePatientId", patientId);
+    }
+
+    @Given("a target Patient exists with id {string}")
+    public void aTargetPatientExistsWithId(String patientId) {
+        String patientJson = """
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "active": true,
+                "name": [{"family": "TargetFamily", "given": ["TargetGiven"]}]
+            }
+            """.formatted(patientId);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType(ContentType.JSON)
+            .body(patientJson)
+            .when()
+            .put("/fhir/r5/Patient/" + patientId)
+            .then()
+            .statusCode(anyOf(equalTo(200), equalTo(201)));
+
+        testContext.setScenarioData("targetPatientId", patientId);
+    }
+
+    @Given("an inactive source Patient exists with id {string}")
+    public void anInactiveSourcePatientExistsWithId(String patientId) {
+        String patientJson = """
+            {
+                "resourceType": "Patient",
+                "id": "%s",
+                "active": false,
+                "name": [{"family": "InactiveFamily", "given": ["InactiveGiven"]}]
+            }
+            """.formatted(patientId);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType(ContentType.JSON)
+            .body(patientJson)
+            .when()
+            .put("/fhir/r5/Patient/" + patientId);
+
+        testContext.setScenarioData("sourcePatientId", patientId);
+    }
+
+    // ===== Invocation Steps =====
+
+    @When("I invoke the ${operationName} operation on {resourceType} type with parameters:")
+    public void iInvokeOperationOnTypeWithParameters(String operationName, String resourceType, String parametersJson) {
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .body(parametersJson)
+            .when()
+            .post("/fhir/r5/" + resourceType + "/$" + operationName.replace("$", ""));
+
+        testContext.setResponse(response);
+    }
+
+    @When("I invoke the ${operationName} operation on {resourceType} instance {string} with parameters:")
+    public void iInvokeOperationOnInstanceWithParameters(String operationName, String resourceType,
+            String resourceId, String parametersJson) {
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .body(parametersJson)
+            .when()
+            .post("/fhir/r5/" + resourceType + "/" + resourceId + "/$" + operationName.replace("$", ""));
+
+        testContext.setResponse(response);
+    }
+
+    @When("I invoke the ${operationName} operation on {resourceType} type with the resource")
+    public void iInvokeOperationOnTypeWithResource(String operationName, String resourceType) {
+        String resource = testContext.getScenarioData("currentResource", String.class);
+
+        String parametersJson = """
+            {
+                "resourceType": "Parameters",
+                "parameter": [
+                    {
+                        "name": "resource",
+                        "resource": %s
+                    }
+                ]
+            }
+            """.formatted(resource);
+
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .body(parametersJson)
+            .when()
+            .post("/fhir/r5/" + resourceType + "/$" + operationName.replace("$", ""));
+
+        testContext.setResponse(response);
+    }
+
+    @When("I invoke the ${operationName} operation with profile {string}")
+    public void iInvokeOperationWithProfile(String operationName, String profileUrl) {
+        String resource = testContext.getScenarioData("currentResource", String.class);
+
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .queryParam("profile", profileUrl)
+            .body(resource)
+            .when()
+            .post("/fhir/r5/Patient/$" + operationName.replace("$", ""));
+
+        testContext.setResponse(response);
+    }
+
+    @When("I invoke the ${operationName} operation on {resourceType} instance {string}")
+    public void iInvokeOperationOnInstance(String operationName, String resourceType, String resourceId) {
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .when()
+            .get("/fhir/r5/" + resourceType + "/" + resourceId + "/$" + operationName.replace("$", ""));
+
+        testContext.setResponse(response);
+    }
+
+    @When("I invoke an undefined operation {string} on {resourceType} type")
+    public void iInvokeUndefinedOperation(String operationName, String resourceType) {
+        Response response = given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType("application/fhir+json")
+            .when()
+            .post("/fhir/r5/" + resourceType + "/$" + operationName.replace("$", ""));
+
+        testContext.setResponse(response);
+    }
+
+    @When("I invoke the ${operationName} operation with non-existent source patient {string}")
+    public void iInvokeOperationWithNonExistentSource(String operationName, String patientId) {
+        String targetId = testContext.getScenarioData("targetPatientId", String.class);
+
+        String parametersJson = """
+            {
+                "resourceType": "Parameters",
+                "parameter": [
+                    {"name": "source-patient", "valueReference": {"reference": "Patient/%s"}},
+                    {"name": "target-patient", "valueReference": {"reference": "Patient/%s"}}
+                ]
+            }
+            """.formatted(patientId, targetId);
+
+        iInvokeOperationOnTypeWithParameters(operationName, "Patient", parametersJson);
+    }
+
+    @When("I invoke the ${operationName} operation with source and target both {string}")
+    public void iInvokeOperationWithSameSourceAndTarget(String operationName, String patientId) {
+        String parametersJson = """
+            {
+                "resourceType": "Parameters",
+                "parameter": [
+                    {"name": "source-patient", "valueReference": {"reference": "Patient/%s"}},
+                    {"name": "target-patient", "valueReference": {"reference": "Patient/%s"}}
+                ]
+            }
+            """.formatted(patientId, patientId);
+
+        iInvokeOperationOnTypeWithParameters(operationName, "Patient", parametersJson);
+    }
+
+    @When("I invoke the ${operationName} operation on {resourceType} type with empty parameters")
+    public void iInvokeOperationWithEmptyParameters(String operationName, String resourceType) {
+        String parametersJson = """
+            {
+                "resourceType": "Parameters",
+                "parameter": []
+            }
+            """;
+
+        iInvokeOperationOnTypeWithParameters(operationName, resourceType, parametersJson);
+    }
+
+    // ===== Assertion Steps =====
+
+    @Then("the output should contain parameter {string} with a {resourceType} reference")
+    public void theOutputShouldContainParameterWithReference(String paramName, String resourceType) {
+        testContext.getResponse()
+            .then()
+            .body("parameter.find { it.name == '" + paramName + "' }.valueReference.reference",
+                startsWith(resourceType + "/"));
+    }
+
+    @Then("the source Patient should be marked as inactive")
+    public void theSourcePatientShouldBeMarkedAsInactive() {
+        String sourceId = testContext.getScenarioData("sourcePatientId", String.class);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .when()
+            .get("/fhir/r5/Patient/" + sourceId)
+            .then()
+            .body("active", equalTo(false));
+    }
+
+    @Then("the source Patient should have a link to the target Patient")
+    public void theSourcePatientShouldHaveLinkToTarget() {
+        String sourceId = testContext.getScenarioData("sourcePatientId", String.class);
+        String targetId = testContext.getScenarioData("targetPatientId", String.class);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .when()
+            .get("/fhir/r5/Patient/" + sourceId)
+            .then()
+            .body("link.other.reference", hasItem("Patient/" + targetId))
+            .body("link.type", hasItem("replaced-by"));
+    }
+
+    @Then("the source Patient should be merged into target")
+    public void theSourcePatientShouldBeMergedIntoTarget() {
+        theSourcePatientShouldBeMarkedAsInactive();
+        theSourcePatientShouldHaveLinkToTarget();
+    }
+
+    @Then("the OperationOutcome should have no errors")
+    public void theOperationOutcomeShouldHaveNoErrors() {
+        testContext.getResponse()
+            .then()
+            .body("issue.findAll { it.severity == 'error' }.size()", equalTo(0));
+    }
+
+    @Then("the OperationOutcome message should contain {string}")
+    public void theOperationOutcomeMessageShouldContain(String expectedText) {
+        testContext.getResponse()
+            .then()
+            .body("issue.diagnostics", hasItem(containsString(expectedText)));
+    }
+
+    @Then("the OperationOutcome should describe the validation errors")
+    public void theOperationOutcomeShouldDescribeValidationErrors() {
+        testContext.getResponse()
+            .then()
+            .body("issue.find { it.severity == 'error' }", notNullValue())
+            .body("issue.find { it.severity == 'error' }.diagnostics", notNullValue());
+    }
+}
+```
+
+**File: `BusinessLogicPluginSteps.java`**
+```java
+package com.fhir4java.bdd.steps;
+
+import com.fhir4java.bdd.context.TestContext;
+import com.fhir4java.bdd.plugins.TestAuditCapturePlugin;
+import com.fhir4java.bdd.plugins.TestPatientConsentPlugin;
+import io.cucumber.datatable.DataTable;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.When;
+import io.cucumber.java.en.Then;
+import io.restassured.http.ContentType;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.util.List;
+import java.util.Map;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class BusinessLogicPluginSteps {
+
+    @Autowired
+    private TestContext testContext;
+
+    @Autowired
+    private TestPatientConsentPlugin consentPlugin;
+
+    @Autowired
+    private TestAuditCapturePlugin auditCapturePlugin;
+
+    // ===== Plugin Configuration Steps =====
+
+    @Given("the {pluginName}Plugin is enabled")
+    public void thePluginIsEnabled(String pluginName) {
+        testContext.setScenarioData("enabledPlugin", pluginName);
+        // In test environment, plugins are configured via Spring profiles
+    }
+
+    @Given("the following before-plugins are enabled with orders:")
+    public void theFollowingBeforePluginsAreEnabledWithOrders(DataTable dataTable) {
+        List<Map<String, String>> plugins = dataTable.asMaps();
+        testContext.setScenarioData("configuredPlugins", plugins);
+        // Configure plugin order for test
+    }
+
+    @Given("the following after-plugins are enabled with orders:")
+    public void theFollowingAfterPluginsAreEnabledWithOrders(DataTable dataTable) {
+        List<Map<String, String>> plugins = dataTable.asMaps();
+        testContext.setScenarioData("configuredAfterPlugins", plugins);
+    }
+
+    @Given("plugins A \\(order {int}), B \\(order {int}), C \\(order {int}) are enabled")
+    public void pluginsABCAreEnabled(int orderA, int orderB, int orderC) {
+        testContext.setScenarioData("pluginOrderA", orderA);
+        testContext.setScenarioData("pluginOrderB", orderB);
+        testContext.setScenarioData("pluginOrderC", orderC);
+    }
+
+    @Given("plugin {word} returns continueChain=false but success=true")
+    public void pluginReturnsContinueChainFalse(String pluginName) {
+        testContext.setScenarioData("shortCircuitPlugin", pluginName);
+    }
+
+    @Given("plugin {word} returns failure")
+    public void pluginReturnsFailure(String pluginName) {
+        testContext.setScenarioData("failingPlugin", pluginName);
+    }
+
+    @Given("a before-plugin that always fails is enabled")
+    public void aBeforePluginThatAlwaysFailsIsEnabled() {
+        testContext.setScenarioData("alwaysFailPlugin", true);
+    }
+
+    @Given("an async NotificationPlugin is enabled")
+    public void anAsyncNotificationPluginIsEnabled() {
+        testContext.setScenarioData("asyncNotificationEnabled", true);
+    }
+
+    // ===== Plugin Input Setup Steps =====
+
+    @Given("I have a Patient resource without consent flag")
+    public void iHaveAPatientResourceWithoutConsentFlag() {
+        String patientJson = """
+            {
+                "resourceType": "Patient",
+                "name": [{"family": "NoConsent", "given": ["Test"]}],
+                "active": true
+            }
+            """;
+        testContext.setScenarioData("currentResource", patientJson);
+    }
+
+    @Given("I have a Patient resource with consent flag set to true")
+    public void iHaveAPatientResourceWithConsentFlag() {
+        String patientJson = """
+            {
+                "resourceType": "Patient",
+                "name": [{"family": "WithConsent", "given": ["Test"]}],
+                "active": true,
+                "extension": [{
+                    "url": "http://example.org/fhir/consent-given",
+                    "valueBoolean": true
+                }]
+            }
+            """;
+        testContext.setScenarioData("currentResource", patientJson);
+    }
+
+    @Given("I have an Observation with a numeric value but no interpretation")
+    public void iHaveAnObservationWithNumericValueNoInterpretation() {
+        String observationJson = """
+            {
+                "resourceType": "Observation",
+                "status": "final",
+                "code": {"coding": [{"system": "http://loinc.org", "code": "2339-0"}]},
+                "subject": {"reference": "Patient/test-patient"},
+                "valueQuantity": {"value": 150, "unit": "mg/dL"}
+            }
+            """;
+        testContext.setScenarioData("currentResource", observationJson);
+    }
+
+    @Given("the source patient has an open encounter")
+    public void theSourcePatientHasAnOpenEncounter() {
+        String sourceId = testContext.getScenarioData("sourcePatientId", String.class);
+
+        // Create an open encounter for the source patient
+        String encounterJson = """
+            {
+                "resourceType": "Encounter",
+                "status": "in-progress",
+                "class": {"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "AMB"},
+                "subject": {"reference": "Patient/%s"}
+            }
+            """.formatted(sourceId);
+
+        given()
+            .header("Authorization", "Bearer " + testContext.getAuthToken())
+            .contentType(ContentType.JSON)
+            .body(encounterJson)
+            .when()
+            .post("/fhir/r5/Encounter");
+    }
+
+    // ===== Plugin Execution Verification Steps =====
+
+    @Then("the before-create hook should have been called")
+    public void theBeforeCreateHookShouldHaveBeenCalled() {
+        assertTrue(auditCapturePlugin.wasBeforeOperationCalled("CREATE"),
+            "Before-create hook should have been called");
+    }
+
+    @Then("the after-create hook should have been called")
+    public void theAfterCreateHookShouldHaveBeenCalled() {
+        assertTrue(auditCapturePlugin.wasAfterOperationCalled("CREATE"),
+            "After-create hook should have been called");
+    }
+
+    @Then("the before-update hook should have been called with old and new resource")
+    public void theBeforeUpdateHookShouldHaveBeenCalledWithOldAndNew() {
+        assertTrue(auditCapturePlugin.wasBeforeOperationCalled("UPDATE"),
+            "Before-update hook should have been called");
+        assertNotNull(auditCapturePlugin.getCapturedOldResource(),
+            "Old resource should have been captured");
+        assertNotNull(auditCapturePlugin.getCapturedNewResource(),
+            "New resource should have been captured");
+    }
+
+    @Then("the after-update hook should have been called")
+    public void theAfterUpdateHookShouldHaveBeenCalled() {
+        assertTrue(auditCapturePlugin.wasAfterOperationCalled("UPDATE"),
+            "After-update hook should have been called");
+    }
+
+    @Then("the before-delete hook should have been called")
+    public void theBeforeDeleteHookShouldHaveBeenCalled() {
+        assertTrue(auditCapturePlugin.wasBeforeOperationCalled("DELETE"),
+            "Before-delete hook should have been called");
+    }
+
+    @Then("the after-delete hook should have been called")
+    public void theAfterDeleteHookShouldHaveBeenCalled() {
+        assertTrue(auditCapturePlugin.wasAfterOperationCalled("DELETE"),
+            "After-delete hook should have been called");
+    }
+
+    @Then("audit should capture operationType {string}")
+    public void auditShouldCaptureOperationType(String operationType) {
+        assertEquals(operationType, auditCapturePlugin.getCapturedOperationType(),
+            "Audit should capture correct operation type");
+    }
+
+    @Then("the core operation should NOT have been executed")
+    public void theCoreOperationShouldNotHaveBeenExecuted() {
+        assertFalse(auditCapturePlugin.wasCoreOperationExecuted(),
+            "Core operation should not have been executed");
+    }
+
+    @Then("after-plugins should NOT have been executed")
+    public void afterPluginsShouldNotHaveBeenExecuted() {
+        assertFalse(auditCapturePlugin.wasAnyAfterPluginCalled(),
+            "After plugins should not have been executed");
+    }
+
+    @Then("plugins should execute in order: {}, {}, {}")
+    public void pluginsShouldExecuteInOrder(String first, String second, String third) {
+        List<String> executionOrder = auditCapturePlugin.getPluginExecutionOrder();
+        assertEquals(first, executionOrder.get(0));
+        assertEquals(second, executionOrder.get(1));
+        assertEquals(third, executionOrder.get(2));
+    }
+
+    @Then("plugin {word} should execute")
+    public void pluginShouldExecute(String pluginName) {
+        assertTrue(auditCapturePlugin.getPluginExecutionOrder().contains(pluginName),
+            "Plugin " + pluginName + " should have executed");
+    }
+
+    @Then("plugin {word} should NOT execute")
+    public void pluginShouldNotExecute(String pluginName) {
+        assertFalse(auditCapturePlugin.getPluginExecutionOrder().contains(pluginName),
+            "Plugin " + pluginName + " should not have executed");
+    }
+
+    // ===== Plugin Result Verification Steps =====
+
+    @Then("the Observation should have an auto-populated interpretation")
+    public void theObservationShouldHaveAutoPopulatedInterpretation() {
+        testContext.getResponse()
+            .then()
+            .body("interpretation", notNullValue())
+            .body("interpretation[0].coding[0].code", notNullValue());
+    }
+
+    @Then("the created Patient should have meta.tag {string}")
+    public void theCreatedPatientShouldHaveMetaTag(String tagValue) {
+        testContext.getResponse()
+            .then()
+            .body("meta.tag.code", hasItem(tagValue));
+    }
+
+    @Then("a notification should have been sent with event {string}")
+    public void aNotificationShouldHaveBeenSentWithEvent(String eventType) {
+        // Check mock notification service for sent notifications
+        assertTrue(testContext.getScenarioData("lastNotificationEvent", String.class)
+            .equals(eventType), "Notification should have been sent with event " + eventType);
+    }
+
+    @Then("the notification should contain the Patient resource id")
+    public void theNotificationShouldContainThePatientResourceId() {
+        String notificationBody = testContext.getScenarioData("lastNotificationBody", String.class);
+        String patientId = testContext.getCurrentResourceId();
+        assertTrue(notificationBody.contains(patientId),
+            "Notification should contain patient ID");
+    }
+
+    @Then("the plugin should resolve patient references before execution")
+    public void thePluginShouldResolvePatientReferences() {
+        // Verify resolved patients are in context attributes
+        assertNotNull(auditCapturePlugin.getContextAttribute("sourcePatient"),
+            "Source patient should be resolved");
+        assertNotNull(auditCapturePlugin.getContextAttribute("targetPatient"),
+            "Target patient should be resolved");
+    }
+
+    @Then("the resolved patients should be available to the operation handler")
+    public void theResolvedPatientsShouldBeAvailableToHandler() {
+        assertTrue(auditCapturePlugin.wasContextAttributeUsedByHandler("sourcePatient"),
+            "Handler should have access to resolved source patient");
+    }
+
+    @Then("the response should contain additional validation metadata")
+    public void theResponseShouldContainAdditionalValidationMetadata() {
+        testContext.getResponse()
+            .then()
+            .body("parameter.name", hasItem("validation-duration-ms"));
+    }
+
+    @Then("the output should include {string} parameter")
+    public void theOutputShouldIncludeParameter(String paramName) {
+        testContext.getResponse()
+            .then()
+            .body("parameter.find { it.name == '" + paramName + "' }", notNullValue());
+    }
+
+    @Then("the plugin error should be logged")
+    public void thePluginErrorShouldBeLogged() {
+        // Check logs for plugin error - typically via log appender in tests
+        assertTrue(testContext.getScenarioData("pluginErrorLogged", Boolean.class),
+            "Plugin error should have been logged");
+    }
+}
+```
+
 ---
 
 ### Running BDD Tests
@@ -7195,6 +8513,33 @@ public class SearchSteps {
 
 # Run cache tests only
 ./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@cache"
+
+# Run extended operations tests
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@operations"
+
+# Run $merge operation tests only
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@operations and @merge"
+
+# Run $validate operation tests only
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@operations and @validate"
+
+# Run $everything operation tests only
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@operations and @everything"
+
+# Run business logic plugin tests
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@plugins"
+
+# Run before-operation plugin tests
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@plugins and @before-operation"
+
+# Run after-operation plugin tests
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@plugins and @after-operation"
+
+# Run plugin chain execution tests
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@plugins and @chain"
+
+# Run all operations and plugin tests
+./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="@operations or @plugins"
 
 # Run tests excluding ignored
 ./mvnw test -Dtest=CucumberTestRunner -Dcucumber.filter.tags="not @ignore"
