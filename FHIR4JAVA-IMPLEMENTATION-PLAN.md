@@ -4299,7 +4299,7 @@ volumes:
 
 ### Phase 1: Project Foundation
 1. Create Maven multi-module project structure
-2. Configure parent POM with Java 25, Spring Boot 3.4, HAPI FHIR dependencies
+2. Configure parent POM with Java 21, Spring Boot 3.4, HAPI FHIR dependencies
 3. Set up Docker and docker-compose files
 4. Create database initialization scripts with schema setup
 5. Configure Spring Boot application with JPA

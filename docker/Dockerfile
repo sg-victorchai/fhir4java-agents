@@ -1,5 +1,5 @@
 # Build stage
-FROM eclipse-temurin:25-jdk AS builder
+FROM eclipse-temurin:21-jdk AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ COPY fhir4java-server/src fhir4java-server/src
 RUN ./mvnw clean package -DskipTests -B
 
 # Runtime stage
-FROM eclipse-temurin:25-jre
+FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
