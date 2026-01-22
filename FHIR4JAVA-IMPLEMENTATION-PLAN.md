@@ -680,9 +680,37 @@ public enum PluginExecutionMode {
 
 ### Plugin Execution Pipeline
 
+The plugin execution pipeline supports both **CRUD operations** (read, create, update, delete, search) and **Extended Operations** (e.g., `$merge`, `$validate`, `$everything`). Business logic plugins can be configured to execute before and/or after any operation type.
+
+#### Operation Types
+
+```java
+public enum OperationType {
+    // Standard CRUD interactions
+    READ,           // GET /Patient/123
+    VREAD,          // GET /Patient/123/_history/1
+    CREATE,         // POST /Patient
+    UPDATE,         // PUT /Patient/123
+    PATCH,          // PATCH /Patient/123
+    DELETE,         // DELETE /Patient/123
+    SEARCH,         // GET /Patient?name=smith
+    HISTORY,        // GET /Patient/123/_history
+
+    // Extended Operations (prefixed with $)
+    OPERATION;      // POST /Patient/$merge, GET /Patient/123/$everything
+
+    public boolean isExtendedOperation() {
+        return this == OPERATION;
+    }
+}
+```
+
+#### CRUD Operations Pipeline
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           REQUEST PROCESSING PIPELINE                            │
+│                      CRUD OPERATIONS PROCESSING PIPELINE                         │
+│              (read, vread, create, update, patch, delete, search)               │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐      │
@@ -730,6 +758,92 @@ public enum PluginExecutionMode {
 │  └──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘      │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Extended Operations Pipeline
+
+Extended operations (e.g., `$merge`, `$validate`, `$everything`) follow a similar pipeline but with operation-specific validation and handling.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                      EXTENDED OPERATION PROCESSING PIPELINE                          │
+│                    (e.g., POST /fhir/r5/Patient/$merge)                             │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│  1. REQUEST ENTRY & SECURITY                                                         │
+│     ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                          │
+│     │ Performance  │──▶│Authentication│──▶│Authorization │                          │
+│     │   Start      │   │   Plugin     │   │   Plugin     │                          │
+│     │   (SYNC)     │   │   (SYNC)     │   │   (SYNC)     │                          │
+│     └──────────────┘   └──────────────┘   └──────────────┘                          │
+│                                                  │                                   │
+│  2. OPERATION RESOLUTION                         ▼                                   │
+│     ┌──────────────────────────────────────────────────────────────┐                │
+│     │  ExtendedOperationRegistry.getHandler(resourceType, opCode)  │                │
+│     │  - Load OperationDefinition from fhir-config/operations/     │                │
+│     │  - Validate operation is enabled for resource type           │                │
+│     │  - Check instance-level vs type-level invocation             │                │
+│     └──────────────────────────────────────────────────────────────┘                │
+│                                                  │                                   │
+│  3. INPUT VALIDATION                             ▼                                   │
+│     ┌──────────────────────────────────────────────────────────────┐                │
+│     │  Validate input Parameters against OperationDefinition       │                │
+│     │  - Required parameters present (min cardinality)             │                │
+│     │  - Parameter types match definition                          │                │
+│     │  - Max cardinality constraints satisfied                     │                │
+│     │  - Profile validation if specified                           │                │
+│     └──────────────────────────────────────────────────────────────┘                │
+│                                                  │                                   │
+│  4. BUSINESS LOGIC PLUGINS (BEFORE)              ▼                                   │
+│     ┌──────────────────────────────────────────────────────────────┐                │
+│     │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │                │
+│     │  │  Plugin 1   │─▶│  Plugin 2   │─▶│  Plugin N   │ (ordered)│                │
+│     │  │ beforeOp()  │  │ beforeOp()  │  │ beforeOp()  │          │                │
+│     │  └─────────────┘  └─────────────┘  └─────────────┘          │                │
+│     │                                                              │                │
+│     │  Can perform:                                                │                │
+│     │  - Validate business rules (e.g., user can merge patients)  │                │
+│     │  - Enrich/transform input parameters                        │                │
+│     │  - Check preconditions (e.g., both patients exist)          │                │
+│     │  - ABORT operation by returning PluginResult.failure()      │                │
+│     └──────────────────────────────────────────────────────────────┘                │
+│                                                  │                                   │
+│  5. CORE OPERATION EXECUTION                     ▼                                   │
+│     ┌──────────────────────────────────────────────────────────────┐                │
+│     │           ExtendedOperationHandler.execute(context)          │                │
+│     │                                                              │                │
+│     │  - Execute the operation-specific logic                      │                │
+│     │  - May use InternalOperationExecutor for:                    │                │
+│     │    • Database reads/writes                                   │                │
+│     │    • Internal searches                                       │                │
+│     │    • Patch operations                                        │                │
+│     │  - Returns output Parameters or Resource                     │                │
+│     └──────────────────────────────────────────────────────────────┘                │
+│                                                  │                                   │
+│  6. BUSINESS LOGIC PLUGINS (AFTER)               ▼                                   │
+│     ┌──────────────────────────────────────────────────────────────┐                │
+│     │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │                │
+│     │  │  Plugin 1   │─▶│  Plugin 2   │─▶│  Plugin N   │ (ordered)│                │
+│     │  │ afterOp()   │  │ afterOp()   │  │ afterOp()   │          │                │
+│     │  └─────────────┘  └─────────────┘  └─────────────┘          │                │
+│     │                                                              │                │
+│     │  Can perform:                                                │                │
+│     │  - Transform/enrich output result                           │                │
+│     │  - Trigger side effects (notifications, webhooks)           │                │
+│     │  - Sync to external systems                                 │                │
+│     │  - Post-operation validation/logging                        │                │
+│     │  - CANNOT abort (operation already completed)               │                │
+│     └──────────────────────────────────────────────────────────────┘                │
+│                                                  │                                   │
+│  7. RESPONSE & CLEANUP                           ▼                                   │
+│     ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                          │
+│     │  Telemetry   │──▶│    Audit     │──▶│ Performance  │                          │
+│     │   (ASYNC)    │   │   (ASYNC)    │   │    End       │                          │
+│     └──────────────┘   └──────────────┘   └──────────────┘                          │
+│                                                                                      │
+│  Audit captures: operation name, input params, output, duration, user               │
+│                                                                                      │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Base Plugin Interfaces
@@ -1389,38 +1503,127 @@ public class DatabasePerformancePlugin implements PerformancePlugin {
 
 ### Business Logic Plugin Interface
 
+The BusinessLogicPlugin interface supports both CRUD operations and Extended Operations. Plugins can register to handle specific resource types, operation types, and/or specific extended operation codes.
+
 ```java
 public interface BusinessLogicPlugin extends FhirPlugin {
 
     /**
-     * Check if this plugin handles the given resource/operation combination
+     * Check if this plugin handles the given operation context.
+     * For CRUD operations: check resourceType and operationType
+     * For extended operations: also check operationCode (e.g., "merge", "validate")
      */
-    boolean supports(String resourceType, InteractionType interaction);
+    boolean supports(OperationDescriptor descriptor);
 
     /**
-     * Execute before the core operation
-     * Can modify the resource or throw exception to abort
+     * Execute before the core operation.
+     * Can modify the input, validate business rules, or abort the operation.
+     *
+     * @param context Contains request info, resource, parameters, and shared attributes
+     * @return PluginResult - failure() to abort, success() to continue
      */
     PluginResult beforeOperation(BusinessContext context);
 
     /**
-     * Execute after the core operation
-     * Can modify the result or perform side effects
+     * Execute after the core operation.
+     * Can modify/enrich the result or trigger side effects.
+     * Cannot abort the operation (already completed).
+     *
+     * @param context The operation context
+     * @param result The result from core operation execution
+     * @return PluginResult with optional modifications to the result
      */
     PluginResult afterOperation(BusinessContext context, OperationResult result);
 }
 
+/**
+ * Describes the operation being performed - used for plugin routing.
+ */
 @Data
-public class BusinessContext {
-    private final RequestContext request;
-    private final String resourceType;
-    private final String resourceId;
-    private final InteractionType interaction;
-    private final IBaseResource resource;  // For create/update
-    private final Map<String, Object> attributes;  // Shared across plugins
+public class OperationDescriptor {
+    private final String resourceType;           // e.g., "Patient"
+    private final OperationType operationType;   // e.g., CREATE, UPDATE, OPERATION
+    private final String operationCode;          // e.g., "merge", "validate" (null for CRUD)
+    private final boolean instanceLevel;         // true for /Patient/123/$merge
+
+    public boolean isExtendedOperation() {
+        return operationType == OperationType.OPERATION;
+    }
+
+    // Factory methods for common cases
+    public static OperationDescriptor crud(String resourceType, OperationType type) {
+        return new OperationDescriptor(resourceType, type, null, type != OperationType.CREATE);
+    }
+
+    public static OperationDescriptor extendedOperation(String resourceType, String opCode, boolean instanceLevel) {
+        return new OperationDescriptor(resourceType, OperationType.OPERATION, opCode, instanceLevel);
+    }
 }
 
-// Example: Patient Consent Validation Plugin
+/**
+ * Context passed to business logic plugins for both CRUD and extended operations.
+ */
+@Data
+public class BusinessContext {
+    private final RequestContext request;        // HTTP request details, principal, headers
+    private final String resourceType;           // e.g., "Patient"
+    private final String resourceId;             // Resource ID (null for type-level operations)
+    private final OperationType operationType;   // CRUD type or OPERATION for extended ops
+    private final String operationCode;          // Extended operation code (e.g., "merge"), null for CRUD
+    private final IBaseResource resource;        // Input resource (for create/update)
+    private final Parameters inputParameters;    // Input parameters (for extended operations)
+    private final Map<String, Object> attributes;  // Shared across plugins in the chain
+
+    // Convenience methods
+    public boolean isExtendedOperation() {
+        return operationType == OperationType.OPERATION;
+    }
+
+    public OperationDescriptor getDescriptor() {
+        return new OperationDescriptor(resourceType, operationType, operationCode, resourceId != null);
+    }
+
+    // Get typed parameter from input (for extended operations)
+    @SuppressWarnings("unchecked")
+    public <T extends IBase> Optional<T> getInputParameter(String name, Class<T> type) {
+        if (inputParameters == null) return Optional.empty();
+        return inputParameters.getParameter().stream()
+            .filter(p -> name.equals(p.getName()))
+            .map(p -> (T) p.getValue())
+            .findFirst();
+    }
+}
+
+/**
+ * Result from core operation execution, passed to afterOperation plugins.
+ */
+@Data
+public class OperationResult {
+    private final boolean success;
+    private final IBaseResource outputResource;      // Output resource (read, create result, etc.)
+    private final Parameters outputParameters;       // Output parameters (for extended operations)
+    private final Bundle searchResults;              // Search results (for search operations)
+    private final OperationOutcome operationOutcome; // Errors/warnings
+    private final Map<String, Object> metadata;      // Additional metadata
+
+    // Convenience factory methods
+    public static OperationResult success(IBaseResource resource) {
+        return new OperationResult(true, resource, null, null, null, Map.of());
+    }
+
+    public static OperationResult successWithParams(Parameters params) {
+        return new OperationResult(true, null, params, null, null, Map.of());
+    }
+
+    public static OperationResult failure(OperationOutcome outcome) {
+        return new OperationResult(false, null, null, null, outcome, Map.of());
+    }
+}
+```
+
+#### Example: CRUD Business Logic Plugin (Patient Consent)
+
+```java
 @Component
 @Order(100)  // Execute first among business plugins
 public class PatientConsentPlugin implements BusinessLogicPlugin {
@@ -1429,9 +1632,12 @@ public class PatientConsentPlugin implements BusinessLogicPlugin {
     public PluginExecutionMode getExecutionMode() { return SYNCHRONOUS; }
 
     @Override
-    public boolean supports(String resourceType, InteractionType interaction) {
-        return "Patient".equals(resourceType) &&
-               (interaction == InteractionType.CREATE || interaction == InteractionType.UPDATE);
+    public boolean supports(OperationDescriptor descriptor) {
+        // Supports Patient CREATE and UPDATE (CRUD operations only)
+        return "Patient".equals(descriptor.getResourceType()) &&
+               !descriptor.isExtendedOperation() &&
+               (descriptor.getOperationType() == OperationType.CREATE ||
+                descriptor.getOperationType() == OperationType.UPDATE);
     }
 
     @Override
@@ -1443,9 +1649,147 @@ public class PatientConsentPlugin implements BusinessLogicPlugin {
         }
         return PluginResult.success();
     }
-}
 
-// Example: Observation Auto-Enrichment Plugin
+    @Override
+    public PluginResult afterOperation(BusinessContext context, OperationResult result) {
+        // No post-processing needed
+        return PluginResult.success();
+    }
+}
+```
+
+#### Example: Extended Operation Business Logic Plugin (Patient $merge)
+
+```java
+@Component
+@Order(100)
+public class PatientMergeValidationPlugin implements BusinessLogicPlugin {
+
+    private final PatientRepository patientRepository;
+
+    @Override
+    public PluginExecutionMode getExecutionMode() { return SYNCHRONOUS; }
+
+    @Override
+    public boolean supports(OperationDescriptor descriptor) {
+        // Only supports Patient $merge extended operation
+        return "Patient".equals(descriptor.getResourceType()) &&
+               descriptor.isExtendedOperation() &&
+               "merge".equals(descriptor.getOperationCode());
+    }
+
+    @Override
+    public PluginResult beforeOperation(BusinessContext context) {
+        // Extract source and target patient references from input parameters
+        Optional<Reference> sourceRef = context.getInputParameter("source-patient", Reference.class);
+        Optional<Reference> targetRef = context.getInputParameter("target-patient", Reference.class);
+
+        if (sourceRef.isEmpty() || targetRef.isEmpty()) {
+            return PluginResult.failure("Both source-patient and target-patient are required");
+        }
+
+        // Business rule: Cannot merge patient with themselves
+        if (sourceRef.get().getReference().equals(targetRef.get().getReference())) {
+            return PluginResult.failure("Cannot merge patient with themselves");
+        }
+
+        // Business rule: Both patients must exist and be active
+        String sourceId = extractId(sourceRef.get());
+        String targetId = extractId(targetRef.get());
+
+        Optional<Patient> source = patientRepository.findById(sourceId);
+        Optional<Patient> target = patientRepository.findById(targetId);
+
+        if (source.isEmpty()) {
+            return PluginResult.failure("Source patient not found: " + sourceId);
+        }
+        if (target.isEmpty()) {
+            return PluginResult.failure("Target patient not found: " + targetId);
+        }
+        if (!Boolean.TRUE.equals(source.get().getActive())) {
+            return PluginResult.failure("Source patient is not active");
+        }
+
+        // Store resolved patients in context for use by operation handler
+        context.getAttributes().put("sourcePatient", source.get());
+        context.getAttributes().put("targetPatient", target.get());
+
+        return PluginResult.success();
+    }
+
+    @Override
+    public PluginResult afterOperation(BusinessContext context, OperationResult result) {
+        if (result.isSuccess()) {
+            // Trigger notification after successful merge
+            Patient sourcePatient = (Patient) context.getAttributes().get("sourcePatient");
+            Patient targetPatient = (Patient) context.getAttributes().get("targetPatient");
+
+            // Log the merge for compliance
+            log.info("Patient merge completed: {} -> {}",
+                sourcePatient.getIdElement().getIdPart(),
+                targetPatient.getIdElement().getIdPart());
+
+            // Could trigger webhook notifications here
+            // notificationService.notifyPatientMerge(sourcePatient, targetPatient);
+        }
+        return PluginResult.success();
+    }
+}
+```
+
+#### Example: Extended Operation Business Logic Plugin ($validate)
+
+```java
+@Component
+@Order(100)
+public class CustomValidationPlugin implements BusinessLogicPlugin {
+
+    @Override
+    public PluginExecutionMode getExecutionMode() { return SYNCHRONOUS; }
+
+    @Override
+    public boolean supports(OperationDescriptor descriptor) {
+        // Supports $validate on any resource type
+        return descriptor.isExtendedOperation() &&
+               "validate".equals(descriptor.getOperationCode());
+    }
+
+    @Override
+    public PluginResult beforeOperation(BusinessContext context) {
+        // Add custom validation rules before standard validation
+        IBaseResource resource = context.getInputParameter("resource", IBaseResource.class)
+            .orElse(null);
+
+        if (resource == null) {
+            return PluginResult.failure("Resource parameter is required for validation");
+        }
+
+        // Store for afterOperation enrichment
+        context.getAttributes().put("validationStartTime", Instant.now());
+        return PluginResult.success();
+    }
+
+    @Override
+    public PluginResult afterOperation(BusinessContext context, OperationResult result) {
+        // Enrich validation output with custom metadata
+        Parameters output = result.getOutputParameters();
+        if (output != null) {
+            Instant startTime = (Instant) context.getAttributes().get("validationStartTime");
+            Duration duration = Duration.between(startTime, Instant.now());
+
+            // Add validation timing to output
+            output.addParameter()
+                .setName("validation-duration-ms")
+                .setValue(new IntegerType((int) duration.toMillis()));
+        }
+        return PluginResult.success();
+    }
+}
+```
+
+#### Example: Observation Auto-Enrichment Plugin (CRUD)
+
+```java
 @Component
 @Order(200)
 public class ObservationEnrichmentPlugin implements BusinessLogicPlugin {
@@ -1454,8 +1798,10 @@ public class ObservationEnrichmentPlugin implements BusinessLogicPlugin {
     public PluginExecutionMode getExecutionMode() { return SYNCHRONOUS; }
 
     @Override
-    public boolean supports(String resourceType, InteractionType interaction) {
-        return "Observation".equals(resourceType) && interaction == InteractionType.CREATE;
+    public boolean supports(OperationDescriptor descriptor) {
+        return "Observation".equals(descriptor.getResourceType()) &&
+               !descriptor.isExtendedOperation() &&
+               descriptor.getOperationType() == OperationType.CREATE;
     }
 
     @Override
@@ -1470,6 +1816,8 @@ public class ObservationEnrichmentPlugin implements BusinessLogicPlugin {
 
 ### Plugin Orchestrator
 
+The Plugin Orchestrator manages the execution pipeline for both CRUD operations and Extended Operations.
+
 ```java
 @Component
 public class PluginOrchestrator {
@@ -1481,6 +1829,7 @@ public class PluginOrchestrator {
     private final List<TelemetryPlugin> telemetryPlugins;
     private final List<PerformancePlugin> performancePlugins;
     private final List<BusinessLogicPlugin> businessPlugins;
+    private final ExtendedOperationRegistry operationRegistry;
     private final ExecutorService asyncExecutor;
 
     @PostConstruct
@@ -1493,9 +1842,55 @@ public class PluginOrchestrator {
         // ... etc
     }
 
-    public OperationResult executeRequest(RequestContext request, Supplier<OperationResult> coreOperation) {
+    /**
+     * Execute a CRUD operation (read, create, update, delete, search).
+     */
+    public OperationResult executeCrudRequest(RequestContext request, Supplier<OperationResult> coreOperation) {
+        OperationDescriptor descriptor = OperationDescriptor.crud(
+            request.getResourceType(),
+            request.getOperationType()
+        );
+        return executeRequest(request, descriptor, null, coreOperation);
+    }
+
+    /**
+     * Execute an Extended Operation (e.g., $merge, $validate, $everything).
+     */
+    public OperationResult executeExtendedOperation(
+            RequestContext request,
+            String operationCode,
+            Parameters inputParameters,
+            ExtendedOperationHandler handler) {
+
+        OperationDescriptor descriptor = OperationDescriptor.extendedOperation(
+            request.getResourceType(),
+            operationCode,
+            request.getResourceId() != null  // instance-level if resourceId present
+        );
+
+        return executeRequest(request, descriptor, inputParameters, () -> {
+            OperationContext opContext = createOperationContext(request, inputParameters);
+            IBaseResource result = handler.execute(opContext);
+
+            if (result instanceof Parameters) {
+                return OperationResult.successWithParams((Parameters) result);
+            } else {
+                return OperationResult.success(result);
+            }
+        });
+    }
+
+    /**
+     * Core execution pipeline - handles both CRUD and Extended Operations.
+     */
+    private OperationResult executeRequest(
+            RequestContext request,
+            OperationDescriptor descriptor,
+            Parameters inputParameters,
+            Supplier<OperationResult> coreOperation) {
+
         TraceContext trace = null;
-        AuditContext auditContext = createAuditContext(request);
+        AuditContext auditContext = createAuditContext(request, descriptor);
 
         try {
             // 1. Start performance tracking
@@ -1506,74 +1901,146 @@ public class PluginOrchestrator {
             request.setPrincipal(authResult.getPrincipal());
 
             // 3. Authorization (SYNC)
-            executeAuthorization(request, trace);
+            executeAuthorization(request, descriptor, trace);
 
-            // 4. Check cache (SYNC)
-            Optional<CachedResource> cached = checkCache(request, trace);
-            if (cached.isPresent() && isReadOperation(request)) {
-                return OperationResult.success(cached.get().getResource());
+            // 4. For extended operations: validate input parameters
+            if (descriptor.isExtendedOperation()) {
+                validateOperationParameters(descriptor.getOperationCode(), inputParameters, trace);
             }
 
-            // 5. Business logic - before (SYNC, multiple plugins in order)
-            executeBusinessPluginsBefore(request, trace);
+            // 5. Check cache (SYNC) - only for read operations, not extended operations
+            if (!descriptor.isExtendedOperation() && isReadOperation(request)) {
+                Optional<CachedResource> cached = checkCache(request, trace);
+                if (cached.isPresent()) {
+                    return OperationResult.success(cached.get().getResource());
+                }
+            }
 
-            // 6. Core operation
+            // 6. Business logic - BEFORE (SYNC, multiple plugins in order)
+            BusinessContext bizContext = createBusinessContext(request, descriptor, inputParameters);
+            executeBusinessPluginsBefore(bizContext, descriptor, trace);
+
+            // 7. Core operation execution
             OperationResult result = recordStep(trace, "core-operation", coreOperation);
 
-            // 7. Business logic - after (SYNC/ASYNC based on plugin config)
-            executeBusinessPluginsAfter(request, result, trace);
+            // 8. Business logic - AFTER (SYNC/ASYNC based on plugin config)
+            executeBusinessPluginsAfter(bizContext, descriptor, result, trace);
 
-            // 8. Update cache (SYNC)
-            updateCache(request, result, trace);
+            // 9. Update cache (SYNC) - only for CRUD operations
+            if (!descriptor.isExtendedOperation()) {
+                updateCache(request, result, trace);
+            }
 
-            // 9. Audit (ASYNC)
-            recordAudit(auditContext, result);
+            // 10. Audit (ASYNC) - captures operation details including extended operation info
+            recordAudit(auditContext, result, descriptor);
 
-            // 10. Telemetry (ASYNC)
-            recordTelemetry(request, result);
+            // 11. Telemetry (ASYNC)
+            recordTelemetry(request, result, descriptor);
 
             return result;
 
+        } catch (BusinessRuleException e) {
+            // Business rule violation - return OperationOutcome
+            recordAuditError(auditContext, e);
+            return OperationResult.failure(createOperationOutcome(e));
         } catch (Exception e) {
             recordAuditError(auditContext, e);
             throw e;
         } finally {
-            // End performance trace
             endPerformanceTrace(trace);
         }
     }
 
-    private void executeBusinessPluginsBefore(RequestContext request, TraceContext trace) {
-        BusinessContext bizContext = createBusinessContext(request);
+    /**
+     * Execute business logic plugins BEFORE the core operation.
+     * Any plugin can abort the operation by returning PluginResult.failure().
+     */
+    private void executeBusinessPluginsBefore(
+            BusinessContext bizContext,
+            OperationDescriptor descriptor,
+            TraceContext trace) {
 
         for (BusinessLogicPlugin plugin : businessPlugins) {
-            if (plugin.supports(request.getResourceType(), request.getInteraction())) {
-                PluginResult result = recordStep(trace, "business-before-" + plugin.getName(),
+            if (plugin.supports(descriptor)) {
+                PluginResult result = recordStep(trace,
+                    "business-before-" + plugin.getName(),
                     () -> plugin.beforeOperation(bizContext));
 
                 if (!result.isSuccess()) {
                     throw new BusinessRuleException(result.getMessage());
                 }
                 if (!result.isContinueChain()) {
-                    break;  // Plugin requested to stop chain
+                    break;  // Plugin requested to stop chain (but continue operation)
                 }
             }
         }
     }
 
-    private void executeBusinessPluginsAfter(RequestContext request, OperationResult result, TraceContext trace) {
-        BusinessContext bizContext = createBusinessContext(request);
+    /**
+     * Execute business logic plugins AFTER the core operation.
+     * Plugins can modify the result or trigger side effects.
+     * Cannot abort the operation (already completed).
+     */
+    private void executeBusinessPluginsAfter(
+            BusinessContext bizContext,
+            OperationDescriptor descriptor,
+            OperationResult result,
+            TraceContext trace) {
 
         for (BusinessLogicPlugin plugin : businessPlugins) {
-            if (plugin.supports(request.getResourceType(), request.getInteraction())) {
+            if (plugin.supports(descriptor)) {
                 if (plugin.getExecutionMode() == ASYNCHRONOUS) {
-                    asyncExecutor.submit(() -> plugin.afterOperation(bizContext, result));
+                    // Run async plugins in background
+                    asyncExecutor.submit(() -> {
+                        try {
+                            plugin.afterOperation(bizContext, result);
+                        } catch (Exception e) {
+                            log.warn("Async after-plugin {} failed: {}",
+                                plugin.getName(), e.getMessage());
+                        }
+                    });
                 } else {
-                    recordStep(trace, "business-after-" + plugin.getName(),
+                    // Run sync plugins inline
+                    recordStep(trace,
+                        "business-after-" + plugin.getName(),
                         () -> plugin.afterOperation(bizContext, result));
                 }
             }
         }
+    }
+
+    /**
+     * Create BusinessContext for plugin execution.
+     */
+    private BusinessContext createBusinessContext(
+            RequestContext request,
+            OperationDescriptor descriptor,
+            Parameters inputParameters) {
+
+        return new BusinessContext(
+            request,
+            descriptor.getResourceType(),
+            request.getResourceId(),
+            descriptor.getOperationType(),
+            descriptor.getOperationCode(),
+            request.getResource(),          // For CRUD create/update
+            inputParameters,                // For extended operations
+            new ConcurrentHashMap<>()       // Shared attributes across plugins
+        );
+    }
+
+    /**
+     * Validate extended operation input parameters against OperationDefinition.
+     */
+    private void validateOperationParameters(
+            String operationCode,
+            Parameters inputParameters,
+            TraceContext trace) {
+
+        recordStep(trace, "validate-operation-params", () -> {
+            operationRegistry.validateOperationParameters(operationCode, inputParameters);
+            return null;
+        });
     }
 }
 ```
