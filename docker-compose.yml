@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  fhir-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fhir4java-server
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/fhir4java
+      - SPRING_DATASOURCE_USERNAME=fhir4java
+      - SPRING_DATASOURCE_PASSWORD=fhir4java
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - fhir-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: fhir4java-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=fhir4java
+      - POSTGRES_USER=fhir4java
+      - POSTGRES_PASSWORD=fhir4java
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    networks:
+      - fhir-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fhir4java -d fhir4java"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fhir4java-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - fhir-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  fhir-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
