@@ -3,7 +3,7 @@
 > **A Modern, AI-Powered HL7 FHIR R5 Server Implementation in Java**
 
 [![FHIR R5](https://img.shields.io/badge/FHIR-R5-blue)](https://hl7.org/fhir/R5/)
-[![Java 21](https://img.shields.io/badge/Java-21-orange)](https://openjdk.org/projects/jdk/21/)
+[![Java 25](https://img.shields.io/badge/Java-25-orange)](https://openjdk.org/projects/jdk/25/)
 [![Spring Boot 3](https://img.shields.io/badge/Spring%20Boot-3.x-green)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
@@ -98,7 +98,7 @@ This architecture aligns with the industry-standard [Model Context Protocol](htt
 
 | Component | Technology |
 |-----------|------------|
-| **Language** | Java 21 |
+| **Language** | Java 25 |
 | **Framework** | Spring Boot 3.x |
 | **FHIR Library** | [HAPI FHIR](https://hapifhir.io/) |
 | **Database** | PostgreSQL 16 with JSONB |
@@ -112,7 +112,7 @@ This architecture aligns with the industry-standard [Model Context Protocol](htt
 ## Quick Start
 
 ### Prerequisites
-- Java 21+
+- Java 25+
 - Maven 3.9+
 - Docker & Docker Compose
 - PostgreSQL 16+ (or use Docker)
