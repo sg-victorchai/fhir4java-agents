@@ -1,6 +1,9 @@
 # Build stage
 FROM eclipse-temurin:21-jdk AS builder
 
+# Install unzip for Maven wrapper
+RUN apt-get update && apt-get install -y unzip && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy Maven wrapper and POM files first for better caching
@@ -13,7 +16,8 @@ COPY fhir4java-api/pom.xml fhir4java-api/
 COPY fhir4java-server/pom.xml fhir4java-server/
 
 # Download dependencies
-RUN chmod +x mvnw && ./mvnw dependency:go-offline -B
+RUN chmod +x mvnw
+RUN ./mvnw dependency:go-offline -B
 
 # Copy source code
 COPY fhir4java-core/src fhir4java-core/src
@@ -27,6 +31,9 @@ RUN ./mvnw clean package -DskipTests -B
 
 # Runtime stage
 FROM eclipse-temurin:21-jre
+
+# Install curl for health check
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
