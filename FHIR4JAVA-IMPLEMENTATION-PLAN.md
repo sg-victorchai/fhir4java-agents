@@ -85,11 +85,18 @@ fhir4java/
 │           │   ├── resources/         # Resource configurations (YAML for app config)
 │           │   │   ├── patient.yml    # Patient resource config
 │           │   │   └── ...
-│           │   ├── searchparameters/  # SearchParameter Bundles (FHIR JSON)
-│           │   │   ├── _base-searchparameters.json      # Common search params Bundle
-│           │   │   ├── patient-searchparameters.json    # Patient search params Bundle
-│           │   │   ├── observation-searchparameters.json
-│           │   │   └── ...
+│           │   ├── searchparameters/  # Individual SearchParameter JSON files (FHIR R5)
+│           │   │   ├── SearchParameter-Resource-id.json           # _id (all resources)
+│           │   │   ├── SearchParameter-Resource-lastUpdated.json  # _lastUpdated (all resources)
+│           │   │   ├── SearchParameter-Resource-tag.json          # _tag (all resources)
+│           │   │   ├── SearchParameter-Resource-profile.json      # _profile (all resources)
+│           │   │   ├── SearchParameter-Resource-security.json     # _security (all resources)
+│           │   │   ├── SearchParameter-Resource-source.json       # _source (all resources)
+│           │   │   ├── SearchParameter-Resource-*.json            # Other common params
+│           │   │   ├── SearchParameter-DomainResource-text.json   # _text (DomainResource subtypes)
+│           │   │   ├── SearchParameter-Patient-*.json             # Patient-specific params
+│           │   │   ├── SearchParameter-Observation-*.json         # Observation-specific params
+│           │   │   └── ...                                        # ~1200+ individual files
 │           │   ├── operations/        # OperationDefinition files (FHIR JSON)
 │           │   │   ├── patient-merge.json
 │           │   │   └── ...
@@ -3925,8 +3932,9 @@ volumes:
 | plugin | `HybridPluginOrchestrator.java` | Orchestrator for Spring + MCP plugins |
 | plugin | `McpPluginConfig.java` | MCP plugin configuration |
 | server | `application.yml` | Main configuration |
-| server | `fhir-config/searchparameters/_base-searchparameters.json` | Base search params (FHIR Bundle of SearchParameter) |
-| server | `fhir-config/searchparameters/patient-searchparameters.json` | Patient search params (FHIR Bundle) |
+| server | `fhir-config/searchparameters/SearchParameter-Resource-*.json` | Common search params for all resources (e.g., _id, _lastUpdated) |
+| server | `fhir-config/searchparameters/SearchParameter-DomainResource-*.json` | Common search params for DomainResource subtypes (e.g., _text) |
+| server | `fhir-config/searchparameters/SearchParameter-<Type>-*.json` | Resource-specific search params (e.g., Patient-identifier) |
 | server | `fhir-config/profiles/custom-patient-profile.json` | Custom Patient StructureDefinition |
 | server | `fhir-config/operations/patient-merge.json` | Patient merge OperationDefinition |
 | docker | `docker-compose.yml` | Container orchestration |
