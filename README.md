@@ -126,7 +126,7 @@ git clone https://github.com/sg-victorchai/fhir4java-agents.git
 cd fhir4java-agents
 
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Server will be available at http://localhost:8080/fhir/r5
 ```
