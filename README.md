@@ -100,7 +100,7 @@ This architecture aligns with the industry-standard [Model Context Protocol](htt
 |-----------|------------|
 | **Language** | Java 21 |
 | **Framework** | Spring Boot 3.x |
-| **FHIR Library** | [HAPI FHIR](https://hapifhir.io/) |
+| **FHIR Library** | [HAPI FHIR](https://hapifhir.io/hapi-fhir/docs/getting_started/downloading_and_importing.html) |
 | **Database** | PostgreSQL 16 with JSONB |
 | **Cache** | Redis 7.x |
 | **Testing** | JUnit 5, Cucumber BDD, TestContainers |
