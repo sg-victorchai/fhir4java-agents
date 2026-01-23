@@ -14,8 +14,8 @@
 **FHIR4Java Agents** is an enterprise-grade [HL7 FHIR](https://hl7.org/fhir/) server implementation built with Java and Spring Boot. This project demonstrates the powerful combination of healthcare interoperability standards (FHIR R5) with modern AI capabilities.
 
 The server is designed to be **configuration-driven**, allowing healthcare organizations to:
-- Support standard [FHIR R5 resources](https://hl7.org/fhir/R5/resourcelist.html) out of the box
-- Define custom resources without manual coding
+- Support standard [FHIR R5 resources](https://hl7.org/fhir/R5/resourcelist.html), [FHIR R4B resources] (https://hl7.org/fhir/R4B/documentation.html) out of the box
+- Suppoert custom resources by defining custom resources without manual coding
 - Extend functionality through a flexible plugin architecture
 - Leverage AI for intelligent plugin discovery and orchestration
 
