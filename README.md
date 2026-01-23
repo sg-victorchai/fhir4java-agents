@@ -217,6 +217,6 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Acknowledgments
 
-- [HL7 International](https://www.hl7.org/) for the FHIR specification
+- [HL7 International](https://www.hl7.org/fhir) for the FHIR specification
 - [HAPI FHIR](https://hapifhir.io/) for the excellent Java FHIR library
 - [Anthropic](https://www.anthropic.com/) for Claude AI assistance in development
