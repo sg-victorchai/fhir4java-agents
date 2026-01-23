@@ -80,29 +80,30 @@ fhir4java/
 │       ├── java/
 │       └── resources/
 │           ├── application.yml
-│           ├── fhir-config/           # FHIR configuration files (all JSON format)
-│           │   ├── capability.json    # CapabilityStatement base config
-│           │   ├── resources/         # Resource configurations (YAML for app config)
-│           │   │   ├── patient.yml    # Patient resource config
+│           ├── fhir-config/           # FHIR configuration files
+│           │   ├── resources/         # Resource configurations (YAML, version-agnostic)
+│           │   │   ├── patient.yml    # Patient resource config (supports multiple versions)
+│           │   │   ├── observation.yml
 │           │   │   └── ...
-│           │   ├── searchparameters/  # Individual SearchParameter JSON files (FHIR R5)
-│           │   │   ├── SearchParameter-Resource-id.json           # _id (all resources)
-│           │   │   ├── SearchParameter-Resource-lastUpdated.json  # _lastUpdated (all resources)
-│           │   │   ├── SearchParameter-Resource-tag.json          # _tag (all resources)
-│           │   │   ├── SearchParameter-Resource-profile.json      # _profile (all resources)
-│           │   │   ├── SearchParameter-Resource-security.json     # _security (all resources)
-│           │   │   ├── SearchParameter-Resource-source.json       # _source (all resources)
-│           │   │   ├── SearchParameter-Resource-*.json            # Other common params
-│           │   │   ├── SearchParameter-DomainResource-text.json   # _text (DomainResource subtypes)
-│           │   │   ├── SearchParameter-Patient-*.json             # Patient-specific params
-│           │   │   ├── SearchParameter-Observation-*.json         # Observation-specific params
-│           │   │   └── ...                                        # ~1200+ individual files
-│           │   ├── operations/        # OperationDefinition files (FHIR JSON)
-│           │   │   ├── patient-merge.json
-│           │   │   └── ...
-│           │   └── profiles/          # StructureDefinition files (FHIR JSON)
-│           │       ├── patient-profile.json
-│           │       └── ...
+│           │   ├── r5/                # FHIR R5 version-specific definitions
+│           │   │   ├── capability.json    # R5 CapabilityStatement base config
+│           │   │   ├── searchparameters/  # R5 SearchParameter JSON files
+│           │   │   │   ├── SearchParameter-Resource-id.json
+│           │   │   │   ├── SearchParameter-Resource-lastUpdated.json
+│           │   │   │   ├── SearchParameter-DomainResource-text.json
+│           │   │   │   ├── SearchParameter-Patient-*.json
+│           │   │   │   └── ...
+│           │   │   ├── operations/        # R5 OperationDefinition files
+│           │   │   │   ├── OperationDefinition-Patient-merge.json
+│           │   │   │   └── ...
+│           │   │   └── profiles/          # R5 StructureDefinition files
+│           │   │       ├── StructureDefinition-Patient.json
+│           │   │       └── ...
+│           │   └── r4b/               # FHIR R4B version-specific definitions
+│           │       ├── capability.json    # R4B CapabilityStatement base config
+│           │       ├── searchparameters/  # R4B SearchParameter JSON files
+│           │       ├── operations/        # R4B OperationDefinition files
+│           │       └── profiles/          # R4B StructureDefinition files
 │           └── application-test.yml   # Test configuration
 └── pom.xml                            # Parent POM
 ```
@@ -113,14 +114,24 @@ fhir4java/
 
 ### 1. Resource Configuration System
 
+Resource configurations are stored in `fhir-config/resources/` as YAML files. Each resource can support **multiple FHIR versions** with one version designated as the default.
+
 **File: `fhir-config/resources/patient.yml`** (Example)
 ```yaml
 resourceType: Patient
-fhirVersion: R4B  # or R5
 enabled: true
+
+# Multiple FHIR versions support - one must be marked as default
+fhirVersions:
+  - version: R5
+    default: true      # Default version when URL doesn't specify version
+  - version: R4B
+    default: false
+
 schema:
   type: dedicated  # or 'shared'
   name: fhir_patient  # schema name if dedicated
+
 interactions:
   read: true
   vread: true
@@ -130,17 +141,80 @@ interactions:
   delete: false
   search: true
   history: true
+
 profiles:
   - url: http://hl7.org/fhir/StructureDefinition/Patient
     required: true
   - url: http://example.org/fhir/StructureDefinition/CustomPatient
     required: false
-# NOTE: Search parameters are NOT defined here - see fhir-config/searchparameters/
+
+# NOTE: Search parameters, operations, and profiles are loaded from
+# version-specific folders: fhir-config/r5/ or fhir-config/r4b/
 ```
 
-### 1b. Search Parameter Configuration (Individual FHIR R5 JSON Files)
+**ResourceConfiguration Model:**
+```java
+@Data
+public class ResourceConfiguration {
+    private String resourceType;
+    private boolean enabled;
+    private List<FhirVersionConfig> fhirVersions;
+    private SchemaConfig schema;
+    private Map<InteractionType, Boolean> interactions;
+    private List<ProfileConfig> profiles;
 
-Search parameters are loaded from `fhir-config/searchparameters/` as **individual FHIR R5 SearchParameter JSON files** (one search parameter per file), using the official HL7 FHIR R5 definitions.
+    /**
+     * Get the default FHIR version for this resource.
+     * If only one version configured, that is the default.
+     * If multiple versions, returns the one marked as default.
+     */
+    public FhirVersion getDefaultVersion() {
+        if (fhirVersions == null || fhirVersions.isEmpty()) {
+            return FhirVersion.R5; // Global fallback
+        }
+        if (fhirVersions.size() == 1) {
+            return fhirVersions.get(0).getVersion();
+        }
+        return fhirVersions.stream()
+            .filter(FhirVersionConfig::isDefault)
+            .map(FhirVersionConfig::getVersion)
+            .findFirst()
+            .orElse(fhirVersions.get(0).getVersion());
+    }
+
+    public boolean supportsVersion(FhirVersion version) {
+        return fhirVersions.stream()
+            .anyMatch(v -> v.getVersion() == version);
+    }
+
+    public Set<FhirVersion> getSupportedVersions() {
+        return fhirVersions.stream()
+            .map(FhirVersionConfig::getVersion)
+            .collect(Collectors.toSet());
+    }
+}
+
+@Data
+public class FhirVersionConfig {
+    private FhirVersion version;
+    @JsonProperty("default")
+    private boolean defaultVersion;
+
+    public boolean isDefault() {
+        return defaultVersion;
+    }
+}
+```
+
+### 1b. Search Parameter Configuration (Version-Specific JSON Files)
+
+Search parameters are loaded from **version-specific folders** as individual FHIR SearchParameter JSON files (one search parameter per file), using the official HL7 FHIR definitions for each version.
+
+**Version-Specific Paths:**
+| FHIR Version | Path |
+|--------------|------|
+| R5 | `fhir-config/r5/searchparameters/` |
+| R4B | `fhir-config/r4b/searchparameters/` |
 
 **File Naming Convention:**
 | Pattern | Description | Example |
@@ -156,6 +230,8 @@ Search parameters are loaded from `fhir-config/searchparameters/` as **individua
 | All other resources | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` |
 
 **Search Parameter Name:** The `name` element in the JSON file defines the search parameter name used in queries (e.g., `_id`, `_lastUpdated`, `death-date`).
+
+**Note:** Each FHIR version may have different search parameters or different FHIRPath expressions for the same parameter. The registry loads parameters separately for each version.
 
 ---
 
@@ -281,31 +357,87 @@ Search parameters are loaded from `fhir-config/searchparameters/` as **individua
 
 ### 2. Resource Registry
 
+The ResourceRegistry manages resource configurations and provides version-aware lookups.
+
 ```java
 @Component
 public class ResourceRegistry {
     private final Map<String, ResourceConfiguration> resources = new ConcurrentHashMap<>();
-    private final Map<FhirVersion, FhirContext> fhirContexts;
-    private final SearchParameterRegistry searchParameterRegistry;
+    private final FhirContextFactory fhirContextFactory;
 
-    // Load from YAML/JSON configuration at startup
+    @Value("${fhir4java.server.default-version:R5}")
+    private FhirVersion globalDefaultVersion;
+
+    // Load from YAML configuration at startup
     public void registerResource(ResourceConfiguration config);
+
     public Optional<ResourceConfiguration> getResource(String resourceType);
-    public boolean isInteractionEnabled(String resourceType, InteractionType type);
+
+    public List<ResourceConfiguration> getAllResources();
+
+    /**
+     * Get all resources that support a specific FHIR version.
+     */
+    public List<ResourceConfiguration> getResourcesForVersion(FhirVersion version) {
+        return resources.values().stream()
+            .filter(config -> config.supportsVersion(version))
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Check if interaction is enabled for a resource with specific FHIR version.
+     */
+    public boolean isInteractionEnabled(String resourceType, FhirVersion version, InteractionType type) {
+        return getResource(resourceType)
+            .filter(config -> config.supportsVersion(version))
+            .map(config -> config.getInteractions().getOrDefault(type, false))
+            .orElse(false);
+    }
+
+    /**
+     * Get the default FHIR version for a resource type.
+     * Falls back to global default if resource doesn't specify.
+     */
+    public FhirVersion getDefaultVersion(String resourceType) {
+        return getResource(resourceType)
+            .map(ResourceConfiguration::getDefaultVersion)
+            .orElse(globalDefaultVersion);
+    }
+
+    /**
+     * Check if a resource supports a specific FHIR version.
+     */
+    public boolean supportsVersion(String resourceType, FhirVersion version) {
+        return getResource(resourceType)
+            .map(config -> config.supportsVersion(version))
+            .orElse(false);
+    }
+
+    /**
+     * Get all FHIR versions supported by a resource.
+     */
+    public Set<FhirVersion> getSupportedVersions(String resourceType) {
+        return getResource(resourceType)
+            .map(ResourceConfiguration::getSupportedVersions)
+            .orElse(Collections.emptySet());
+    }
 }
 ```
 
 ### 2b. Search Parameter Registry
 
-Loads search parameters from individual FHIR R5 SearchParameter JSON files (one search parameter per file).
+Loads search parameters from **version-specific folders** as individual FHIR SearchParameter JSON files.
+
+**Version-Specific Paths:**
+| FHIR Version | Path |
+|--------------|------|
+| R5 | `fhir-config/r5/searchparameters/` |
+| R4B | `fhir-config/r4b/searchparameters/` |
 
 **File Naming Convention:**
-- Resource-specific: `SearchParameter-<ResourceType>-<param-name>.json` (e.g., `SearchParameter-Patient-death-date.json`)
-- Common parameters for all resources: `SearchParameter-Resource-<param-name>.json` (e.g., `SearchParameter-Resource-id.json`)
-- Common parameters for DomainResource subtypes: `SearchParameter-DomainResource-<param-name>.json` (e.g., `SearchParameter-DomainResource-text.json`)
-
-**Search Parameter Name:**
-The search parameter name used in queries is taken from the `name` element in the JSON file (e.g., `_id`, `_text`, `death-date`).
+- Resource-specific: `SearchParameter-<ResourceType>-<param-name>.json`
+- Common parameters for all resources: `SearchParameter-Resource-<param-name>.json`
+- Common parameters for DomainResource subtypes: `SearchParameter-DomainResource-<param-name>.json`
 
 **Inheritance Rules:**
 | Resource Type | Inherits From |
@@ -313,91 +445,83 @@ The search parameter name used in queries is taken from the `name` element in th
 | Bundle, Parameters, Binary | `SearchParameter-Resource-*` only |
 | All other resources (DomainResource subtypes) | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` |
 
-**Common Search Parameters (SearchParameter-Resource-*):**
-- `_id` - Logical id of the resource
-- `_lastUpdated` - When the resource version last changed
-- `_tag` - Tags applied to this resource
-- `_profile` - Profiles this resource claims to conform to
-- `_security` - Security labels applied to this resource
-- `_source` - Identifies where the resource comes from
-- `_text` - Text search against the narrative (Resource level)
-- `_content` - Text search against the entire resource content
-- `_list` - Return resources on the list
-- `_has` - Reverse chaining
-- `_type` - Resource type filter
-- `_filter` - Filter expression
-- `_query` - Named query
-- `_language` - Language of the resource content
-- `_in` - Inclusion in a compartment
-
-**DomainResource-specific Common Search Parameters (SearchParameter-DomainResource-*):**
-- `_text` - Search on the narrative of the resource (DomainResource level)
-
 ```java
 @Component
 public class SearchParameterRegistry {
     private static final Logger log = LoggerFactory.getLogger(SearchParameterRegistry.class);
-
-    // Resource types that inherit only from Resource (not DomainResource)
     private static final Set<String> NON_DOMAIN_RESOURCES = Set.of("Bundle", "Parameters", "Binary");
 
     private final FhirContextFactory fhirContextFactory;
     private final ResourceLoader resourceLoader;
 
-    // Common parameters from SearchParameter-Resource-*.json (applies to ALL resources)
-    private final List<SearchParameter> resourceBaseParams = new ArrayList<>();
-    // Common parameters from SearchParameter-DomainResource-*.json (applies to DomainResource subtypes)
-    private final List<SearchParameter> domainResourceParams = new ArrayList<>();
-    // Resource-specific parameters (key: resourceType, value: list of SearchParameter)
-    private final Map<String, List<SearchParameter>> resourceSpecificParams = new ConcurrentHashMap<>();
-    // Quick lookup map: key = "resourceType:paramName", value = SearchParameter
-    private final Map<String, SearchParameter> parameterLookup = new ConcurrentHashMap<>();
+    // Version-specific parameter storage
+    private final Map<FhirVersion, List<SearchParameter>> resourceBaseParams = new ConcurrentHashMap<>();
+    private final Map<FhirVersion, List<SearchParameter>> domainResourceParams = new ConcurrentHashMap<>();
+    private final Map<FhirVersion, Map<String, List<SearchParameter>>> resourceSpecificParams = new ConcurrentHashMap<>();
+    private final Map<FhirVersion, Map<String, SearchParameter>> parameterLookup = new ConcurrentHashMap<>();
 
-    @Value("${fhir4java.searchparameters.path:classpath:fhir-config/searchparameters/}")
-    private String searchParamsPath;
+    @Value("${fhir4java.config.base-path:classpath:fhir-config/}")
+    private String configBasePath;
 
     @PostConstruct
     public void loadSearchParameters() throws IOException {
-        FhirContext ctx = fhirContextFactory.getContext(FhirVersion.R5);
-        IParser parser = ctx.newJsonParser();
-
-        // Scan all SearchParameter-*.json files
-        Resource[] resources = resourceLoader.getResources(searchParamsPath + "SearchParameter-*.json");
-
-        for (Resource resource : resources) {
-            loadSearchParameterFile(parser, resource);
+        // Load search parameters for each supported FHIR version
+        for (FhirVersion version : FhirVersion.values()) {
+            loadSearchParametersForVersion(version);
         }
-
-        log.info("Loaded {} Resource base parameters, {} DomainResource parameters, {} resource-specific parameters",
-            resourceBaseParams.size(), domainResourceParams.size(),
-            resourceSpecificParams.values().stream().mapToInt(List::size).sum());
     }
 
-    private void loadSearchParameterFile(IParser parser, Resource resource) {
+    private void loadSearchParametersForVersion(FhirVersion version) {
+        String versionCode = version.getCode().toLowerCase(); // "r5" or "r4b"
+        String versionPath = configBasePath + versionCode + "/searchparameters/";
+
+        // Initialize maps for this version
+        resourceBaseParams.put(version, new ArrayList<>());
+        domainResourceParams.put(version, new ArrayList<>());
+        resourceSpecificParams.put(version, new ConcurrentHashMap<>());
+        parameterLookup.put(version, new ConcurrentHashMap<>());
+
+        try {
+            FhirContext ctx = fhirContextFactory.getContext(version);
+            IParser parser = ctx.newJsonParser();
+
+            Resource[] resources = resourceLoader.getResources(versionPath + "SearchParameter-*.json");
+
+            for (Resource resource : resources) {
+                loadSearchParameterFile(version, parser, resource);
+            }
+
+            log.info("Loaded search parameters for FHIR {}: {} Resource base, {} DomainResource, {} resource-specific",
+                version.getCode(),
+                resourceBaseParams.get(version).size(),
+                domainResourceParams.get(version).size(),
+                resourceSpecificParams.get(version).values().stream().mapToInt(List::size).sum());
+
+        } catch (FileNotFoundException e) {
+            log.warn("No search parameters found for FHIR {} at {}", version.getCode(), versionPath);
+        } catch (IOException e) {
+            log.error("Error loading search parameters for FHIR {}: {}", version.getCode(), e.getMessage());
+        }
+    }
+
+    private void loadSearchParameterFile(FhirVersion version, IParser parser, Resource resource) {
         try (InputStream is = resource.getInputStream()) {
             SearchParameter sp = parser.parseResource(SearchParameter.class, is);
             String filename = resource.getFilename();
 
             if (filename.startsWith("SearchParameter-Resource-")) {
-                // Common parameter for ALL resources (e.g., _id, _lastUpdated)
-                resourceBaseParams.add(sp);
-                log.debug("Loaded Resource base parameter: {} ({})", sp.getName(), filename);
+                resourceBaseParams.get(version).add(sp);
             } else if (filename.startsWith("SearchParameter-DomainResource-")) {
-                // Common parameter for DomainResource subtypes only
-                domainResourceParams.add(sp);
-                log.debug("Loaded DomainResource parameter: {} ({})", sp.getName(), filename);
+                domainResourceParams.get(version).add(sp);
             } else {
-                // Resource-specific parameter (e.g., SearchParameter-Patient-death-date.json)
-                for (Enumeration<VersionIndependentResourceTypesAll> base : sp.getBase()) {
+                // Resource-specific parameter
+                for (var base : sp.getBase()) {
                     String resourceType = base.getCode();
-                    resourceSpecificParams
+                    resourceSpecificParams.get(version)
                         .computeIfAbsent(resourceType, k -> new ArrayList<>())
                         .add(sp);
-                    // Build lookup index
-                    parameterLookup.put(resourceType + ":" + sp.getName(), sp);
+                    parameterLookup.get(version).put(resourceType + ":" + sp.getName(), sp);
                 }
-                log.debug("Loaded resource-specific parameter: {} for {} ({})",
-                    sp.getName(), sp.getBase(), filename);
             }
         } catch (Exception e) {
             log.warn("Failed to load search parameter from {}: {}", resource.getFilename(), e.getMessage());
@@ -405,49 +529,43 @@ public class SearchParameterRegistry {
     }
 
     /**
-     * Get all search parameters applicable to a resource type.
-     *
-     * @param resourceType The FHIR resource type (e.g., "Patient")
-     * @return List of applicable SearchParameter definitions
+     * Get all search parameters applicable to a resource type for a specific FHIR version.
      */
-    public List<SearchParameter> getSearchParameters(String resourceType) {
+    public List<SearchParameter> getSearchParameters(FhirVersion version, String resourceType) {
         List<SearchParameter> params = new ArrayList<>();
 
-        // 1. Add Resource base parameters (applies to ALL resources)
-        params.addAll(resourceBaseParams);
+        // 1. Add Resource base parameters
+        params.addAll(resourceBaseParams.getOrDefault(version, Collections.emptyList()));
 
-        // 2. Add DomainResource parameters (only for non-Bundle/Parameters/Binary resources)
+        // 2. Add DomainResource parameters (only for DomainResource subtypes)
         if (!NON_DOMAIN_RESOURCES.contains(resourceType)) {
-            params.addAll(domainResourceParams);
+            params.addAll(domainResourceParams.getOrDefault(version, Collections.emptyList()));
         }
 
         // 3. Add resource-specific parameters
-        params.addAll(resourceSpecificParams.getOrDefault(resourceType, Collections.emptyList()));
+        Map<String, List<SearchParameter>> specificParams = resourceSpecificParams.get(version);
+        if (specificParams != null) {
+            params.addAll(specificParams.getOrDefault(resourceType, Collections.emptyList()));
+        }
 
         return params;
     }
 
     /**
-     * Check if a search parameter is defined for a resource type.
-     * Uses the 'name' element from SearchParameter JSON.
+     * Get a specific search parameter by version, resource type, and parameter name.
      */
-    public boolean isSearchParameterDefined(String resourceType, String paramName) {
-        return getSearchParameter(resourceType, paramName).isPresent();
-    }
-
-    /**
-     * Get a specific search parameter by resource type and parameter name.
-     * The paramName should match the 'name' element in the SearchParameter JSON.
-     */
-    public Optional<SearchParameter> getSearchParameter(String resourceType, String paramName) {
+    public Optional<SearchParameter> getSearchParameter(FhirVersion version, String resourceType, String paramName) {
         // Check lookup cache first
-        SearchParameter cached = parameterLookup.get(resourceType + ":" + paramName);
-        if (cached != null) {
-            return Optional.of(cached);
+        Map<String, SearchParameter> lookup = parameterLookup.get(version);
+        if (lookup != null) {
+            SearchParameter cached = lookup.get(resourceType + ":" + paramName);
+            if (cached != null) {
+                return Optional.of(cached);
+            }
         }
 
         // Search in base parameters
-        for (SearchParameter sp : resourceBaseParams) {
+        for (SearchParameter sp : resourceBaseParams.getOrDefault(version, Collections.emptyList())) {
             if (sp.getName().equals(paramName)) {
                 return Optional.of(sp);
             }
@@ -455,7 +573,7 @@ public class SearchParameterRegistry {
 
         // Search in DomainResource parameters (if applicable)
         if (!NON_DOMAIN_RESOURCES.contains(resourceType)) {
-            for (SearchParameter sp : domainResourceParams) {
+            for (SearchParameter sp : domainResourceParams.getOrDefault(version, Collections.emptyList())) {
                 if (sp.getName().equals(paramName)) {
                     return Optional.of(sp);
                 }
@@ -463,49 +581,42 @@ public class SearchParameterRegistry {
         }
 
         // Search in resource-specific parameters
-        return resourceSpecificParams.getOrDefault(resourceType, Collections.emptyList())
-            .stream()
-            .filter(sp -> sp.getName().equals(paramName))
-            .findFirst();
+        Map<String, List<SearchParameter>> specificParams = resourceSpecificParams.get(version);
+        if (specificParams != null) {
+            return specificParams.getOrDefault(resourceType, Collections.emptyList())
+                .stream()
+                .filter(sp -> sp.getName().equals(paramName))
+                .findFirst();
+        }
+
+        return Optional.empty();
     }
 
     /**
-     * Get the search parameter type (token, string, date, reference, etc.)
+     * Check if a search parameter is defined for a resource type and version.
      */
-    public Optional<Enumerations.SearchParamType> getSearchParameterType(String resourceType, String paramName) {
-        return getSearchParameter(resourceType, paramName)
+    public boolean isSearchParameterDefined(FhirVersion version, String resourceType, String paramName) {
+        return getSearchParameter(version, resourceType, paramName).isPresent();
+    }
+
+    /**
+     * Get the search parameter type for a version.
+     */
+    public Optional<Enumerations.SearchParamType> getSearchParameterType(
+            FhirVersion version, String resourceType, String paramName) {
+        return getSearchParameter(version, resourceType, paramName)
             .map(SearchParameter::getType);
     }
 
     /**
      * Get the FHIRPath expression for a search parameter.
      */
-    public Optional<String> getSearchParameterExpression(String resourceType, String paramName) {
-        return getSearchParameter(resourceType, paramName)
+    public Optional<String> getSearchParameterExpression(
+            FhirVersion version, String resourceType, String paramName) {
+        return getSearchParameter(version, resourceType, paramName)
             .map(SearchParameter::getExpression);
     }
 
-    /**
-     * Get supported comparators for a search parameter (eq, ne, gt, lt, ge, le, sa, eb, ap).
-     */
-    public Set<SearchParameter.SearchComparator> getSupportedComparators(String resourceType, String paramName) {
-        return getSearchParameter(resourceType, paramName)
-            .map(sp -> new HashSet<>(sp.getComparator()))
-            .orElse(Collections.emptySet());
-    }
-
-    /**
-     * Get supported modifiers for a search parameter (:exact, :contains, :missing, etc.).
-     */
-    public Set<SearchParameter.SearchModifierCode> getSupportedModifiers(String resourceType, String paramName) {
-        return getSearchParameter(resourceType, paramName)
-            .map(sp -> new HashSet<>(sp.getModifier()))
-            .orElse(Collections.emptySet());
-    }
-
-    /**
-     * Check if a resource type inherits from DomainResource.
-     */
     public boolean isDomainResource(String resourceType) {
         return !NON_DOMAIN_RESOURCES.contains(resourceType);
     }
@@ -514,10 +625,11 @@ public class SearchParameterRegistry {
 
 ### 2c. CapabilityStatement Generator
 
-The server dynamically generates a CapabilityStatement based on:
-- Registered resources and their enabled interactions
-- Configured search parameters (base + resource-specific)
-- Registered extended operations
+The server dynamically generates a **version-specific** CapabilityStatement based on:
+- Registered resources that support the requested FHIR version
+- Version-specific search parameters from `fhir-config/{version}/searchparameters/`
+- Version-specific operations from `fhir-config/{version}/operations/`
+- Base capability config from `fhir-config/{version}/capability.json`
 
 ```java
 @Component
@@ -526,23 +638,35 @@ public class CapabilityStatementGenerator {
     private final SearchParameterRegistry searchParameterRegistry;
     private final ExtendedOperationRegistry operationRegistry;
     private final ServerProperties serverProperties;
+    private final ResourceLoader resourceLoader;
 
+    @Value("${fhir4java.config.base-path:classpath:fhir-config/}")
+    private String configBasePath;
+
+    /**
+     * Generate a CapabilityStatement for a specific FHIR version.
+     * Only includes resources that support the requested version.
+     */
     public CapabilityStatement generate(FhirVersion version) {
         CapabilityStatement cs = new CapabilityStatement();
+
+        // Load base capability config from version-specific path
+        loadBaseCapability(cs, version);
+
         cs.setStatus(Enumerations.PublicationStatus.ACTIVE);
         cs.setDate(new Date());
         cs.setKind(CapabilityStatement.CapabilityStatementKind.INSTANCE);
         cs.setFhirVersion(version.toEnumeration());
         cs.setFormat(Arrays.asList(new CodeType("json"), new CodeType("xml")));
         cs.setSoftware(buildSoftwareComponent());
-        cs.setImplementation(buildImplementationComponent());
+        cs.setImplementation(buildImplementationComponent(version));
 
         // Build REST component
         CapabilityStatement.CapabilityStatementRestComponent rest = cs.addRest();
         rest.setMode(CapabilityStatement.RestfulCapabilityMode.SERVER);
 
-        // Add each registered resource
-        for (ResourceConfiguration config : resourceRegistry.getAllResources()) {
+        // Add only resources that support this FHIR version
+        for (ResourceConfiguration config : resourceRegistry.getResourcesForVersion(version)) {
             CapabilityStatement.CapabilityStatementRestResourceComponent resource = rest.addResource();
             resource.setType(config.getResourceType());
 
@@ -551,17 +675,17 @@ public class CapabilityStatementGenerator {
                 resource.addInteraction().setCode(interaction.toRestfulInteraction());
             }
 
-            // Add search parameters (base + resource-specific)
-            for (SearchParameterDefinition param : searchParameterRegistry.getSearchParameters(config.getResourceType())) {
+            // Add version-specific search parameters
+            for (SearchParameter param : searchParameterRegistry.getSearchParameters(version, config.getResourceType())) {
                 CapabilityStatement.CapabilityStatementRestResourceSearchParamComponent sp = resource.addSearchParam();
                 sp.setName(param.getName());
-                sp.setType(Enumerations.SearchParamType.fromCode(param.getType()));
-                sp.setDefinition(param.getDefinition());
-                sp.setDocumentation(param.getDocumentation());
+                sp.setType(param.getType());
+                sp.setDefinition(param.getUrl());
+                sp.setDocumentation(param.getDescription());
             }
 
-            // Add extended operations for this resource
-            for (OperationDefinition op : operationRegistry.getOperationsForResource(config.getResourceType())) {
+            // Add version-specific extended operations
+            for (OperationDefinition op : operationRegistry.getOperationsForResource(version, config.getResourceType())) {
                 resource.addOperation()
                     .setName(op.getCode())
                     .setDefinition(op.getUrl());
@@ -569,6 +693,24 @@ public class CapabilityStatementGenerator {
         }
 
         return cs;
+    }
+
+    private void loadBaseCapability(CapabilityStatement cs, FhirVersion version) {
+        String capabilityPath = configBasePath + version.getCode().toLowerCase() + "/capability.json";
+        try {
+            Resource resource = resourceLoader.getResource(capabilityPath);
+            // Load and merge base capability settings (name, publisher, description, etc.)
+        } catch (Exception e) {
+            log.debug("No base capability.json found for {}, using defaults", version.getCode());
+        }
+    }
+
+    private CapabilityStatement.CapabilityStatementImplementationComponent buildImplementationComponent(FhirVersion version) {
+        CapabilityStatement.CapabilityStatementImplementationComponent impl =
+            new CapabilityStatement.CapabilityStatementImplementationComponent();
+        impl.setDescription("FHIR4Java Server - " + version.getCode());
+        impl.setUrl(serverProperties.getBaseUrl() + "/" + version.getCode().toLowerCase());
+        return impl;
     }
 }
 ```
@@ -598,11 +740,203 @@ public class ProfileValidator implements FhirValidator {
 public class InteractionGuard {
     private final ResourceRegistry registry;
 
-    public void validateInteraction(String resourceType, InteractionType type)
-        throws InteractionDisabledException {
-        if (!registry.isInteractionEnabled(resourceType, type)) {
+    /**
+     * Validate that an interaction is enabled for a resource type and FHIR version.
+     */
+    public void validateInteraction(String resourceType, FhirVersion version, InteractionType type)
+        throws InteractionDisabledException, VersionNotSupportedException {
+
+        // Check if resource supports this FHIR version
+        if (!registry.supportsVersion(resourceType, version)) {
+            throw new VersionNotSupportedException(resourceType, version);
+        }
+
+        // Check if interaction is enabled
+        if (!registry.isInteractionEnabled(resourceType, version, type)) {
             throw new InteractionDisabledException(resourceType, type);
         }
+    }
+}
+```
+
+### 5. API Layer - FHIR Version Resolution
+
+The API layer handles both **versioned** (`/fhir/r5/Patient`) and **unversioned** (`/fhir/Patient`) URL patterns. Unversioned requests are forwarded to the resource's default FHIR version.
+
+**Supported URL Patterns:**
+| URL Pattern | Behavior |
+|-------------|----------|
+| `/fhir/r5/Patient` | Explicit R5 version |
+| `/fhir/r4b/Patient` | Explicit R4B version |
+| `/fhir/Patient` | Forward to resource's default version |
+| `/fhir/Patient/123` | Forward to resource's default version |
+| `/fhir/r5/Patient/$merge` | R5 extended operation |
+| `/fhir/Patient/$merge` | Extended operation on default version |
+
+**FhirVersionResolver:**
+```java
+@Component
+public class FhirVersionResolver {
+    private final ResourceRegistry resourceRegistry;
+
+    private static final Pattern VERSIONED_PATH =
+        Pattern.compile("^/fhir/(r4b|r5)/(.+)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern UNVERSIONED_PATH =
+        Pattern.compile("^/fhir/([A-Z][a-zA-Z]+)(.*)$");
+
+    /**
+     * Resolve FHIR version from request URL.
+     * Returns version and whether it was explicitly specified.
+     */
+    public ResolvedVersion resolve(HttpServletRequest request) {
+        String path = request.getRequestURI();
+
+        // Check for explicit version in path (/fhir/r5/... or /fhir/r4b/...)
+        Matcher versionedMatcher = VERSIONED_PATH.matcher(path);
+        if (versionedMatcher.matches()) {
+            String versionCode = versionedMatcher.group(1).toUpperCase();
+            FhirVersion version = FhirVersion.fromCode(versionCode);
+            String remainingPath = versionedMatcher.group(2);
+            return new ResolvedVersion(version, true, remainingPath);
+        }
+
+        // No version in path - extract resource type and get default
+        Matcher unversionedMatcher = UNVERSIONED_PATH.matcher(path);
+        if (unversionedMatcher.matches()) {
+            String resourceType = unversionedMatcher.group(1);
+            String remainingPath = resourceType + unversionedMatcher.group(2);
+            FhirVersion defaultVersion = resourceRegistry.getDefaultVersion(resourceType);
+            return new ResolvedVersion(defaultVersion, false, remainingPath);
+        }
+
+        // Fallback for metadata and other endpoints
+        return new ResolvedVersion(FhirVersion.R5, false, path);
+    }
+}
+
+@Data
+@AllArgsConstructor
+public class ResolvedVersion {
+    private FhirVersion version;
+    private boolean explicit;       // True if version was specified in URL
+    private String resourcePath;    // Path after version (e.g., "Patient/123")
+
+    public String getVersionCode() {
+        return version.getCode().toLowerCase();
+    }
+}
+```
+
+**FhirVersionFilter (Request Interceptor):**
+```java
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class FhirVersionFilter extends OncePerRequestFilter {
+    private final FhirVersionResolver versionResolver;
+    private final ResourceRegistry resourceRegistry;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+
+        ResolvedVersion resolved = versionResolver.resolve(request);
+        String resourceType = extractResourceType(resolved.getResourcePath());
+
+        // Validate resource supports this FHIR version
+        if (resourceType != null && !resourceRegistry.supportsVersion(resourceType, resolved.getVersion())) {
+            writeOperationOutcome(response, HttpServletResponse.SC_BAD_REQUEST,
+                "Resource " + resourceType + " does not support FHIR " + resolved.getVersion().getCode());
+            return;
+        }
+
+        // Store resolved version in request attributes for downstream use
+        request.setAttribute("fhirVersion", resolved.getVersion());
+        request.setAttribute("fhirVersionExplicit", resolved.isExplicit());
+        request.setAttribute("fhirResourcePath", resolved.getResourcePath());
+
+        // Add response header indicating actual version used
+        response.setHeader("X-FHIR-Version", resolved.getVersion().getCode());
+
+        filterChain.doFilter(request, response);
+    }
+
+    private String extractResourceType(String path) {
+        // Extract resource type from path like "Patient/123" or "Patient"
+        if (path == null || path.isEmpty()) return null;
+        String[] parts = path.split("[/?]");
+        return parts.length > 0 ? parts[0] : null;
+    }
+
+    private void writeOperationOutcome(HttpServletResponse response, int status, String message)
+            throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/fhir+json");
+        // Write OperationOutcome JSON
+    }
+}
+```
+
+**FhirResourceController (Updated):**
+```java
+@RestController
+@RequestMapping("/fhir")
+public class FhirResourceController {
+    private final ResourceService resourceService;
+
+    /**
+     * Read resource - handles both versioned and unversioned paths.
+     * Version is resolved by FhirVersionFilter and stored in request attribute.
+     */
+    @GetMapping({"/{version}/{resourceType}/{id}", "/{resourceType}/{id}"})
+    public ResponseEntity<IBaseResource> read(
+            @PathVariable(required = false) String version,
+            @PathVariable String resourceType,
+            @PathVariable String id,
+            HttpServletRequest request) {
+
+        FhirVersion fhirVersion = (FhirVersion) request.getAttribute("fhirVersion");
+        return resourceService.read(fhirVersion, resourceType, id);
+    }
+
+    /**
+     * Search resources.
+     */
+    @GetMapping({"/{version}/{resourceType}", "/{resourceType}"})
+    public ResponseEntity<Bundle> search(
+            @PathVariable(required = false) String version,
+            @PathVariable String resourceType,
+            @RequestParam Map<String, String> searchParams,
+            HttpServletRequest request) {
+
+        FhirVersion fhirVersion = (FhirVersion) request.getAttribute("fhirVersion");
+        return resourceService.search(fhirVersion, resourceType, searchParams);
+    }
+
+    /**
+     * Create resource.
+     */
+    @PostMapping({"/{version}/{resourceType}", "/{resourceType}"})
+    public ResponseEntity<IBaseResource> create(
+            @PathVariable(required = false) String version,
+            @PathVariable String resourceType,
+            @RequestBody String resourceJson,
+            HttpServletRequest request) {
+
+        FhirVersion fhirVersion = (FhirVersion) request.getAttribute("fhirVersion");
+        return resourceService.create(fhirVersion, resourceType, resourceJson);
+    }
+
+    /**
+     * CapabilityStatement / Metadata endpoint.
+     */
+    @GetMapping({"/{version}/metadata", "/metadata"})
+    public ResponseEntity<CapabilityStatement> metadata(
+            @PathVariable(required = false) String version,
+            HttpServletRequest request) {
+
+        FhirVersion fhirVersion = (FhirVersion) request.getAttribute("fhirVersion");
+        return ResponseEntity.ok(capabilityStatementGenerator.generate(fhirVersion));
     }
 }
 ```
@@ -4176,10 +4510,30 @@ Request → Filter → Interceptor → Controller
 
 ```yaml
 fhir4java:
+  server:
+    # Global default FHIR version (used when resource doesn't specify)
+    default-version: R5
+    # Base URL for the FHIR server
+    base-url: http://localhost:8080/fhir
+
+  # Supported FHIR versions
   versions:
-    - R4B
-    - R5
-  default-version: R5
+    enabled:
+      - R5
+      - R4B
+
+  # Configuration paths
+  config:
+    # Base path for all FHIR configuration files
+    base-path: classpath:fhir-config/
+    # Resource YAML configurations (version-agnostic)
+    resources-path: ${fhir4java.config.base-path}resources/
+    # Version-specific paths are derived as:
+    #   ${fhir4java.config.base-path}r5/searchparameters/
+    #   ${fhir4java.config.base-path}r5/operations/
+    #   ${fhir4java.config.base-path}r5/profiles/
+    #   ${fhir4java.config.base-path}r4b/searchparameters/
+    #   etc.
 
   validation:
     enabled: true
@@ -4201,13 +4555,6 @@ fhir4java:
     performance:
       enabled: true
       trace-all-requests: true
-
-  operations:
-    config-path: classpath:fhir-config/operations/
-
-  resources:
-    config-path: classpath:fhir-config/resources/
-    profiles-path: classpath:fhir-config/profiles/
 
 spring:
   datasource:
@@ -4305,27 +4652,45 @@ volumes:
 5. Configure Spring Boot application with JPA
 
 ### Phase 2: Core Framework
-1. Implement ResourceConfiguration model and YAML/JSON loader
-2. Build ResourceRegistry with configuration loading
-3. Implement InteractionGuard for enable/disable checking
+1. Implement ResourceConfiguration model with **multi-version support**:
+   - `FhirVersionConfig` for version list with default flag
+   - `getDefaultVersion()`, `supportsVersion()`, `getSupportedVersions()` methods
+2. Build ResourceRegistry with **version-aware** configuration loading:
+   - `getResourcesForVersion(FhirVersion)` method
+   - `getDefaultVersion(resourceType)` method
+   - `supportsVersion(resourceType, version)` method
+3. Implement InteractionGuard with version checking:
+   - Validate both version support and interaction enablement
 4. Create FhirContext factory for R4B and R5 support
 5. Build basic JPA entities and repositories
-6. Implement SearchParameterRegistry with individual JSON file loading:
-   - Load `SearchParameter-Resource-*.json` for common parameters (all resources)
-   - Load `SearchParameter-DomainResource-*.json` for DomainResource subtypes
-   - Load `SearchParameter-<ResourceType>-*.json` for resource-specific parameters
-   - Implement inheritance rules (Bundle/Parameters/Binary inherit Resource-* only)
+6. Implement **version-aware** SearchParameterRegistry:
+   - Load from `fhir-config/r5/searchparameters/` for R5
+   - Load from `fhir-config/r4b/searchparameters/` for R4B
+   - Version-keyed parameter storage
+   - `getSearchParameters(FhirVersion, resourceType)` method
 
 ### Phase 3: API Layer
-1. Implement FhirResourceController with all CRUD endpoints
-2. Create request/response interceptors
-3. Build content negotiation (JSON/XML)
-4. Implement error handling with OperationOutcome responses
-5. Implement extended operation endpoints (`/$operation`, `/{id}/$operation`)
+1. Implement **FhirVersionResolver** for URL version extraction:
+   - Parse versioned paths (`/fhir/r5/Patient`)
+   - Parse unversioned paths (`/fhir/Patient`) → forward to default version
+   - Return `ResolvedVersion` with version, explicit flag, and resource path
+2. Implement **FhirVersionFilter** request interceptor:
+   - Resolve FHIR version from request
+   - Validate resource supports requested version
+   - Store version in request attributes
+   - Add `X-FHIR-Version` response header
+3. Implement FhirResourceController with **dual path support**:
+   - Handle both `/{version}/{resourceType}` and `/{resourceType}` patterns
+   - Extract version from request attributes
+4. Create request/response interceptors
+5. Build content negotiation (JSON/XML)
+6. Implement error handling with OperationOutcome responses
+7. Implement extended operation endpoints (`/$operation`, `/{id}/$operation`)
 
 ### Phase 4: Validation Framework
-1. Integrate HAPI FHIR validation with StructureDefinition support
-2. Implement search parameter validation using SearchParameterRegistry
+1. Integrate HAPI FHIR validation with **version-specific** StructureDefinition support:
+   - Load profiles from `fhir-config/{version}/profiles/`
+2. Implement search parameter validation using version-aware SearchParameterRegistry
 3. Build OperationDefinition validation for extended operations
 4. Create validation result to OperationOutcome converter
 
@@ -4337,8 +4702,8 @@ volumes:
    - **BusinessLogicPlugin** with OperationDescriptor-based routing
 2. Implement OperationType enum (READ, CREATE, UPDATE, DELETE, SEARCH, OPERATION)
 3. Implement OperationDescriptor for flexible plugin matching:
-   - Support CRUD operations by resourceType + operationType
-   - Support extended operations by resourceType + operationCode
+   - Support CRUD operations by resourceType + operationType + **fhirVersion**
+   - Support extended operations by resourceType + operationCode + **fhirVersion**
 4. Implement PluginOrchestrator with:
    - `executeCrudRequest()` for standard CRUD operations
    - `executeExtendedOperation()` for $merge, $validate, etc.
@@ -4347,7 +4712,9 @@ volumes:
 6. Create BusinessLogicPlugin with before/after hooks for both CRUD and extended operations
 
 ### Phase 6: Extended Operations
-1. Implement ExtendedOperationRegistry
+1. Implement **version-aware** ExtendedOperationRegistry:
+   - Load from `fhir-config/{version}/operations/`
+   - `getOperationsForResource(FhirVersion, resourceType)` method
 2. Build OperationDefinition loader and validator
 3. Create InternalOperationExecutor for patch/search
 4. Implement Extended Operations Pipeline:
@@ -4360,16 +4727,19 @@ volumes:
 
 ### Phase 7: Advanced Features
 1. Implement search functionality with index tables:
-   - Load search parameters from individual FHIR R5 JSON files
+   - Load search parameters from **version-specific** folders
    - Support all common parameters (_id, _lastUpdated, _tag, _profile, etc.)
    - Support search modifiers (:exact, :contains, :missing, :not, etc.)
    - Support search prefixes (eq, ne, gt, lt, ge, le, sa, eb, ap)
 2. Add history/vread support
-3. Build CapabilityStatement generator with:
-   - Auto-discovery of search parameters from SearchParameterRegistry
-   - Extended operations listing from ExtendedOperationRegistry
+3. Build **version-aware** CapabilityStatement generator:
+   - Generate version-specific CapabilityStatement
+   - Only include resources that support requested version
+   - Load base config from `fhir-config/{version}/capability.json`
+   - Version-specific search parameters and operations
 4. Add batch/transaction support (optional)
 5. Add BDD tests for plugins (features/plugins/*.feature)
+6. Add BDD tests for version resolution and forwarding
 
 ---
 
@@ -4383,8 +4753,10 @@ volumes:
 | core | `CapabilityStatementGenerator.java` | Dynamic CapabilityStatement generation |
 | core | `InteractionGuard.java` | Interaction enable/disable guard |
 | core | `FhirContextFactory.java` | FHIR context for R4B/R5 |
-| core | `ProfileValidator.java` | StructureDefinition validation |
-| core | `SearchParameterValidator.java` | Search parameter validation |
+| core | `FhirVersion.java` | Enum for supported FHIR versions |
+| core | `FhirVersionConfig.java` | Version config with default flag |
+| core | `ProfileValidator.java` | StructureDefinition validation (version-aware) |
+| core | `SearchParameterValidator.java` | Search parameter validation (version-aware) |
 | persistence | `ResourceEntity.java` | Main JPA entity |
 | persistence | `ResourceRepository.java` | Spring Data repository |
 | persistence | `SchemaManager.java` | Dynamic schema management |
@@ -4399,8 +4771,11 @@ volumes:
 | persistence | `SyncRetryScheduler.java` | Scheduled retry for failed syncs |
 | persistence | `ExternalReferenceEntity.java` | External ID reference tracking |
 | api | `MetadataController.java` | /metadata endpoint for CapabilityStatement |
-| api | `FhirResourceController.java` | Main REST controller |
+| api | `FhirResourceController.java` | Main REST controller (dual path support) |
 | api | `FhirExceptionHandler.java` | Global error handling |
+| api | `FhirVersionResolver.java` | URL version extraction and resolution |
+| api | `FhirVersionFilter.java` | Request filter for version handling |
+| api | `ResolvedVersion.java` | DTO for resolved version info |
 | plugin | `FhirPlugin.java` | Base plugin interface with execution modes |
 | plugin | `PluginOrchestrator.java` | Plugin execution pipeline orchestrator |
 | plugin | `AuthenticationPlugin.java` | Authentication plugin interface |
@@ -4431,11 +4806,15 @@ volumes:
 | plugin | `HybridPluginOrchestrator.java` | Orchestrator for Spring + MCP plugins |
 | plugin | `McpPluginConfig.java` | MCP plugin configuration |
 | server | `application.yml` | Main configuration |
-| server | `fhir-config/searchparameters/SearchParameter-Resource-*.json` | Common search params for all resources (e.g., _id, _lastUpdated) |
-| server | `fhir-config/searchparameters/SearchParameter-DomainResource-*.json` | Common search params for DomainResource subtypes (e.g., _text) |
-| server | `fhir-config/searchparameters/SearchParameter-<Type>-*.json` | Resource-specific search params (e.g., Patient-identifier) |
-| server | `fhir-config/profiles/custom-patient-profile.json` | Custom Patient StructureDefinition |
-| server | `fhir-config/operations/patient-merge.json` | Patient merge OperationDefinition |
+| server | `fhir-config/resources/*.yml` | Resource configurations (multi-version support) |
+| server | `fhir-config/r5/capability.json` | R5 CapabilityStatement base config |
+| server | `fhir-config/r5/searchparameters/SearchParameter-*.json` | R5 search parameters |
+| server | `fhir-config/r5/operations/OperationDefinition-*.json` | R5 operation definitions |
+| server | `fhir-config/r5/profiles/StructureDefinition-*.json` | R5 structure definitions |
+| server | `fhir-config/r4b/capability.json` | R4B CapabilityStatement base config |
+| server | `fhir-config/r4b/searchparameters/SearchParameter-*.json` | R4B search parameters |
+| server | `fhir-config/r4b/operations/OperationDefinition-*.json` | R4B operation definitions |
+| server | `fhir-config/r4b/profiles/StructureDefinition-*.json` | R4B structure definitions |
 | docker | `docker-compose.yml` | Container orchestration |
 | db | `init/00-init-schemas.sql` | Create database schemas |
 | db | `init/01-resource-tables.sql` | Main resource_data table with partitions |
@@ -4479,7 +4858,24 @@ volumes:
    - POST with invalid resource - returns 400 with OperationOutcome
    - Access disabled interaction - returns 405
 
-4. **Search Parameter Validation Testing**
+4. **FHIR Version Resolution Testing**
+   - **Versioned URL Paths:**
+     - GET `/fhir/r5/Patient` - uses R5, response has `X-FHIR-Version: R5`
+     - GET `/fhir/r4b/Patient` - uses R4B, response has `X-FHIR-Version: R4B`
+     - GET `/fhir/r5/metadata` - returns R5 CapabilityStatement
+     - GET `/fhir/r4b/metadata` - returns R4B CapabilityStatement
+   - **Unversioned URL Paths (forward to default):**
+     - GET `/fhir/Patient` - forwards to resource's default version
+     - GET `/fhir/Patient/123` - forwards to resource's default version
+     - Response includes `X-FHIR-Version` header with actual version used
+   - **Version Support Validation:**
+     - Request R4B for resource only configured for R5 - returns 400
+     - Request R5 for resource configured for both - succeeds
+   - **Extended Operations:**
+     - POST `/fhir/r5/Patient/$merge` - uses R5 operation definitions
+     - POST `/fhir/Patient/$merge` - uses default version operation definitions
+
+5. **Search Parameter Validation Testing**
    - GET `/fhir/r5/Patient?family=Smith` - valid search parameter works
    - GET `/fhir/r5/Patient?invalid_param=value` - returns 400 with OperationOutcome
    - GET `/fhir/r5/Patient?_id=123` - base search parameter works across all resources
