@@ -1,0 +1,43 @@
+# Observation Resource Configuration
+resourceType: Observation
+enabled: true
+
+# Multiple FHIR versions support
+fhirVersions:
+  - version: R5
+    default: true
+
+# Database schema configuration
+schema:
+  type: shared
+  name: fhir
+
+# Enabled interactions
+interactions:
+  read: true
+  vread: true
+  create: true
+  update: true
+  patch: false
+  delete: false
+  search: true
+  history: true
+
+# Search parameter restrictions (denylist mode)
+# All defined parameters allowed EXCEPT those listed
+searchParameters:
+  mode: denylist
+  # Deny these common parameters
+  common:
+    - _text       # Full-text search not supported
+    - _content    # Content search not supported
+    - _filter     # Filter expressions not supported
+  # Deny these resource-specific parameters (complex/expensive searches)
+  resourceSpecific:
+    - combo-code-value-concept
+    - combo-code-value-quantity
+
+# Required/optional profiles
+profiles:
+  - url: http://hl7.org/fhir/StructureDefinition/Observation
+    required: true

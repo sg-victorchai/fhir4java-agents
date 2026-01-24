@@ -36,6 +36,10 @@ public class FhirResourceEntity {
     @Column(name = "resource_id", nullable = false, length = 64)
     private String resourceId;
 
+    @Column(name = "fhir_version", nullable = false, length = 10)
+    @Builder.Default
+    private String fhirVersion = "R5";
+
     @Column(name = "version_id", nullable = false)
     @Builder.Default
     private Integer versionId = 1;

@@ -73,15 +73,13 @@ spring:
       fail-on-unknown-properties: false
     default-property-inclusion: non_null
 
-# FHIR Server Configuration
-fhir:
+# FHIR4Java Server Configuration
+fhir4java:
   server:
-    # FHIR Version
-    version: R5
-    # Base URL for the FHIR server
-    base-url: http://localhost:8080/fhir/r5
-    # FHIR context path
-    context-path: /fhir/r5
+    # Global default FHIR version (used when resource doesn't specify or URL is unversioned)
+    default-version: R5
+    # Base URL for the FHIR server (without version suffix)
+    base-url: http://localhost:8080/fhir
     # Default page size for search results
     default-page-size: 20
     # Maximum page size allowed
@@ -89,16 +87,29 @@ fhir:
     # Enable validation on create/update
     validation-enabled: true
 
-  # Resource Configuration
-  resource:
-    # Path to resource configuration files
-    config-path: classpath:fhir-config/
-    # SearchParameter JSON files location
-    search-parameters-path: classpath:fhir-config/searchparameters/
-    # OperationDefinition JSON files location
-    operations-path: classpath:fhir-config/operations/
-    # StructureDefinition (profiles) location
-    profiles-path: classpath:fhir-config/profiles/
+  # Supported FHIR versions
+  versions:
+    enabled:
+      - R5
+      # - R4B  # Uncomment to enable R4B support
+
+  # Configuration paths
+  config:
+    # Base path for all FHIR configuration files
+    base-path: classpath:fhir-config/
+    # Resource YAML configurations (version-agnostic)
+    resources-path: ${fhir4java.config.base-path}resources/
+    # Version-specific paths are derived automatically:
+    #   ${fhir4java.config.base-path}r5/searchparameters/
+    #   ${fhir4java.config.base-path}r5/operations/
+    #   ${fhir4java.config.base-path}r5/profiles/
+    #   ${fhir4java.config.base-path}r4b/searchparameters/
+    #   etc.
+
+  # Validation settings
+  validation:
+    enabled: true
+    profile-validation: strict  # strict, lenient, off
 
   # Multi-tenancy
   tenant:

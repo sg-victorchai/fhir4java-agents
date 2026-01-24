@@ -1,0 +1,96 @@
+{
+  "resourceType": "CapabilityStatement",
+  "id": "fhir4java-r5",
+  "url": "http://fhir4java.com/CapabilityStatement/fhir4java-r5",
+  "version": "1.0.0",
+  "name": "FHIR4JavaCapabilityStatementR5",
+  "title": "FHIR4Java Server Capability Statement (R5)",
+  "status": "active",
+  "experimental": false,
+  "date": "2025-01-24",
+  "publisher": "FHIR4Java",
+  "contact": [
+    {
+      "name": "FHIR4Java Support",
+      "telecom": [
+        {
+          "system": "url",
+          "value": "https://github.com/sg-victorchai/fhir4java-agents"
+        }
+      ]
+    }
+  ],
+  "description": "FHIR4Java is an enterprise-grade HL7 FHIR R5 server implementation with AI-powered plugin architecture. This CapabilityStatement describes the server's capabilities for FHIR R5.",
+  "kind": "instance",
+  "fhirVersion": "5.0.0",
+  "format": ["json", "xml"],
+  "patchFormat": ["application/json-patch+json"],
+  "implementationGuide": [],
+  "rest": [
+    {
+      "mode": "server",
+      "documentation": "RESTful FHIR R5 Server",
+      "security": {
+        "cors": true,
+        "service": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/restful-security-service",
+                "code": "SMART-on-FHIR",
+                "display": "SMART-on-FHIR"
+              }
+            ],
+            "text": "OAuth2 using SMART-on-FHIR profile (when enabled)"
+          }
+        ],
+        "description": "Security is configurable via plugins. SMART-on-FHIR OAuth2 is supported when the authentication plugin is enabled."
+      },
+      "interaction": [
+        {
+          "code": "transaction",
+          "documentation": "Transaction bundles are supported"
+        },
+        {
+          "code": "batch",
+          "documentation": "Batch bundles are supported"
+        },
+        {
+          "code": "history-system",
+          "documentation": "System-level history is supported"
+        },
+        {
+          "code": "search-system",
+          "documentation": "System-level search is supported"
+        }
+      ],
+      "searchParam": [
+        {
+          "name": "_id",
+          "type": "token",
+          "documentation": "Logical id of the resource"
+        },
+        {
+          "name": "_lastUpdated",
+          "type": "date",
+          "documentation": "When the resource was last updated"
+        },
+        {
+          "name": "_tag",
+          "type": "token",
+          "documentation": "Tags applied to the resource"
+        },
+        {
+          "name": "_profile",
+          "type": "reference",
+          "documentation": "Profiles the resource claims to conform to"
+        },
+        {
+          "name": "_security",
+          "type": "token",
+          "documentation": "Security labels applied to the resource"
+        }
+      ]
+    }
+  ]
+}

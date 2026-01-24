@@ -1,5 +1,5 @@
 -- FHIR4Java Database Initialization Script
--- Creates the core schema for FHIR R5 resource storage
+-- Creates the core schema for multi-version FHIR resource storage (R4B, R5)
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS fhir_resource (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     resource_type VARCHAR(100) NOT NULL,
     resource_id VARCHAR(64) NOT NULL,
+
+    -- FHIR Version (R4B, R5)
+    fhir_version VARCHAR(10) NOT NULL DEFAULT 'R5',
 
     -- Versioning
     version_id INTEGER NOT NULL DEFAULT 1,
@@ -56,6 +59,11 @@ CREATE INDEX IF NOT EXISTS idx_resource_type_id ON fhir_resource(resource_type, 
 CREATE INDEX IF NOT EXISTS idx_resource_current ON fhir_resource(is_current) WHERE is_current = TRUE;
 CREATE INDEX IF NOT EXISTS idx_resource_tenant ON fhir_resource(tenant_id);
 
+-- FHIR version indexes
+CREATE INDEX IF NOT EXISTS idx_resource_fhir_version ON fhir_resource(fhir_version);
+CREATE INDEX IF NOT EXISTS idx_resource_type_version ON fhir_resource(resource_type, fhir_version);
+CREATE INDEX IF NOT EXISTS idx_resource_tenant_type_version ON fhir_resource(tenant_id, resource_type, fhir_version);
+
 -- Date indexes for _lastUpdated searches
 CREATE INDEX IF NOT EXISTS idx_resource_last_updated ON fhir_resource(last_updated);
 CREATE INDEX IF NOT EXISTS idx_resource_type_last_updated ON fhir_resource(resource_type, last_updated);
@@ -71,6 +79,7 @@ CREATE TABLE IF NOT EXISTS fhir_resource_history (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     resource_id UUID NOT NULL REFERENCES fhir_resource(id) ON DELETE CASCADE,
     version_id INTEGER NOT NULL,
+    fhir_version VARCHAR(10) NOT NULL DEFAULT 'R5',
     content JSONB NOT NULL,
     operation VARCHAR(20) NOT NULL, -- CREATE, UPDATE, DELETE
     changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -91,6 +100,7 @@ CREATE TABLE IF NOT EXISTS fhir_search_index (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     resource_id UUID NOT NULL REFERENCES fhir_resource(id) ON DELETE CASCADE,
     resource_type VARCHAR(100) NOT NULL,
+    fhir_version VARCHAR(10) NOT NULL DEFAULT 'R5',
     tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
 
     -- Search parameter identification
@@ -124,6 +134,8 @@ CREATE TABLE IF NOT EXISTS fhir_search_index (
 CREATE INDEX IF NOT EXISTS idx_search_resource ON fhir_search_index(resource_id);
 CREATE INDEX IF NOT EXISTS idx_search_type_param ON fhir_search_index(resource_type, param_name);
 CREATE INDEX IF NOT EXISTS idx_search_tenant_type ON fhir_search_index(tenant_id, resource_type);
+CREATE INDEX IF NOT EXISTS idx_search_fhir_version ON fhir_search_index(fhir_version);
+CREATE INDEX IF NOT EXISTS idx_search_type_param_version ON fhir_search_index(resource_type, param_name, fhir_version);
 
 -- String search indexes
 CREATE INDEX IF NOT EXISTS idx_search_string ON fhir_search_index(resource_type, param_name, value_string_lower)

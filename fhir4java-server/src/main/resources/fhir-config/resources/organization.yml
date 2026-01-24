@@ -1,0 +1,31 @@
+# Organization Resource Configuration
+resourceType: Organization
+enabled: true
+
+# Multiple FHIR versions support
+fhirVersions:
+  - version: R5
+    default: true
+
+# Database schema configuration
+schema:
+  type: shared
+  name: fhir
+
+# Enabled interactions
+interactions:
+  read: true
+  vread: true
+  create: true
+  update: true
+  patch: true
+  delete: false
+  search: true
+  history: true
+
+# No search parameter restrictions - all defined parameters allowed
+
+# Required/optional profiles
+profiles:
+  - url: http://hl7.org/fhir/StructureDefinition/Organization
+    required: true
