@@ -142,14 +142,83 @@ interactions:
   search: true
   history: true
 
+# Search parameter restrictions (optional)
+# If omitted, all search parameters defined in fhir-config/{version}/searchparameters/ are allowed
+searchParameters:
+  # Mode: 'allowlist' (only listed params allowed) or 'denylist' (all except listed)
+  mode: allowlist
+  # Common parameters (from SearchParameter-Resource-* and SearchParameter-DomainResource-*)
+  common:
+    - _id
+    - _lastUpdated
+    - _tag
+    - _profile
+    - _security
+  # Resource-specific parameters (from SearchParameter-Patient-*)
+  resourceSpecific:
+    - identifier
+    - family
+    - given
+    - name
+    - birthdate
+    - gender
+    - address
+    - telecom
+    - email
+    - phone
+    - general-practitioner
+    - organization
+    - active
+    - death-date
+    - deceased
+    - link
+
 profiles:
   - url: http://hl7.org/fhir/StructureDefinition/Patient
     required: true
   - url: http://example.org/fhir/StructureDefinition/CustomPatient
     required: false
 
-# NOTE: Search parameters, operations, and profiles are loaded from
-# version-specific folders: fhir-config/r5/ or fhir-config/r4b/
+# NOTE: Search parameters are loaded from version-specific folders
+# (fhir-config/r5/searchparameters/ or fhir-config/r4b/searchparameters/)
+# but only those listed above will be allowed for search operations.
+```
+
+**File: `fhir-config/resources/observation.yml`** (Example with denylist mode)
+```yaml
+resourceType: Observation
+enabled: true
+
+fhirVersions:
+  - version: R5
+    default: true
+
+schema:
+  type: shared
+  name: fhir_resources
+
+interactions:
+  read: true
+  vread: true
+  create: true
+  update: true
+  patch: false
+  delete: false
+  search: true
+  history: true
+
+# Search parameter restrictions using denylist mode
+# All defined parameters allowed EXCEPT those listed
+searchParameters:
+  mode: denylist
+  # Deny these common parameters
+  common:
+    - _text       # Full-text search not supported
+    - _content    # Content search not supported
+    - _filter     # Filter expressions not supported
+  # Deny these resource-specific parameters
+  resourceSpecific:
+    - combo-code  # Complex combo searches not supported
 ```
 
 **ResourceConfiguration Model:**
@@ -161,6 +230,7 @@ public class ResourceConfiguration {
     private List<FhirVersionConfig> fhirVersions;
     private SchemaConfig schema;
     private Map<InteractionType, Boolean> interactions;
+    private SearchParameterConfig searchParameters;
     private List<ProfileConfig> profiles;
 
     /**
@@ -192,6 +262,29 @@ public class ResourceConfiguration {
             .map(FhirVersionConfig::getVersion)
             .collect(Collectors.toSet());
     }
+
+    /**
+     * Check if a search parameter is allowed for this resource.
+     * @param paramName The search parameter name (e.g., "_id", "family", "birthdate")
+     * @param isCommon True if this is a common parameter (Resource-* or DomainResource-*)
+     * @return true if the parameter is allowed
+     */
+    public boolean isSearchParameterAllowed(String paramName, boolean isCommon) {
+        if (searchParameters == null) {
+            return true; // No restrictions = all allowed
+        }
+        return searchParameters.isAllowed(paramName, isCommon);
+    }
+
+    /**
+     * Get list of enabled interactions.
+     */
+    public List<InteractionType> getEnabledInteractions() {
+        return interactions.entrySet().stream()
+            .filter(Map.Entry::getValue)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList());
+    }
 }
 
 @Data
@@ -203,6 +296,69 @@ public class FhirVersionConfig {
     public boolean isDefault() {
         return defaultVersion;
     }
+}
+
+/**
+ * Configuration for restricting allowed search parameters per resource.
+ */
+@Data
+public class SearchParameterConfig {
+    /**
+     * Mode: 'allowlist' (only listed params allowed) or 'denylist' (all except listed)
+     */
+    private SearchParameterMode mode = SearchParameterMode.ALLOWLIST;
+
+    /**
+     * Common parameters (from SearchParameter-Resource-* and SearchParameter-DomainResource-*)
+     */
+    private List<String> common = new ArrayList<>();
+
+    /**
+     * Resource-specific parameters (from SearchParameter-<ResourceType>-*)
+     */
+    private List<String> resourceSpecific = new ArrayList<>();
+
+    /**
+     * Check if a search parameter is allowed based on mode and lists.
+     */
+    public boolean isAllowed(String paramName, boolean isCommon) {
+        List<String> list = isCommon ? common : resourceSpecific;
+
+        if (mode == SearchParameterMode.ALLOWLIST) {
+            // Allowlist: parameter must be in the list
+            return list.contains(paramName);
+        } else {
+            // Denylist: parameter must NOT be in the list
+            return !list.contains(paramName);
+        }
+    }
+
+    /**
+     * Get all allowed parameter names (common + resourceSpecific).
+     * Only applicable for allowlist mode.
+     */
+    public Set<String> getAllAllowedParameters() {
+        Set<String> all = new HashSet<>();
+        all.addAll(common);
+        all.addAll(resourceSpecific);
+        return all;
+    }
+
+    /**
+     * Get all denied parameter names (common + resourceSpecific).
+     * Only applicable for denylist mode.
+     */
+    public Set<String> getAllDeniedParameters() {
+        Set<String> all = new HashSet<>();
+        all.addAll(common);
+        all.addAll(resourceSpecific);
+        return all;
+    }
+}
+
+public enum SearchParameterMode {
+    ALLOWLIST,  // Only listed parameters are allowed
+    DENYLIST    // All parameters allowed except those listed
 }
 ```
 
@@ -421,6 +577,37 @@ public class ResourceRegistry {
             .map(ResourceConfiguration::getSupportedVersions)
             .orElse(Collections.emptySet());
     }
+
+    /**
+     * Check if a search parameter is allowed for a resource type.
+     * @param resourceType The resource type (e.g., "Patient")
+     * @param paramName The search parameter name (e.g., "_id", "family")
+     * @param isCommon True if this is a common parameter (Resource-* or DomainResource-*)
+     * @return true if the parameter is allowed (or no restrictions configured)
+     */
+    public boolean isSearchParameterAllowed(String resourceType, String paramName, boolean isCommon) {
+        return getResource(resourceType)
+            .map(config -> config.isSearchParameterAllowed(paramName, isCommon))
+            .orElse(true); // No config = allow all
+    }
+
+    /**
+     * Get the search parameter configuration for a resource type.
+     * @return Optional SearchParameterConfig, empty if no restrictions configured
+     */
+    public Optional<SearchParameterConfig> getSearchParameterConfig(String resourceType) {
+        return getResource(resourceType)
+            .map(ResourceConfiguration::getSearchParameters);
+    }
+
+    /**
+     * Check if a resource has search parameter restrictions configured.
+     */
+    public boolean hasSearchParameterRestrictions(String resourceType) {
+        return getResource(resourceType)
+            .map(config -> config.getSearchParameters() != null)
+            .orElse(false);
+    }
 }
 ```
 
@@ -620,6 +807,82 @@ public class SearchParameterRegistry {
     public boolean isDomainResource(String resourceType) {
         return !NON_DOMAIN_RESOURCES.contains(resourceType);
     }
+
+    /**
+     * Get allowed search parameters for a resource type, filtered by resource configuration.
+     * This method respects the allowlist/denylist restrictions defined in the resource YAML.
+     *
+     * @param version The FHIR version
+     * @param resourceType The resource type
+     * @param resourceRegistry The ResourceRegistry to check configuration
+     * @return List of allowed SearchParameters only
+     */
+    public List<SearchParameter> getAllowedSearchParameters(
+            FhirVersion version, String resourceType, ResourceRegistry resourceRegistry) {
+
+        List<SearchParameter> allParams = getSearchParameters(version, resourceType);
+
+        // If no restrictions configured, return all parameters
+        Optional<SearchParameterConfig> configOpt = resourceRegistry.getSearchParameterConfig(resourceType);
+        if (configOpt.isEmpty()) {
+            return allParams;
+        }
+
+        SearchParameterConfig config = configOpt.get();
+
+        // Filter parameters based on configuration
+        return allParams.stream()
+            .filter(sp -> {
+                String paramName = sp.getName();
+                boolean isCommon = isCommonParameter(sp);
+                return config.isAllowed(paramName, isCommon);
+            })
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Check if a search parameter is a common parameter (Resource-* or DomainResource-*).
+     */
+    private boolean isCommonParameter(SearchParameter sp) {
+        if (sp.getBase() == null || sp.getBase().isEmpty()) {
+            return false;
+        }
+        // Check if base includes "Resource" or "DomainResource"
+        return sp.getBase().stream()
+            .anyMatch(base -> "Resource".equals(base.getCode()) ||
+                             "DomainResource".equals(base.getCode()));
+    }
+
+    /**
+     * Validate that a search parameter is allowed for a resource type.
+     * Used during search request validation.
+     *
+     * @param version The FHIR version
+     * @param resourceType The resource type
+     * @param paramName The parameter name to validate
+     * @param resourceRegistry The ResourceRegistry to check configuration
+     * @return true if the parameter is allowed
+     */
+    public boolean isSearchParameterAllowed(
+            FhirVersion version, String resourceType, String paramName,
+            ResourceRegistry resourceRegistry) {
+
+        // First check if the parameter is defined
+        Optional<SearchParameter> spOpt = getSearchParameter(version, resourceType, paramName);
+        if (spOpt.isEmpty()) {
+            return false; // Parameter not defined at all
+        }
+
+        // Check resource configuration restrictions
+        Optional<SearchParameterConfig> configOpt = resourceRegistry.getSearchParameterConfig(resourceType);
+        if (configOpt.isEmpty()) {
+            return true; // No restrictions = allowed
+        }
+
+        SearchParameterConfig config = configOpt.get();
+        boolean isCommon = isCommonParameter(spOpt.get());
+        return config.isAllowed(paramName, isCommon);
+    }
 }
 ```
 
@@ -627,7 +890,7 @@ public class SearchParameterRegistry {
 
 The server dynamically generates a **version-specific** CapabilityStatement based on:
 - Registered resources that support the requested FHIR version
-- Version-specific search parameters from `fhir-config/{version}/searchparameters/`
+- **Allowed** search parameters from `fhir-config/{version}/searchparameters/` (filtered by resource config)
 - Version-specific operations from `fhir-config/{version}/operations/`
 - Base capability config from `fhir-config/{version}/capability.json`
 
@@ -646,6 +909,7 @@ public class CapabilityStatementGenerator {
     /**
      * Generate a CapabilityStatement for a specific FHIR version.
      * Only includes resources that support the requested version.
+     * Only includes search parameters that are allowed per resource configuration.
      */
     public CapabilityStatement generate(FhirVersion version) {
         CapabilityStatement cs = new CapabilityStatement();
@@ -675,8 +939,10 @@ public class CapabilityStatementGenerator {
                 resource.addInteraction().setCode(interaction.toRestfulInteraction());
             }
 
-            // Add version-specific search parameters
-            for (SearchParameter param : searchParameterRegistry.getSearchParameters(version, config.getResourceType())) {
+            // Add ALLOWED search parameters only (filtered by resource configuration)
+            // Uses getAllowedSearchParameters() which respects allowlist/denylist settings
+            for (SearchParameter param : searchParameterRegistry.getAllowedSearchParameters(
+                    version, config.getResourceType(), resourceRegistry)) {
                 CapabilityStatement.CapabilityStatementRestResourceSearchParamComponent sp = resource.addSearchParam();
                 sp.setName(param.getName());
                 sp.setType(param.getType());
@@ -720,7 +986,7 @@ public class CapabilityStatementGenerator {
 ```java
 public interface FhirValidator {
     ValidationResult validateResource(IBaseResource resource, String profileUrl);
-    ValidationResult validateSearchParameters(String resourceType, Map<String, String> params);
+    ValidationResult validateSearchParameters(FhirVersion version, String resourceType, Map<String, String> params);
     ValidationResult validateOperation(String resourceType, String operationName, Parameters params);
 }
 
@@ -730,6 +996,116 @@ public class ProfileValidator implements FhirValidator {
     private final IValidationSupport validationSupport;
 
     // Uses HAPI FHIR's FhirValidator with StructureDefinition support
+}
+
+/**
+ * Validates search parameters against:
+ * 1. Parameter existence in SearchParameterRegistry (is it a valid FHIR search parameter?)
+ * 2. Resource configuration restrictions (is it allowed for this resource?)
+ */
+@Component
+public class SearchParameterValidator {
+    private final SearchParameterRegistry searchParameterRegistry;
+    private final ResourceRegistry resourceRegistry;
+
+    /**
+     * Validate all search parameters in a search request.
+     * Returns ValidationResult with errors for any invalid or disallowed parameters.
+     */
+    public ValidationResult validateSearchParameters(
+            FhirVersion version, String resourceType, Map<String, String> params) {
+
+        List<ValidationIssue> issues = new ArrayList<>();
+
+        for (String paramName : params.keySet()) {
+            // Skip special parameters that don't need validation
+            if (isSpecialParameter(paramName)) {
+                continue;
+            }
+
+            // Extract base parameter name (remove modifiers like :exact, :contains)
+            String baseParamName = extractBaseParamName(paramName);
+
+            // Check 1: Is this parameter defined in the SearchParameterRegistry?
+            if (!searchParameterRegistry.isSearchParameterDefined(version, resourceType, baseParamName)) {
+                issues.add(ValidationIssue.error(
+                    "Unknown search parameter '" + baseParamName + "' for resource " + resourceType));
+                continue;
+            }
+
+            // Check 2: Is this parameter allowed per resource configuration?
+            if (!searchParameterRegistry.isSearchParameterAllowed(
+                    version, resourceType, baseParamName, resourceRegistry)) {
+                issues.add(ValidationIssue.error(
+                    "Search parameter '" + baseParamName + "' is not allowed for resource " + resourceType +
+                    ". Check the resource configuration."));
+            }
+        }
+
+        return new ValidationResult(issues.isEmpty(), issues);
+    }
+
+    /**
+     * Extract base parameter name from parameter with modifiers.
+     * e.g., "name:exact" -> "name", "birthdate:missing" -> "birthdate"
+     */
+    private String extractBaseParamName(String paramName) {
+        int colonIndex = paramName.indexOf(':');
+        return colonIndex > 0 ? paramName.substring(0, colonIndex) : paramName;
+    }
+
+    /**
+     * Check if parameter is a special/control parameter that doesn't need validation.
+     * e.g., _count, _sort, _include, _revinclude, _summary, _elements, _format
+     */
+    private boolean isSpecialParameter(String paramName) {
+        return paramName.equals("_count") ||
+               paramName.equals("_offset") ||
+               paramName.equals("_sort") ||
+               paramName.equals("_include") ||
+               paramName.equals("_revinclude") ||
+               paramName.equals("_summary") ||
+               paramName.equals("_elements") ||
+               paramName.equals("_format") ||
+               paramName.equals("_pretty") ||
+               paramName.equals("_total") ||
+               paramName.equals("_contained") ||
+               paramName.equals("_containedType");
+    }
+}
+
+@Data
+@AllArgsConstructor
+public class ValidationResult {
+    private final boolean valid;
+    private final List<ValidationIssue> issues;
+
+    public static ValidationResult success() {
+        return new ValidationResult(true, Collections.emptyList());
+    }
+
+    public static ValidationResult failure(List<ValidationIssue> issues) {
+        return new ValidationResult(false, issues);
+    }
+}
+
+@Data
+@AllArgsConstructor
+public class ValidationIssue {
+    private final IssueSeverity severity;
+    private final String message;
+
+    public static ValidationIssue error(String message) {
+        return new ValidationIssue(IssueSeverity.ERROR, message);
+    }
+
+    public static ValidationIssue warning(String message) {
+        return new ValidationIssue(IssueSeverity.WARNING, message);
+    }
+}
+
+public enum IssueSeverity {
+    ERROR, WARNING, INFORMATION
 }
 ```
 
@@ -4655,10 +5031,14 @@ volumes:
 1. Implement ResourceConfiguration model with **multi-version support**:
    - `FhirVersionConfig` for version list with default flag
    - `getDefaultVersion()`, `supportsVersion()`, `getSupportedVersions()` methods
+   - **`SearchParameterConfig`** for allowlist/denylist search parameter restrictions
+   - `isSearchParameterAllowed(paramName, isCommon)` method
 2. Build ResourceRegistry with **version-aware** configuration loading:
    - `getResourcesForVersion(FhirVersion)` method
    - `getDefaultVersion(resourceType)` method
    - `supportsVersion(resourceType, version)` method
+   - **`isSearchParameterAllowed(resourceType, paramName, isCommon)`** method
+   - **`getSearchParameterConfig(resourceType)`** method
 3. Implement InteractionGuard with version checking:
    - Validate both version support and interaction enablement
 4. Create FhirContext factory for R4B and R5 support
@@ -4668,6 +5048,8 @@ volumes:
    - Load from `fhir-config/r4b/searchparameters/` for R4B
    - Version-keyed parameter storage
    - `getSearchParameters(FhirVersion, resourceType)` method
+   - **`getAllowedSearchParameters(version, resourceType, resourceRegistry)`** method
+   - **`isSearchParameterAllowed(version, resourceType, paramName, resourceRegistry)`** method
 
 ### Phase 3: API Layer
 1. Implement **FhirVersionResolver** for URL version extraction:
@@ -4690,7 +5072,11 @@ volumes:
 ### Phase 4: Validation Framework
 1. Integrate HAPI FHIR validation with **version-specific** StructureDefinition support:
    - Load profiles from `fhir-config/{version}/profiles/`
-2. Implement search parameter validation using version-aware SearchParameterRegistry
+2. Implement **SearchParameterValidator** with:
+   - Validation against SearchParameterRegistry (is parameter defined?)
+   - **Validation against resource configuration restrictions** (is parameter allowed?)
+   - Support for parameter modifiers (:exact, :contains, etc.)
+   - Return OperationOutcome for disallowed parameters
 3. Build OperationDefinition validation for extended operations
 4. Create validation result to OperationOutcome converter
 
@@ -4755,8 +5141,10 @@ volumes:
 | core | `FhirContextFactory.java` | FHIR context for R4B/R5 |
 | core | `FhirVersion.java` | Enum for supported FHIR versions |
 | core | `FhirVersionConfig.java` | Version config with default flag |
+| core | `SearchParameterConfig.java` | Search parameter allowlist/denylist configuration |
+| core | `SearchParameterMode.java` | Enum for ALLOWLIST/DENYLIST modes |
 | core | `ProfileValidator.java` | StructureDefinition validation (version-aware) |
-| core | `SearchParameterValidator.java` | Search parameter validation (version-aware) |
+| core | `SearchParameterValidator.java` | Search parameter validation (with restriction checking) |
 | persistence | `ResourceEntity.java` | Main JPA entity |
 | persistence | `ResourceRepository.java` | Spring Data repository |
 | persistence | `SchemaManager.java` | Dynamic schema management |
@@ -4880,8 +5268,23 @@ volumes:
    - GET `/fhir/r5/Patient?invalid_param=value` - returns 400 with OperationOutcome
    - GET `/fhir/r5/Patient?_id=123` - base search parameter works across all resources
    - Verify search parameters in CapabilityStatement match those defined in configuration
+   - **Search Parameter Restriction Testing (Allowlist/Denylist):**
+     - **Allowlist mode:**
+       - GET `/fhir/r5/Patient?family=Smith` - allowed parameter succeeds
+       - GET `/fhir/r5/Patient?address-city=Boston` - disallowed parameter returns 400
+       - Verify CapabilityStatement only lists allowed parameters
+     - **Denylist mode:**
+       - GET `/fhir/r5/Observation?code=1234-5` - allowed (not in denylist) succeeds
+       - GET `/fhir/r5/Observation?_text=blood` - denied parameter returns 400
+       - Verify CapabilityStatement excludes denied parameters
+     - **No restrictions (default):**
+       - All defined search parameters are allowed
+       - All parameters appear in CapabilityStatement
+     - **Modifiers with restricted parameters:**
+       - GET `/fhir/r5/Patient?family:exact=Smith` - allowed base parameter with modifier works
+       - GET `/fhir/r5/Patient?address-city:contains=Bos` - disallowed base parameter with modifier returns 400
 
-5. **Profile Validation Testing**
+6. **Profile Validation Testing**
    - Submit resource not matching required profile - validation error
    - Submit resource matching required profile - succeeds
 
