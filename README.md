@@ -103,7 +103,7 @@ Refer to this document for details [Design feature description and implementatio
 
 | Component | Technology |
 |-----------|------------|
-| **Language** | Java 21 |
+| **Language** | Java 25 |
 | **Framework** | Spring Boot 3.x |
 | **FHIR Library** | [HAPI FHIR](https://hapifhir.io/hapi-fhir/docs/getting_started/downloading_and_importing.html) |
 | **Database** | PostgreSQL 16 with JSONB |
@@ -117,7 +117,7 @@ Refer to this document for details [Design feature description and implementatio
 ## Quick Start
 
 ### Prerequisites
-- Java 21+
+- Java 25
 - Maven 3.9+
 - Docker & Docker Compose
 - PostgreSQL 16+ (or use Docker)
