@@ -92,6 +92,11 @@ With MCP protocol support, the application enables **AI-powered plugin discovery
 
 This architecture aligns with the industry-standard [Model Context Protocol](https://modelcontextprotocol.io/) adopted by Anthropic, OpenAI, Microsoft, and the Linux Foundation.
 
+### Detail feature description and implementation plan
+
+Refer to this document for details [Design feature description and implementation plan](https://github.com/sg-victorchai/fhir4java-agents/blob/main/FHIR4JAVA-IMPLEMENTATION-PLAN.md)
+
+
 ---
 
 ## Technology Stack
