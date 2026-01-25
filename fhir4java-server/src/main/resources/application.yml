@@ -140,8 +140,9 @@ logging:
     com.fhir4java: DEBUG
     ca.uhn.fhir: INFO
     org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql: TRACE
-    org.springframework.web: INFO
+    # For Hibernate 6.x (Spring Boot 3.x), use this instead of type.descriptor.sql
+    org.hibernate.orm.jdbc.bind: TRACE
+    org.springframework.web: DEBUG
 
 ---
 # Development Profile
@@ -153,10 +154,6 @@ spring:
   jpa:
     show-sql: true
 
-logging:
-  level:
-    com.fhir4java: DEBUG
-    org.hibernate.SQL: DEBUG
 
 ---
 # Test Profile

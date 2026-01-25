@@ -8,7 +8,7 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -58,11 +58,11 @@ public class FhirResourceEntity {
 
     @LastModifiedDate
     @Column(name = "last_updated", nullable = false)
-    private OffsetDateTime lastUpdated;
+    private Instant lastUpdated;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private Instant createdAt;
 
     @Column(name = "source_uri", length = 2048)
     private String sourceUri;
@@ -74,15 +74,15 @@ public class FhirResourceEntity {
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
-            createdAt = OffsetDateTime.now();
+            createdAt = Instant.now();
         }
         if (lastUpdated == null) {
-            lastUpdated = OffsetDateTime.now();
+            lastUpdated = Instant.now();
         }
     }
 
     @PreUpdate
     protected void onUpdate() {
-        lastUpdated = OffsetDateTime.now();
+        lastUpdated = Instant.now();
     }
 }

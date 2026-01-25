@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,7 +18,7 @@ import java.util.UUID;
  * JPA Repository for FHIR Resource operations.
  */
 @Repository
-public interface FhirResourceRepository extends JpaRepository<FhirResourceEntity, UUID> {
+public interface FhirResourceRepository extends JpaRepository<FhirResourceEntity, UUID>, FhirResourceRepositoryCustom {
 
     /**
      * Find the current version of a resource by type and ID.
@@ -48,7 +48,7 @@ public interface FhirResourceRepository extends JpaRepository<FhirResourceEntity
      * Find all current resources updated after a specific time.
      */
     Page<FhirResourceEntity> findByTenantIdAndResourceTypeAndIsCurrentTrueAndIsDeletedFalseAndLastUpdatedAfter(
-            String tenantId, String resourceType, OffsetDateTime lastUpdated, Pageable pageable);
+            String tenantId, String resourceType, Instant lastUpdated, Pageable pageable);
 
     /**
      * Count resources by type.

@@ -18,7 +18,9 @@ fhir:
 
 logging:
   level:
-    root: INFO
-    com.fhir4java: INFO
-    ca.uhn.fhir: WARN
-    org.hibernate.SQL: WARN
+    root: ${LOG_LEVEL_ROOT:INFO}
+    com.fhir4java: ${LOG_LEVEL_FHIR4JAVA:DEBUG}
+    ca.uhn.fhir: ${LOG_LEVEL_HAPI:INFO}
+    org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE_SQL:DEBUG}
+    org.hibernate.orm.jdbc.bind: ${LOG_LEVEL_HIBERNATE_BIND:TRACE}
+    org.springframework.web: ${LOG_LEVEL_SPRING_WEB:DEBUG}
