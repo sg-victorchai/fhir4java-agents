@@ -137,7 +137,7 @@ management:
 logging:
   level:
     root: INFO
-    com.fhir4java: DEBUG
+    org.fhirframework: DEBUG
     ca.uhn.fhir: INFO
     org.hibernate.SQL: DEBUG
     # For Hibernate 6.x (Spring Boot 3.x), use this instead of type.descriptor.sql

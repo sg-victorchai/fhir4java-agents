@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.fhir4java</groupId>
+    <groupId>org.fhirframework</groupId>
     <artifactId>fhir4java-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
@@ -63,22 +63,22 @@
         <dependencies>
             <!-- Internal Modules -->
             <dependency>
-                <groupId>com.fhir4java</groupId>
+                <groupId>org.fhirframework</groupId>
                 <artifactId>fhir4java-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.fhir4java</groupId>
+                <groupId>org.fhirframework</groupId>
                 <artifactId>fhir4java-persistence</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.fhir4java</groupId>
+                <groupId>org.fhirframework</groupId>
                 <artifactId>fhir4java-plugin</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.fhir4java</groupId>
+                <groupId>org.fhirframework</groupId>
                 <artifactId>fhir4java-api</artifactId>
                 <version>${project.version}</version>
             </dependency>

@@ -4069,7 +4069,7 @@ public class QueryPerformanceMonitor {
     private final MeterRegistry meterRegistry;
     private static final long SLOW_QUERY_THRESHOLD_MS = 100;
 
-    @Around("execution(* com.fhir4java.persistence.repository.*.*(..))")
+    @Around("execution(* org.fhirframework.persistence.repository.*.*(..))")
     public Object monitorQuery(ProceedingJoinPoint joinPoint) throws Throwable {
         Timer.Sample sample = Timer.start(meterRegistry);
         String operation = joinPoint.getSignature().getName();
@@ -5626,7 +5626,7 @@ Add to `fhir4java-server/pom.xml`:
 
 **File: `CucumberTestRunner.java`**
 ```java
-package com.fhir4java.bdd;
+package org.fhirframework.bdd;
 
 import org.junit.platform.suite.api.ConfigurationParameter;
 import org.junit.platform.suite.api.IncludeEngines;
@@ -5639,7 +5639,7 @@ import static io.cucumber.junit.platform.engine.Constants.*;
 @IncludeEngines("cucumber")
 @SelectClasspathResource("features")
 @ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "pretty, html:target/cucumber-reports/cucumber.html, json:target/cucumber-reports/cucumber.json")
-@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = "com.fhir4java.bdd.steps")
+@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = "org.fhirframework.bdd.steps")
 @ConfigurationParameter(key = FILTER_TAGS_PROPERTY_NAME, value = "not @ignore")
 public class CucumberTestRunner {
 }
@@ -5647,7 +5647,7 @@ public class CucumberTestRunner {
 
 **File: `SpringIntegrationTest.java`**
 ```java
-package com.fhir4java.bdd;
+package org.fhirframework.bdd;
 
 import com.redis.testcontainers.RedisContainer;
 import io.cucumber.spring.CucumberContextConfiguration;
@@ -5692,7 +5692,7 @@ public class SpringIntegrationTest {
 
 **File: `TestContext.java`**
 ```java
-package com.fhir4java.bdd.context;
+package org.fhirframework.bdd.context;
 
 import io.restassured.response.Response;
 import io.restassured.specification.RequestSpecification;
@@ -8097,9 +8097,9 @@ Feature: Business Logic Plugins with CRUD Operations
 
 **File: `CommonSteps.java`**
 ```java
-package com.fhir4java.bdd.steps;
+package org.fhirframework.bdd.steps;
 
-import com.fhir4java.bdd.context.TestContext;
+import org.fhirframework.bdd.context.TestContext;
 import io.cucumber.java.Before;
 import io.cucumber.java.After;
 import io.cucumber.java.en.Given;
@@ -8313,9 +8313,9 @@ public class CommonSteps {
 
 **File: `CacheSteps.java`**
 ```java
-package com.fhir4java.bdd.steps;
+package org.fhirframework.bdd.steps;
 
-import com.fhir4java.bdd.context.TestContext;
+import org.fhirframework.bdd.context.TestContext;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.When;
 import io.cucumber.java.en.Then;
@@ -8560,9 +8560,9 @@ public class CacheSteps {
 
 **File: `PatientSteps.java`**
 ```java
-package com.fhir4java.bdd.steps;
+package org.fhirframework.bdd.steps;
 
-import com.fhir4java.bdd.context.TestContext;
+import org.fhirframework.bdd.context.TestContext;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.When;
@@ -8745,9 +8745,9 @@ public class PatientSteps {
 
 **File: `SearchSteps.java`**
 ```java
-package com.fhir4java.bdd.steps;
+package org.fhirframework.bdd.steps;
 
-import com.fhir4java.bdd.context.TestContext;
+import org.fhirframework.bdd.context.TestContext;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.When;
 import io.cucumber.java.en.Then;
@@ -8852,9 +8852,9 @@ public class SearchSteps {
 
 **File: `ExtendedOperationSteps.java`**
 ```java
-package com.fhir4java.bdd.steps;
+package org.fhirframework.bdd.steps;
 
-import com.fhir4java.bdd.context.TestContext;
+import org.fhirframework.bdd.context.TestContext;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.When;
 import io.cucumber.java.en.Then;
@@ -9155,11 +9155,11 @@ public class ExtendedOperationSteps {
 
 **File: `BusinessLogicPluginSteps.java`**
 ```java
-package com.fhir4java.bdd.steps;
+package org.fhirframework.bdd.steps;
 
-import com.fhir4java.bdd.context.TestContext;
-import com.fhir4java.bdd.plugins.TestAuditCapturePlugin;
-import com.fhir4java.bdd.plugins.TestPatientConsentPlugin;
+import org.fhirframework.bdd.context.TestContext;
+import org.fhirframework.bdd.plugins.TestAuditCapturePlugin;
+import org.fhirframework.bdd.plugins.TestPatientConsentPlugin;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.When;

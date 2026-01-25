@@ -19,7 +19,7 @@ fhir:
 logging:
   level:
     root: ${LOG_LEVEL_ROOT:INFO}
-    com.fhir4java: ${LOG_LEVEL_FHIR4JAVA:DEBUG}
+    org.fhirframework: ${LOG_LEVEL_FHIR4JAVA:DEBUG}
     ca.uhn.fhir: ${LOG_LEVEL_HAPI:INFO}
     org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE_SQL:DEBUG}
     org.hibernate.orm.jdbc.bind: ${LOG_LEVEL_HIBERNATE_BIND:TRACE}
