@@ -139,9 +139,11 @@ docker compose up -d
 ```
 ### Sample Test Data Generation
 
-Run this script to generate set of data for commmonly used FHIR resources
+```bash
+# Run this script to generate set of data for commmonly used FHIR resources
 cd scripts/datagen
 ./create_fhir_data.sh
+```
 
 ### Example API Calls
 
