@@ -24,12 +24,14 @@ The server is designed to be **configuration-driven**, allowing healthcare organ
 [HL7 FHIR (Fast Healthcare Interoperability Resources)](https://hl7.org/fhir/) is the modern standard for exchanging healthcare information electronically. FHIR combines the best features of HL7's previous standards while leveraging the latest web technologies.
 
 **Key FHIR Resources:**
+- [Organization](https://hl7.org/fhir/R5/organization.html) - Healthcare oganization information
 - [Patient](https://hl7.org/fhir/R5/patient.html) - Demographics and administrative information
-- [Observation](https://hl7.org/fhir/R5/observation.html) - Measurements, vital signs, lab results
 - [Encounter](https://hl7.org/fhir/R5/encounter.html) - Healthcare interactions
+- [Observation](https://hl7.org/fhir/R5/observation.html) - Measurements, vital signs, lab results
 - [Condition](https://hl7.org/fhir/R5/condition.html) - Problems, diagnoses
 - [Procedure](https://hl7.org/fhir/R5/procedure.html) - Clinical procedures
 - [MedicationRequest](https://hl7.org/fhir/R5/medicationrequest.html) - Prescriptions
+- [CarePlan](https://hl7.org/fhir/R5/careplan.html) - Intention of how one or more practitioners intend to deliver care for a particular patient, group or community for a period of time, possibly limited to care for a specific condition or set of conditions.
 
 ---
 
