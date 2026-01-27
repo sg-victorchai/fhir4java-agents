@@ -231,6 +231,8 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             String paramName,
             String paramValue,
             String expression) {
+    	
+    	//log.debug("Building token predicate for param: {}, value: {}, expression: {}", paramName, paramValue, expression);
 
         // Handle modifiers
         boolean exactMatch = paramName.endsWith(":exact");
@@ -357,6 +359,7 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             String paramValue,
             String expression) {
 
+    	log.debug("Building quantity predicate for param: {}, value: {}, expression: {}", paramName, paramValue, expression);
         String baseParamName = stripModifier(paramName);
         String jsonPath = mapParamToJsonPath(baseParamName, expression);
 
@@ -378,9 +381,17 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             String valuePath = jsonPath + ",value";
             Expression<String> valueStringExpr = buildJsonPathExpression(cb, contentExpr, valuePath);
 
-            // Cast to numeric for comparison
-            Expression<Double> valueExpr = cb.function("CAST", Double.class, valueStringExpr);
-
+            // Use PostgreSQL's to_number() function to convert text to numeric
+            // The format mask '999999999999999D9999999999' handles numbers up to 15 digits
+            // with up to 10 decimal places (D is the decimal point placeholder)
+            Expression<Double> valueExpr = cb.function(
+                "to_number",
+                Double.class,
+                cb.coalesce(valueStringExpr, cb.literal("0")),
+                cb.literal("999999999999999D9999999999")
+            );
+           
+            
             Predicate valuePredicate = switch (quantity.prefix) {
                 case "eq" -> cb.equal(valueExpr, quantity.value);
                 case "ne" -> cb.notEqual(valueExpr, quantity.value);
@@ -790,7 +801,13 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             double numValue = Double.parseDouble(parsed.value);
 
             Expression<String> stringValue = buildJsonPathExpression(cb, root.get("content"), jsonPath);
-            Expression<Double> jsonValue = cb.function("CAST", Double.class, stringValue);
+            // Use PostgreSQL's to_number() function to convert text to numeric
+            Expression<Double> jsonValue = cb.function(
+                "to_number",
+                Double.class,
+                cb.coalesce(stringValue, cb.literal("0")),
+                cb.literal("999999999999999D9999999999")
+            );
 
             return switch (parsed.prefix) {
                 case "eq" -> cb.equal(jsonValue, numValue);
@@ -981,6 +998,7 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
      */
     private String mapParamToJsonPath(String paramName, String expression) {
         // If we have an expression, try to convert it to a JSON path
+    	log.debug("Mapping parameter '{}' with expression '{}'", paramName, expression);
         if (expression != null && !expression.isEmpty()) {
             String jsonPath = convertExpressionToJsonPath(expression);
             if (jsonPath != null) {
@@ -1049,24 +1067,104 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             return null;
         }
 
+        //added trim to handle leading/trailing spaces
+        String path = expression.trim();
+
+        // Remove outer parentheses if present: "(expression)" -> "expression"
+        if (path.startsWith("(") && path.endsWith(")")) {
+            path = path.substring(1, path.length() - 1).trim();
+        }
+
+        // Handle union expressions - extract just the first alternative
+        // For "AdverseEvent.code | AllergyIntolerance.code | ... | Observation.code | ...",
+        // we take the first one and assume they all have similar structure
+        if (path.contains(" | ")) {
+            String[] alternatives = path.split(" \\| ");
+            path = alternatives[0].trim();
+        }
+
+        // Handle FHIRPath "as" operator for polymorphic elements before stripping resource prefix
+        // Convert "(Observation.value as Quantity)" or "Observation.value as Quantity" to proper path
+        Pattern asPattern = Pattern.compile("([\\w.]+)\\s+as\\s+(\\w+)");
+        Matcher asMatcher = asPattern.matcher(path);
+        if (asMatcher.find()) {
+            String fullPath = asMatcher.group(1);  // e.g., "Observation.value" or "value"
+            String typeName = asMatcher.group(2);  // e.g., "Quantity"
+
+            // Get just the element name (last part after dot)
+            String elementName = fullPath.contains(".")
+                    ? fullPath.substring(fullPath.lastIndexOf('.') + 1)
+                    : fullPath;
+
+            // Capitalize first letter of type name for camelCase concatenation
+            String capitalizedType = typeName.substring(0, 1).toUpperCase() + typeName.substring(1);
+            String polymorphicName = elementName + capitalizedType;
+            log.debug("Converted 'as' expression: {} as {} -> {}", fullPath, typeName, polymorphicName);
+            return polymorphicName;
+        }
+
         // Remove the resource type prefix (e.g., "Patient.name" -> "name")
-        String path = expression;
         if (path.contains(".")) {
             int dotIndex = path.indexOf('.');
             path = path.substring(dotIndex + 1);
         }
 
         // Handle common FHIRPath patterns
-        // Remove .where(), .exists(), .ofType(), etc.
+        // Remove .where(), .exists(), .first(), etc.
         path = path.replaceAll("\\.where\\([^)]*\\)", "");
         path = path.replaceAll("\\.exists\\(\\)", "");
-        path = path.replaceAll("\\.ofType\\([^)]*\\)", "");
         path = path.replaceAll("\\.first\\(\\)", "");
         path = path.replaceAll(" \\| [^,]+", ""); // Remove union alternatives
+
+        // Handle .ofType() for polymorphic elements (value[x], effective[x], etc.)
+        // Convert "value.ofType(Quantity)" to "valueQuantity"
+        // Convert "effective.ofType(dateTime)" to "effectiveDateTime"
+        Pattern ofTypePattern = Pattern.compile("(\\w+)\\.ofType\\(([^)]+)\\)");
+        Matcher ofTypeMatcher = ofTypePattern.matcher(path);
+        if (ofTypeMatcher.find()) {
+            String elementName = ofTypeMatcher.group(1);
+            String typeName = ofTypeMatcher.group(2).trim();
+            // Capitalize first letter of type name for camelCase concatenation
+            String capitalizedType = typeName.substring(0, 1).toUpperCase() + typeName.substring(1);
+            String polymorphicName = elementName + capitalizedType;
+            path = ofTypeMatcher.replaceFirst(polymorphicName);
+            log.debug("Converted ofType expression: {}.ofType({}) -> {}", elementName, typeName, polymorphicName);
+        }
 
         // Convert dots to commas (except for type functions)
         path = path.replace(".", ",");
 
+        // Copilot suggested changes start here
+        // Special handling for "code" - expand to full CodeableConcept path
+        if (path.equals("code")) {
+            return "code,coding,0,code";
+        }
+
+        // Handle other common patterns that need expansion
+        if (path.equals("category")) {
+            return "category,0,coding,0,code";
+        }
+
+        if (path.equals("type")) {
+            return "type,coding,0,code";
+        }
+
+        // Handle nested code paths like "code,concept" -> "code,concept,coding,0,code"
+        if (path.endsWith(",concept") && !path.contains(",coding,")) {
+            return path.replace(",concept", ",concept,coding,0,code");
+        }
+
+        // Handle name paths
+        if (path.equals("name")) {
+            return "name,0,text";
+        }
+
+        // Handle identifier paths
+        if (path.equals("identifier")) {
+            return "identifier,0,value";
+        }
+        //end of Copilot suggested changes
+        
         // Handle array access - add ,0 for first element
         // This is a simplification; real implementation would need to handle all elements
         if (!path.contains(",0,") && !path.endsWith(",0")) {

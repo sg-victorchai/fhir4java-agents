@@ -21,6 +21,7 @@ import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * Global exception handler for FHIR API endpoints.
@@ -97,6 +98,14 @@ public class FhirExceptionHandler {
 
         OperationOutcome outcome = OperationOutcomeBuilder.notFound("Unknown", ex.getRequestURL());
         return buildResponse(outcome, HttpStatus.NOT_FOUND, request);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Void> handleNoResourceFound(NoResourceFoundException ex,
+                                                      HttpServletRequest request) {
+        // Static resources like favicon.ico - just return 404 without FHIR OperationOutcome
+        log.debug("Static resource not found: {}", ex.getResourcePath());
+        return ResponseEntity.notFound().build();
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
