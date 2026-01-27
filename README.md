@@ -137,6 +137,11 @@ docker compose up -d
 
 # Server will be available at http://localhost:8080/fhir/r5
 ```
+### Sample Test Data Generation
+
+Run this script to generate set of data for commmonly used FHIR resources
+cd scripts/datagen
+./create_fhir_data.sh
 
 ### Example API Calls
 
