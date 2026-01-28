@@ -178,11 +178,11 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             case QUANTITY -> buildQuantityPredicate(cb, root, paramName, paramValue, expression);
             case REFERENCE -> buildReferencePredicate(cb, root, paramName, paramValue, expression);
             case COMPOSITE -> buildCompositePredicate(cb, root, resourceType, paramName, paramValue);
-            case DATE -> buildJsonbDatePredicate(cb, root, paramName, paramValue);
-            case NUMBER -> buildJsonbNumberPredicate(cb, root, paramName, paramValue);
-            case STRING -> buildJsonbStringPredicate(cb, root, paramName, paramValue);
+            case DATE -> buildJsonbDatePredicate(cb, root, paramName, paramValue,expression);
+            case NUMBER -> buildJsonbNumberPredicate(cb, root, paramName, paramValue,expression);
+            case STRING -> buildJsonbStringPredicate(cb, root, paramName, paramValue,expression);
             case URI -> buildUriPredicate(cb, root, paramName, paramValue, expression);
-            default -> buildJsonbStringPredicate(cb, root, paramName, paramValue);
+            default -> buildJsonbStringPredicate(cb, root, paramName, paramValue,expression);
         };
     }
 
@@ -752,10 +752,11 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             CriteriaBuilder cb,
             Root<FhirResourceEntity> root,
             String paramName,
-            String paramValue) {
+            String paramValue,
+            String expression) {
 
         ParsedValue parsed = parseValueWithPrefix(paramValue);
-        String jsonPath = mapParamToJsonPath(stripModifier(paramName), null);
+        String jsonPath = mapParamToJsonPath(stripModifier(paramName), expression);
 
         log.debug("Building date predicate: param={}, prefix={}, value={}, jsonPath={}",
                 paramName, parsed.prefix, parsed.value, jsonPath);
@@ -788,10 +789,11 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             CriteriaBuilder cb,
             Root<FhirResourceEntity> root,
             String paramName,
-            String paramValue) {
+            String paramValue,
+            String expression) {
 
         ParsedValue parsed = parseValueWithPrefix(paramValue);
-        String jsonPath = mapParamToJsonPath(stripModifier(paramName), null);
+        String jsonPath = mapParamToJsonPath(stripModifier(paramName), expression);
 
         if (jsonPath == null) {
             return null;
@@ -828,14 +830,15 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             CriteriaBuilder cb,
             Root<FhirResourceEntity> root,
             String paramName,
-            String paramValue) {
+            String paramValue,
+            String expression) {
 
         boolean exactMatch = paramName.endsWith(":exact");
         boolean containsMatch = paramName.endsWith(":contains");
         boolean missingMatch = paramName.endsWith(":missing");
 
         String baseParamName = stripModifier(paramName);
-        String jsonPath = mapParamToJsonPath(baseParamName, null);
+        String jsonPath = mapParamToJsonPath(baseParamName, expression);
 
         if (jsonPath == null) {
             log.debug("Unknown search parameter: {}", paramName);

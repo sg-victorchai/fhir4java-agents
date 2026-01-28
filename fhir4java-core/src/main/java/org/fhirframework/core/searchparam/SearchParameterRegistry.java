@@ -119,7 +119,10 @@ public class SearchParameterRegistry {
                     resourceSpecificParams.get(version)
                             .computeIfAbsent(resourceType, k -> new ArrayList<>())
                             .add(sp);
-
+                    
+                    log.trace ("Associating search parameter {} with resource type {}",
+							sp.getCode(), resourceType);
+                    
                     // Add to lookup cache
                     String key = resourceType + ":" + sp.getCode();
                     parameterLookup.get(version).put(key, sp);
@@ -222,7 +225,38 @@ public class SearchParameterRegistry {
     public Optional<String> getSearchParameterExpression(
             FhirVersion version, String resourceType, String paramName) {
         return getSearchParameter(version, resourceType, paramName)
-                .map(SearchParameter::getExpression);
+                .map(sp -> filterExpressionByResourceType(sp.getExpression(), resourceType));
+    }
+
+    /**
+     * Filters a FHIRPath expression to only include paths for the specified resource type.
+     * 
+     * @param expression Full expression possibly containing multiple resource types
+     * @param resourceType The resource type to filter for
+     * @return Filtered expression containing only paths starting with the resource type
+     */
+    private String filterExpressionByResourceType(String expression, String resourceType) {
+        if (expression == null || expression.isEmpty()) {
+            return expression;
+        }
+
+        // Split by pipe and filter for matching resource type
+        String[] paths = expression.split("\\s*\\|\\s*");
+        List<String> matchingPaths = new ArrayList<>();
+        
+        for (String path : paths) {
+            // Check if path starts with the resource type
+            if (path.trim().startsWith(resourceType + ".")) {
+                matchingPaths.add(path.trim());
+            }
+        }
+        
+        // If we found matching paths, return them joined; otherwise return original
+        if (!matchingPaths.isEmpty()) {
+            return String.join(" | ", matchingPaths);
+        }
+        
+        return expression;
     }
 
     /**
