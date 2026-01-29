@@ -377,13 +377,14 @@ Search parameters are loaded from **version-specific folders** as individual FHI
 |---------|-------------|---------|
 | `SearchParameter-Resource-<param>.json` | Common params for ALL resources | `SearchParameter-Resource-id.json` |
 | `SearchParameter-DomainResource-<param>.json` | Common params for DomainResource subtypes | `SearchParameter-DomainResource-text.json` |
+| `SearchParameter-clinical-<param>.json` | Multi-resource clinical params | `SearchParameter-clinical-code.json` |
 | `SearchParameter-<ResourceType>-<param>.json` | Resource-specific params | `SearchParameter-Patient-death-date.json` |
 
 **Inheritance Rules:**
 | Resource Type | Inherits Search Parameters From |
 |--------------|--------------------------------|
 | Bundle, Parameters, Binary | `SearchParameter-Resource-*` only |
-| All other resources | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` |
+| All other resources | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` AND applicable `SearchParameter-clinical-*` |
 
 **Search Parameter Name:** The `name` element in the JSON file defines the search parameter name used in queries (e.g., `_id`, `_lastUpdated`, `death-date`).
 
@@ -511,6 +512,83 @@ Search parameters are loaded from **version-specific folders** as individual FHI
 |------|-----------|------|-------------|
 | `SearchParameter-DomainResource-text.json` | `_text` | special | Search on the narrative (DomainResource level) |
 
+---
+
+### 1c. Multi-Resource Clinical Search Parameters
+
+FHIR defines common clinical search parameters that apply across multiple resource types. These are defined in `SearchParameter-clinical-*.json` files and contain **multiple FHIRPath expressions** (one per applicable resource type) in a single definition.
+
+**Multi-Resource Clinical Parameters:**
+
+| File | Parameter | Type | Applies To |
+|------|-----------|------|------------|
+| `SearchParameter-clinical-code.json` | `code` | token | AdverseEvent, AllergyIntolerance, Condition, Observation, Procedure, MedicationRequest, etc. (22+ resources) |
+| `SearchParameter-clinical-date.json` | `date` | date | AdverseEvent, Appointment, CarePlan, Encounter, Observation, Procedure, etc. (27+ resources) |
+| `SearchParameter-clinical-patient.json` | `patient` | reference | Account, Condition, Encounter, Observation, MedicationRequest, etc. (66+ resources) |
+| `SearchParameter-clinical-encounter.json` | `encounter` | reference | CarePlan, Condition, Observation, Procedure, etc. |
+| `SearchParameter-clinical-identifier.json` | `identifier` | token | Account, Condition, Patient, Observation, etc. |
+
+**Example: `SearchParameter-clinical-date.json`**
+
+This parameter defines the `date` search for multiple resources with resource-specific FHIRPath expressions:
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "id": "clinical-date",
+  "name": "date",
+  "code": "date",
+  "base": ["AdverseEvent", "AllergyIntolerance", "Appointment", "CarePlan",
+           "Encounter", "Observation", "Procedure", ...],
+  "type": "date",
+  "expression": "AdverseEvent.occurrence.ofType(dateTime) | AdverseEvent.occurrence.ofType(Period) | AllergyIntolerance.recordedDate | CarePlan.period | Encounter.actualPeriod | Observation.effective.ofType(dateTime) | Observation.effective.ofType(Period) | Procedure.occurrence.ofType(dateTime) | ..."
+}
+```
+
+**Expression Filtering:**
+
+When a search is executed (e.g., `GET /Observation?date=2025-01-01`), the `SearchParameterRegistry` filters the multi-resource expression to extract only the paths applicable to the requested resource type:
+
+- **Full expression:** `AdverseEvent.occurrence.ofType(dateTime) | ... | Observation.effective.ofType(dateTime) | Observation.effective.ofType(Period) | ...`
+- **Filtered for Observation:** `Observation.effective.ofType(dateTime) | Observation.effective.ofType(Period)`
+
+This filtering is performed by the `filterExpressionByResourceType()` method in `SearchParameterRegistry`:
+
+```java
+/**
+ * Filters a FHIRPath expression to only include paths for the specified resource type.
+ *
+ * @param expression Full expression possibly containing multiple resource types
+ * @param resourceType The resource type to filter for
+ * @return Filtered expression containing only paths starting with the resource type
+ */
+private String filterExpressionByResourceType(String expression, String resourceType) {
+    if (expression == null || expression.isEmpty()) {
+        return expression;
+    }
+
+    // Split by pipe and filter for matching resource type
+    String[] paths = expression.split("\\s*\\|\\s*");
+    List<String> matchingPaths = new ArrayList<>();
+
+    for (String path : paths) {
+        // Check if path starts with the resource type
+        if (path.trim().startsWith(resourceType + ".")) {
+            matchingPaths.add(path.trim());
+        }
+    }
+
+    // If we found matching paths, return them joined; otherwise return original
+    if (!matchingPaths.isEmpty()) {
+        return String.join(" | ", matchingPaths);
+    }
+
+    return expression;
+}
+```
+
+**Commit:** `072f5d6` - Fix search parameter expression filtering for resource-specific queries
+
 ### 2. Resource Registry
 
 The ResourceRegistry manages resource configurations and provides version-aware lookups.
@@ -625,12 +703,15 @@ Loads search parameters from **version-specific folders** as individual FHIR Sea
 - Resource-specific: `SearchParameter-<ResourceType>-<param-name>.json`
 - Common parameters for all resources: `SearchParameter-Resource-<param-name>.json`
 - Common parameters for DomainResource subtypes: `SearchParameter-DomainResource-<param-name>.json`
+- Multi-resource clinical parameters: `SearchParameter-clinical-<param-name>.json`
 
 **Inheritance Rules:**
 | Resource Type | Inherits From |
 |--------------|---------------|
 | Bundle, Parameters, Binary | `SearchParameter-Resource-*` only |
-| All other resources (DomainResource subtypes) | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` |
+| All other resources (DomainResource subtypes) | `SearchParameter-Resource-*` AND `SearchParameter-DomainResource-*` AND applicable `SearchParameter-clinical-*` |
+
+**Note:** Multi-resource parameters (clinical-*) have a `base` array listing all applicable resource types. When retrieving expressions, the registry filters to return only paths matching the requested resource type (see `filterExpressionByResourceType()`).
 
 ```java
 @Component
@@ -797,11 +878,34 @@ public class SearchParameterRegistry {
 
     /**
      * Get the FHIRPath expression for a search parameter.
+     * For multi-resource parameters (e.g., clinical-date, clinical-code),
+     * filters the expression to only include paths for the requested resource type.
      */
     public Optional<String> getSearchParameterExpression(
             FhirVersion version, String resourceType, String paramName) {
         return getSearchParameter(version, resourceType, paramName)
-            .map(SearchParameter::getExpression);
+            .map(sp -> filterExpressionByResourceType(sp.getExpression(), resourceType));
+    }
+
+    /**
+     * Filters a FHIRPath expression to only include paths for the specified resource type.
+     * This is essential for multi-resource search parameters like clinical-date and clinical-code.
+     */
+    private String filterExpressionByResourceType(String expression, String resourceType) {
+        if (expression == null || expression.isEmpty()) {
+            return expression;
+        }
+
+        String[] paths = expression.split("\\s*\\|\\s*");
+        List<String> matchingPaths = new ArrayList<>();
+
+        for (String path : paths) {
+            if (path.trim().startsWith(resourceType + ".")) {
+                matchingPaths.add(path.trim());
+            }
+        }
+
+        return !matchingPaths.isEmpty() ? String.join(" | ", matchingPaths) : expression;
     }
 
     public boolean isDomainResource(String resourceType) {
@@ -5186,6 +5290,18 @@ Advanced search functionality implemented with full FHIR search parameter type s
 | **URI** | URI values | `:above`, `:below`, `:missing` |
 
 **Included in Commit:** `d77abe1`
+
+### 🔧 Bug Fixes and Enhancements
+
+**Commit `ead62f1`** - fix: Improve quantity search and error handling
+- Fixed quantity/number search by using PostgreSQL `to_number()` function instead of `CAST` (which doesn't work with JPA Criteria API)
+- Fixed polymorphic element path resolution (`value[x]` → `valueQuantity`) by properly handling FHIRPath `ofType()` and `as` operators
+- Added `NoResourceFoundException` handler for static resources like favicon.ico
+
+**Commit `072f5d6`** - Fix search parameter expression filtering for resource-specific queries
+- Added `filterExpressionByResourceType()` method in `SearchParameterRegistry` to filter multi-resource FHIRPath expressions
+- Updated `FhirResourceRepositoryImpl` to pass expression parameter to date, number, and string predicate builders
+- Ensures correct JSON path extraction for multi-resource parameters like `clinical-date` and `clinical-code`
 
 ### ⏳ Phase 4: Validation Framework - NOT STARTED
 - HAPI FHIR validation with version-specific StructureDefinitions
