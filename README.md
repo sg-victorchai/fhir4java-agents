@@ -139,11 +139,53 @@ docker compose up -d
 ```
 ### Sample Test Data Generation
 
+
 ```bash
 # Run this script to generate set of data for commmonly used FHIR resources
 cd scripts/datagen
 ./create_fhir_data.sh
 ```
+The script allows you to specify the different parameters to generate realistic clinical workflow and data from encounter, observation, medication, procedure and care plan. The coded data elements use clinical terminologies such as SNOMED CT, LOINC, RxNorm and CPT as illustrated below
+
+```
+==========================================
+SUMMARY
+==========================================
+Organization: Good Faith Clinic (ID: c86e204e-a1a3-4bb2-89ab-f315f10a58b8)
+Date Range: 2023 - 2025
+Batch Number: SIT02
+
+Created:
+  - 1 Organization (Good Faith Clinic)
+  - 500 Patients (Singaporean names with batch suffix -SIT02)
+  - 3000 Encounters (6 per patient)
+  - 600000 Observations with LOINC codes:
+      * 4548-4: Hemoglobin A1c (Diabetes)
+      * 1558-6: Fasting glucose (Diabetes)
+      * 8480-6: Systolic BP (Hypertension)
+      * 8462-4: Diastolic BP (Hypertension)
+      * 2093-3: Total Cholesterol (Hyperlipidemia)
+  - 15000 MedicationRequests with RxNorm codes:
+      * 860975: Metformin 500 MG (Diabetes)
+      * 314076: Lisinopril 10 MG (Hypertension)
+      * 617311: Atorvastatin 20 MG (Cholesterol)
+      * 329528: Amlodipine 5 MG (Hypertension)
+      * 859751: Rosuvastatin 10 MG (Cholesterol)
+  - 6000 CarePlans with SNOMED CT coded goals:
+      * Diabetes Management (HbA1c target < 7.0%)
+      * Hypertension Management (BP target < 130/80)
+      * Hyperlipidemia Management (LDL target < 100)
+  - 1500 Procedures with SNOMED CT codes (3 per patient):
+      * 252416005: Blood pressure measurement
+      * 710824005: Electrocardiogram monitoring
+      * 413467001: Blood glucose monitoring
+      * 271442007: Foot examination
+      * 170258001: Diabetic retinal screening
+
+Total: 626001 FHIR Resources
+```
+
+The sample data generation script is created by AI, you can get AI to further enhance to meet your data generation needs
 
 ### Example API Calls
 
