@@ -143,6 +143,14 @@ public class ResourceRegistry {
     }
 
     /**
+     * Checks if a resource type has a configuration (regardless of enabled status).
+     * Used for validating resource type names.
+     */
+    public boolean isResourceConfigured(String resourceType) {
+        return resources.containsKey(resourceType);
+    }
+
+    /**
      * Returns the default FHIR version for a resource type.
      * Falls back to the global default if not specified in resource config.
      */

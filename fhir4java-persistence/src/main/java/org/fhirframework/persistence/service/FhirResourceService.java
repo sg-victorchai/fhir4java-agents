@@ -3,7 +3,12 @@ package org.fhirframework.persistence.service;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.core.context.FhirContextFactory;
+import org.fhirframework.core.exception.FhirException;
 import org.fhirframework.core.exception.ResourceNotFoundException;
+import org.fhirframework.core.validation.ProfileValidator;
+import org.fhirframework.core.validation.SearchParameterValidator;
+import org.fhirframework.core.validation.ValidationConfig;
+import org.fhirframework.core.validation.ValidationResult;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.entity.FhirResourceEntity;
 import org.fhirframework.persistence.repository.FhirResourceRepository;
@@ -21,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -40,11 +46,20 @@ public class FhirResourceService {
 
     private final FhirResourceRepository repository;
     private final FhirContextFactory contextFactory;
+    private final SearchParameterValidator searchParameterValidator;
+    private final ProfileValidator profileValidator;
+    private final ValidationConfig validationConfig;
 
     public FhirResourceService(FhirResourceRepository repository,
-                               FhirContextFactory contextFactory) {
+                               FhirContextFactory contextFactory,
+                               SearchParameterValidator searchParameterValidator,
+                               ProfileValidator profileValidator,
+                               ValidationConfig validationConfig) {
         this.repository = repository;
         this.contextFactory = contextFactory;
+        this.searchParameterValidator = searchParameterValidator;
+        this.profileValidator = profileValidator;
+        this.validationConfig = validationConfig;
     }
 
     /**
@@ -62,6 +77,11 @@ public class FhirResourceService {
 
         // Parse the incoming resource
         IBaseResource resource = parser.parseResource(resourceJson);
+
+        // Validate resource if validation is enabled
+        if (validationConfig.isEnabled() && validationConfig.isProfileValidationEnabled()) {
+            validateResourceOrThrow(resource, version);
+        }
 
         // Generate a new resource ID
         String resourceId = UUID.randomUUID().toString();
@@ -175,6 +195,11 @@ public class FhirResourceService {
         // Parse the incoming resource
         IBaseResource resource = parser.parseResource(resourceJson);
 
+        // Validate resource if validation is enabled
+        if (validationConfig.isEnabled() && validationConfig.isProfileValidationEnabled()) {
+            validateResourceOrThrow(resource, version);
+        }
+
         // Set the ID on the resource
         setResourceId(resource, resourceType, resourceId);
 
@@ -252,6 +277,11 @@ public class FhirResourceService {
     public Bundle search(String resourceType, Map<String, String> params, FhirVersion version, int count) {
         FhirContext context = contextFactory.getContext(version);
         IParser parser = context.newJsonParser();
+
+        // Validate search parameters if validation is enabled
+        if (validationConfig.isEnabled() && validationConfig.isValidateSearchParameters()) {
+            validateSearchParametersOrThrow(resourceType, params, version);
+        }
 
         // Handle pagination parameters
         int offset = 0;
@@ -371,6 +401,51 @@ public class FhirResourceService {
 
     private String buildFullUrl(String resourceType, String resourceId) {
         return "urn:uuid:" + resourceType + "/" + resourceId;
+    }
+
+    /**
+     * Validate a resource and throw FhirException if validation fails.
+     */
+    private void validateResourceOrThrow(IBaseResource resource, FhirVersion version) {
+        ValidationResult result = profileValidator.validateAgainstRequiredProfiles(resource, version);
+
+        if (result.hasErrors()) {
+            // In strict mode, throw on any errors
+            if (validationConfig.isStrictProfileValidation()) {
+                String errors = result.getErrors().stream()
+                        .map(issue -> issue.message())
+                        .reduce((a, b) -> a + "; " + b)
+                        .orElse("Validation failed");
+                throw new FhirException("invalid", "Resource validation failed: " + errors);
+            }
+            // In lenient mode, log warnings but continue
+            log.warn("Resource validation issues (lenient mode): {}", result);
+        }
+    }
+
+    /**
+     * Validate search parameters and throw FhirException if validation fails.
+     */
+    private void validateSearchParametersOrThrow(String resourceType, Map<String, String> params, FhirVersion version) {
+        // Convert Map<String, String> to Map<String, String[]> for the validator
+        Map<String, String[]> paramArrays = new HashMap<>();
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            paramArrays.put(entry.getKey(), new String[]{entry.getValue()});
+        }
+
+        ValidationResult result = searchParameterValidator.validateSearchParameters(version, resourceType, paramArrays);
+
+        if (result.hasErrors()) {
+            if (validationConfig.isFailOnUnknownSearchParameters()) {
+                String errors = result.getErrors().stream()
+                        .map(issue -> issue.message())
+                        .reduce((a, b) -> a + "; " + b)
+                        .orElse("Invalid search parameters");
+                throw new FhirException("invalid", errors);
+            }
+            // Log but continue - invalid parameters will be ignored by the repository
+            log.warn("Search parameter validation issues: {}", result);
+        }
     }
 
     /**
