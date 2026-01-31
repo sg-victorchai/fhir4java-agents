@@ -5235,7 +5235,7 @@ volumes:
 
 ## Implementation Status
 
-> **Last Updated:** January 2026
+> **Last Updated:** February 2026
 
 ### ✅ Phase 1: Project Foundation - COMPLETED
 - Maven multi-module project structure created
@@ -5287,7 +5287,7 @@ volumes:
 **Initial Commit:** `d77abe1`
 **Completion Commit:** `7778209` - Implement Phase 6: Extended Operations
 
-### ✅ Phase 7: Advanced Features - PARTIALLY COMPLETED
+### ✅ Phase 7: Advanced Features - COMPLETED
 Advanced search functionality implemented with full FHIR search parameter type support:
 
 | Parameter Type | Supported Formats | Modifiers |
@@ -5301,7 +5301,43 @@ Advanced search functionality implemented with full FHIR search parameter type s
 | **String** | Text values | `:exact`, `:contains`, `:missing` |
 | **URI** | URI values | `:above`, `:below`, `:missing` |
 
-**Included in Commit:** `d77abe1`
+**Search Commit:** `d77abe1`
+
+#### Enhanced CapabilityStatement Generator
+- **MetadataController.java** enhanced with `SearchParameterRegistry`, `OperationRegistry`, `OperationConfigRegistry` injection
+- `buildResourceComponent()` now accepts `FhirVersion` and populates:
+  - **All allowed search parameters** from `SearchParameterRegistry.getAllowedSearchParameters()` (not just `_id` and `_lastUpdated`)
+  - **Supported operations** per resource from `OperationRegistry.getHandlers()` filtered by `OperationConfigRegistry.isOperationEnabled()`
+  - **Resource profiles** from `ResourceConfiguration.getRequiredProfiles()` via `getSupportedProfile()`
+- `addSystemOperations()` lists system-level operations in the CapabilityStatement
+- `addResourceOperations()` adds type-level and instance-level operations per resource with deduplication
+
+#### Batch/Transaction Bundle Support
+- **BundleProcessorService.java** (fhir4java-persistence) — Core service for bundle processing:
+  - `processBatch()` — processes each entry independently, catches and records errors per entry
+  - `processTransaction()` — `@Transactional` all-or-nothing processing, re-throws exceptions for rollback
+  - `processEntry()` — routes to GET/POST/PUT/DELETE/PATCH handlers via `HTTPVerb`
+  - Each handler delegates to `FhirResourceService` methods (read, create, update, delete) and `JsonPatchService`
+  - Entry URL parser handles `Patient/123`, `Patient`, etc. (relative references)
+- **BundleController.java** (fhir4java-api) — REST controller:
+  - `POST /fhir` and `POST /fhir/{version}` for Bundle submission
+  - Validates bundle type (rejects non-batch/transaction with 400)
+  - Executes BEFORE/AFTER plugins with `OperationType.BATCH`
+  - Returns `batch-response` or `transaction-response` Bundle
+
+#### Shared BDD Test Context
+- **SharedTestContext.java** — `@Component` with `@ScenarioScope` sharing state across step definition classes
+- **OperationSteps.java** refactored to use `SharedTestContext` for shared state
+
+#### BDD Test Suites
+- **plugin-patient-create.feature** — 5 scenarios: MRN auto-generation, timestamp extension, family name validation, duplicate MRN check, phone normalization
+- **version-resolution.feature** — 7 scenarios: versioned/unversioned paths for read, metadata, search, case-insensitive version codes
+- **batch-transaction.feature** — 4 scenarios: batch with mixed ops, transaction creates, batch error continuation, bundle type rejection
+- Step definition classes: `PluginSteps.java`, `VersionResolutionSteps.java`, `BatchTransactionSteps.java`
+
+**Note:** BDD tests need troubleshooting — compilation passes but some test scenarios require further investigation.
+
+**Completion Commit:** `605955a` - Implement Phase 7: Enhanced CapabilityStatement, Batch/Transaction support, and BDD tests
 
 ### 🔧 Bug Fixes and Enhancements
 
@@ -5422,10 +5458,11 @@ Advanced search functionality implemented with full FHIR search parameter type s
 - **ProfileValidator.java** - Gracefully skips validation when validator unavailable (returns empty result instead of failure), added full stack trace logging for initialization errors
 
 ### Remaining Items
-- [ ] History/vread endpoint implementation (basic structure exists)
-- [ ] Version-aware CapabilityStatement generator
-- [ ] Batch/transaction support
-- [ ] BDD tests for all features
+- [x] ~~History/vread endpoint implementation~~ (completed in Phase 3/7)
+- [x] ~~Version-aware CapabilityStatement generator~~ (completed in Phase 7)
+- [x] ~~Batch/transaction support~~ (completed in Phase 7)
+- [x] ~~BDD tests for plugins, version resolution, batch/transaction~~ (created in Phase 7, need troubleshooting)
+- [ ] Fix and verify BDD test failures
 
 ---
 
