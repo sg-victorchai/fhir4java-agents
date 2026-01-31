@@ -5348,18 +5348,72 @@ Advanced search functionality implemented with full FHIR search parameter type s
   - `validateResourceOrThrow()` - throws FhirException on strict mode errors, logs warnings in lenient mode
   - `validateSearchParametersOrThrow()` - throws FhirException when failOnUnknownSearchParameters is true
 
-### ⏳ Phase 5: Plugin System - NOT STARTED
-- Plugin SPI interfaces
-- PluginOrchestrator
-- Default plugins (Audit, Telemetry, Performance)
-- BusinessLogicPlugin with CRUD and operation hooks
+### ✅ Phase 5: Plugin System - COMPLETED
+
+**Commit `5cf5e9d`** - Implement Phase 5 Plugin System with sample PatientCreatePlugin
+
+#### Plugin SPI Framework (fhir4java-plugin)
+- **OperationType.java** - Enum: READ, VREAD, CREATE, UPDATE, DELETE, SEARCH, HISTORY, OPERATION, BATCH, METADATA with `isWriteOperation()`, `isReadOperation()` helpers
+- **ExecutionMode.java** - Enum: SYNC, ASYNC for plugin execution modes
+- **PluginPhase.java** - Enum: BEFORE, AFTER, ON_ERROR for plugin lifecycle phases
+- **FhirPlugin.java** - Base plugin interface with lifecycle methods (`executeBefore`, `executeAfter`, `executeOnError`, `initialize`, `destroy`), priority ordering, and operation matching
+- **PluginContext.java** - Builder-pattern context carrying requestId, operationType, fhirVersion, resourceType, resourceId, inputResource, outputResource, tenantId, userId, and extensible attributes
+- **OperationDescriptor.java** - Record for matching plugins to operations with wildcard support (null = match all) and specificity scoring
+- **PluginResult.java** - Outcome enum (CONTINUE, MODIFIED, ABORT, SKIP_REMAINING) with factory methods: `continueProcessing()`, `continueWithResource()`, `abort()`, `unauthorized()`, `forbidden()`, `badRequest()`, `skipRemaining()`
+
+#### Plugin Orchestrator
+- **PluginOrchestrator.java** - `@Component` managing plugin registration, matching, and execution pipeline:
+  - `executeBefore(PluginContext)` — SYNC plugins in priority order
+  - `executeAfter(PluginContext)` — SYNC then ASYNC plugins
+  - `executeOnError(PluginContext, Exception)` — both SYNC and ASYNC
+  - `executeCrudOperation(PluginContext, Supplier<OperationResult>)` — full BEFORE → Core → AFTER pipeline
+  - `executeBusinessLogicBefore/After(BusinessContext)` — business logic specific execution
+- **PluginConfig.java** - `@Component` with `@Value` annotations for `fhir4java.plugins.*` properties
+- **PluginAutoConfiguration.java** - `@Configuration` for plugin discovery and default plugin registration
+
+#### Plugin Interfaces
+- **AuthenticationPlugin.java** - Authentication with `authenticate()` returning `AuthenticationResult` (priority 10)
+- **AuthorizationPlugin.java** - Authorization with `authorize()` returning `AuthorizationDecision` (priority 20)
+- **AuditPlugin.java** - Audit with `recordAuditEvent(AuditEvent)` (ASYNC, priority 200)
+- **TelemetryPlugin.java** - Telemetry with `recordMetric()`, `startSpan()`, `endSpan()` (ASYNC, priority 190)
+- **CachePlugin.java** - Cache with `get()`, `put()`, `invalidate()` (SYNC, priority 30)
+- **PerformancePlugin.java** - Performance with `recordPerformance()`, `getStats()` (SYNC, priority 5)
+- **BusinessLogicPlugin.java** - Business logic with `beforeOperation(BusinessContext)` and `afterOperation(BusinessContext, OperationResult)` returning `BusinessResult` (priority 50)
+
+#### Business Logic Support
+- **BusinessContext.java** - Wrapper around PluginContext with originalResource, currentResource, operationParameters, and abort control
+- **OperationResult.java** - Success/failure result with resource, OperationOutcome, httpStatus, responseHeaders
+
+#### Default Plugin Implementations
+- **NoOpAuthenticationPlugin.java** - Pass-through authentication (always authenticated)
+- **NoOpAuthorizationPlugin.java** - Pass-through authorization (always permitted)
+- **LoggingAuditPlugin.java** - Logging-based audit trail
+- **LoggingTelemetryPlugin.java** - Logging-based telemetry/metrics
+- **InMemoryPerformancePlugin.java** - In-memory performance tracking with statistics
+
+#### Sample Plugin
+- **PatientCreatePlugin.java** - `@Component` BusinessLogicPlugin for Patient CREATE:
+  - Configurable enrichment: MRN system (`mrn-system`), timestamp URL (`creation-timestamp-url`)
+  - Validation: require family name, SSN format check
+  - Duplicate identifier detection via FHIR search (`ResourceLookupService`)
+  - Contact info normalization (phone numbers, email)
+
+#### Resource Lookup Service (for plugin-to-persistence bridge)
+- **ResourceLookupService.java** (fhir4java-core) - Interface with `existsByIdentifier()` and `findExistingIdentifiers()` plus `IdentifierToken` record
+- **ResourceLookupServiceImpl.java** (fhir4java-persistence) - `@Service` implementation delegating to `FhirResourceService.search()` using FHIR token search format (`identifier=system|value`)
+
+#### Controller Integration
+- **FhirResourceController.java** - Integrated PluginOrchestrator into `create()` endpoint: BEFORE plugins → core operation → AFTER plugins, with `buildAbortResponse()` for plugin rejections
+
+#### Bug Fixes (Phase 4)
+- **FhirResourceService.java** - Fixed swapped `FhirException` constructor args (`message` and `issueCode` were reversed)
+- **ProfileValidator.java** - Gracefully skips validation when validator unavailable (returns empty result instead of failure), added full stack trace logging for initialization errors
 
 ### Remaining Items
 - [ ] History/vread endpoint implementation (basic structure exists)
 - [ ] Version-aware CapabilityStatement generator
 - [ ] Batch/transaction support
 - [ ] BDD tests for all features
-- [ ] Plugin system implementation
 
 ---
 
@@ -5403,28 +5457,46 @@ Advanced search functionality implemented with full FHIR search parameter type s
 | api | `FhirVersionResolver.java` | URL version extraction and resolution |
 | api | `FhirVersionFilter.java` | Request filter for version handling |
 | api | `ResolvedVersion.java` | DTO for resolved version info |
-| plugin | `FhirPlugin.java` | Base plugin interface with execution modes |
-| plugin | `PluginOrchestrator.java` | Plugin execution pipeline orchestrator |
-| plugin | `AuthenticationPlugin.java` | Authentication plugin interface |
+| plugin | `FhirPlugin.java` | Base plugin interface with execution modes ✅ |
+| plugin | `PluginOrchestrator.java` | Plugin execution pipeline orchestrator ✅ |
+| plugin | `PluginContext.java` | Plugin context with builder pattern ✅ |
+| plugin | `PluginResult.java` | Plugin result with outcome enum ✅ |
+| plugin | `PluginConfig.java` | Plugin configuration properties ✅ |
+| plugin | `PluginAutoConfiguration.java` | Plugin auto-discovery configuration ✅ |
+| plugin | `OperationType.java` | Operation type enum ✅ |
+| plugin | `OperationDescriptor.java` | Operation matching with wildcard support ✅ |
+| plugin | `ExecutionMode.java` | SYNC/ASYNC execution mode enum ✅ |
+| plugin | `PluginPhase.java` | BEFORE/AFTER/ON_ERROR phase enum ✅ |
+| plugin | `AuthenticationPlugin.java` | Authentication plugin interface ✅ |
+| plugin | `NoOpAuthenticationPlugin.java` | Pass-through authentication ✅ |
+| plugin | `AuthorizationPlugin.java` | Authorization plugin interface ✅ |
+| plugin | `NoOpAuthorizationPlugin.java` | Pass-through authorization ✅ |
+| plugin | `CachePlugin.java` | Cache plugin interface ✅ |
+| plugin | `AuditPlugin.java` | Audit plugin interface (async) ✅ |
+| plugin | `LoggingAuditPlugin.java` | Logging-based audit implementation ✅ |
+| plugin | `TelemetryPlugin.java` | Telemetry plugin interface ✅ |
+| plugin | `LoggingTelemetryPlugin.java` | Logging-based telemetry implementation ✅ |
+| plugin | `PerformancePlugin.java` | Performance tracking interface ✅ |
+| plugin | `InMemoryPerformancePlugin.java` | In-memory performance tracking ✅ |
+| plugin | `BusinessLogicPlugin.java` | Business logic plugin interface ✅ |
+| plugin | `BusinessContext.java` | Business logic context wrapper ✅ |
+| plugin | `OperationResult.java` | Operation result with resource/outcome ✅ |
+| plugin | `PatientCreatePlugin.java` | Sample Patient CREATE plugin ✅ |
+| core | `ResourceLookupService.java` | Plugin-to-persistence lookup interface ✅ |
+| persistence | `ResourceLookupServiceImpl.java` | FHIR search-based lookup implementation ✅ |
 | plugin | `JwtAuthenticationPlugin.java` | JWT authentication implementation |
-| plugin | `AuthorizationPlugin.java` | Authorization plugin interface |
 | plugin | `SmartAuthorizationPlugin.java` | SMART on FHIR authorization |
-| plugin | `CachePlugin.java` | Cache plugin interface |
 | plugin | `InMemoryCachePlugin.java` | In-memory cache (dev/testing) |
 | plugin | `RedisCachePlugin.java` | Redis cache (production) |
-| plugin | `AuditPlugin.java` | Audit plugin interface (async) |
 | plugin | `DatabaseAuditPlugin.java` | Database audit implementation |
 | plugin | `AuditLogEntity.java` | Audit log JPA entity |
 | plugin | `AuditPayloadEntity.java` | Separate payload storage entity |
 | plugin | `AuditLogRepository.java` | Audit log repository |
 | plugin | `AuditPayloadRepository.java` | Audit payload repository |
-| plugin | `TelemetryPlugin.java` | Telemetry plugin interface with OTEL support |
 | plugin | `OpenTelemetryPlugin.java` | OTEL implementation with tracing levels |
 | plugin | `SqlTracingInterceptor.java` | SQL statement tracing for DETAILED level |
 | plugin | `TelemetryContextHolder.java` | Context holder for span propagation |
-| plugin | `PerformancePlugin.java` | Performance tracking interface |
 | plugin | `DatabasePerformancePlugin.java` | Database performance tracking |
-| plugin | `BusinessLogicPlugin.java` | Business logic plugin interface |
 | plugin | `OperationType.java` | Enum for CRUD + OPERATION types |
 | plugin | `OperationDescriptor.java` | Descriptor for plugin matching (resourceType, opType, opCode) |
 | plugin | `BusinessContext.java` | Context for business logic plugins (request, resource, params) |
