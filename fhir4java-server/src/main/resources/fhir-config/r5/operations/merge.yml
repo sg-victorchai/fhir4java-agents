@@ -1,0 +1,16 @@
+operationName: merge
+enabled: true
+description: "Merge two patient records"
+scopes:
+  - TYPE
+resourceTypes:
+  - Patient
+parameters:
+  - name: source-patient
+    type: Reference
+    required: true
+    description: "Reference to the source patient to be merged (deactivated)"
+  - name: target-patient
+    type: Reference
+    required: true
+    description: "Reference to the target patient to receive merged data"

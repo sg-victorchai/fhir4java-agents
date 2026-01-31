@@ -10,6 +10,7 @@ import org.fhirframework.core.interaction.InteractionType;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.FhirResourceService;
 import org.fhirframework.persistence.service.FhirResourceService.ResourceResult;
+import org.fhirframework.persistence.service.JsonPatchService;
 import org.fhirframework.plugin.OperationType;
 import org.fhirframework.plugin.PluginContext;
 import org.fhirframework.plugin.PluginOrchestrator;
@@ -56,15 +57,18 @@ public class FhirResourceController {
     private final InteractionGuard interactionGuard;
     private final FhirResourceService resourceService;
     private final PluginOrchestrator pluginOrchestrator;
+    private final JsonPatchService jsonPatchService;
 
     public FhirResourceController(FhirContextFactory contextFactory,
                                   InteractionGuard interactionGuard,
                                   FhirResourceService resourceService,
-                                  PluginOrchestrator pluginOrchestrator) {
+                                  PluginOrchestrator pluginOrchestrator,
+                                  JsonPatchService jsonPatchService) {
         this.contextFactory = contextFactory;
         this.interactionGuard = interactionGuard;
         this.resourceService = resourceService;
         this.pluginOrchestrator = pluginOrchestrator;
+        this.jsonPatchService = jsonPatchService;
     }
 
     // ========== READ Operations ==========
@@ -363,12 +367,35 @@ public class FhirResourceController {
 
         interactionGuard.validateInteraction(resourceType, version, InteractionType.PATCH);
 
-        // TODO: Implement actual JSON patch processing
-        // For now, return not implemented
+        // Read the current resource
+        ResourceResult current = resourceService.read(resourceType, id, version);
+
+        // Apply JSON Patch
+        String patchedJson;
+        try {
+            patchedJson = jsonPatchService.applyPatch(current.content(), body);
+        } catch (Exception e) {
+            log.warn("Failed to apply JSON Patch to {}/{}: {}", resourceType, id, e.getMessage());
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
+                    .body("{\"resourceType\":\"OperationOutcome\",\"issue\":[{\"severity\":\"error\",\"code\":\"invalid\",\"diagnostics\":\"" +
+                            e.getMessage().replace("\"", "'") + "\"}]}");
+        }
+
+        // Update via the standard update path
+        ResourceResult result = resourceService.update(resourceType, id, patchedJson, version);
+
+        String locationUri = String.format("/fhir/%s/%s/%s/_history/%d",
+                version.getCode(), resourceType, id, result.versionId());
+
         return ResponseEntity
-                .status(HttpStatus.NOT_IMPLEMENTED)
+                .ok()
                 .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
-                .body("{\"resourceType\":\"OperationOutcome\",\"issue\":[{\"severity\":\"error\",\"code\":\"not-supported\",\"diagnostics\":\"PATCH not yet implemented\"}]}");
+                .header("Content-Location", locationUri)
+                .header("ETag", "W/\"" + result.versionId() + "\"")
+                .header("Last-Modified", formatLastModified(result))
+                .body(result.content());
     }
 
     // ========== DELETE Operations ==========

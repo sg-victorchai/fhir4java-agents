@@ -1,0 +1,16 @@
+operationName: validate
+enabled: true
+description: "Validate a FHIR resource against its structure definition and profiles"
+scopes:
+  - TYPE
+  - INSTANCE
+resourceTypes: []
+parameters:
+  - name: resource
+    type: Resource
+    required: true
+    description: "The resource to validate"
+  - name: profile
+    type: uri
+    required: false
+    description: "A specific profile to validate against"

@@ -50,6 +50,7 @@
 
         <!-- Utilities -->
         <jackson.version>2.18.2</jackson.version>
+        <json-patch.version>1.13</json-patch.version>
         <lombok.version>1.18.42</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
 
@@ -159,6 +160,13 @@
                 <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- JSON Patch (RFC 6902) -->
+            <dependency>
+                <groupId>com.github.java-json-tools</groupId>
+                <artifactId>json-patch</artifactId>
+                <version>${json-patch.version}</version>
             </dependency>
 
             <!-- Utilities -->

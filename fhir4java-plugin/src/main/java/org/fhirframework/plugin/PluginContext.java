@@ -272,7 +272,7 @@ public class PluginContext {
             if (fhirVersion == null) {
                 throw new IllegalStateException("fhirVersion is required");
             }
-            if (resourceType == null && operationType != OperationType.BATCH && operationType != OperationType.METADATA) {
+            if (resourceType == null && operationType != OperationType.BATCH && operationType != OperationType.METADATA && operationType != OperationType.OPERATION) {
                 throw new IllegalStateException("resourceType is required for operation: " + operationType);
             }
             return new PluginContext(this);

@@ -9,6 +9,11 @@ import org.fhirframework.core.guard.InteractionGuard;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.OperationService;
 import org.fhirframework.persistence.service.OperationService.OperationResult;
+import org.fhirframework.plugin.OperationType;
+import org.fhirframework.plugin.PluginContext;
+import org.fhirframework.plugin.PluginOrchestrator;
+import org.fhirframework.plugin.PluginResult;
+import org.hl7.fhir.r5.model.OperationOutcome;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,13 +44,16 @@ public class OperationController {
     private final FhirContextFactory contextFactory;
     private final InteractionGuard interactionGuard;
     private final OperationService operationService;
+    private final PluginOrchestrator pluginOrchestrator;
 
     public OperationController(FhirContextFactory contextFactory,
                                InteractionGuard interactionGuard,
-                               OperationService operationService) {
+                               OperationService operationService,
+                               PluginOrchestrator pluginOrchestrator) {
         this.contextFactory = contextFactory;
         this.interactionGuard = interactionGuard;
         this.operationService = operationService;
+        this.pluginOrchestrator = pluginOrchestrator;
     }
 
     // ========== System-Level Operations ==========
@@ -118,8 +126,30 @@ public class OperationController {
         FhirVersion version = FhirVersionFilter.getVersion(request);
         log.debug("System operation ${} (version={})", operation, version);
 
+        FhirContext ctx = contextFactory.getContext(version);
+
+        // Build plugin context (system-level: no resourceType)
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.OPERATION)
+                .operationCode(operation)
+                .fhirVersion(version)
+                .build();
+
+        // Execute BEFORE plugins
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            return buildAbortResponse(beforeResult, ctx);
+        }
+
+        // Execute core operation
         OperationResult result = operationService.executeSystemOperation(
                 operation, body, params != null ? params : new HashMap<>(), version);
+
+        // Set output on context for AFTER plugins
+        pluginContext.setOutputResource(result.result());
+
+        // Execute AFTER plugins
+        pluginOrchestrator.executeAfter(pluginContext);
 
         return buildResponse(result, version);
     }
@@ -200,8 +230,31 @@ public class OperationController {
 
         interactionGuard.validateResourceType(resourceType);
 
+        FhirContext ctx = contextFactory.getContext(version);
+
+        // Build plugin context
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.OPERATION)
+                .operationCode(operation)
+                .resourceType(resourceType)
+                .fhirVersion(version)
+                .build();
+
+        // Execute BEFORE plugins
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            return buildAbortResponse(beforeResult, ctx);
+        }
+
+        // Execute core operation
         OperationResult result = operationService.executeTypeOperation(
                 operation, resourceType, body, params != null ? params : new HashMap<>(), version);
+
+        // Set output on context for AFTER plugins
+        pluginContext.setOutputResource(result.result());
+
+        // Execute AFTER plugins
+        pluginOrchestrator.executeAfter(pluginContext);
 
         return buildResponse(result, version);
     }
@@ -286,8 +339,32 @@ public class OperationController {
 
         interactionGuard.validateResourceType(resourceType);
 
+        FhirContext ctx = contextFactory.getContext(version);
+
+        // Build plugin context
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.OPERATION)
+                .operationCode(operation)
+                .resourceType(resourceType)
+                .resourceId(id)
+                .fhirVersion(version)
+                .build();
+
+        // Execute BEFORE plugins
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            return buildAbortResponse(beforeResult, ctx);
+        }
+
+        // Execute core operation
         OperationResult result = operationService.executeInstanceOperation(
                 operation, resourceType, id, body, params != null ? params : new HashMap<>(), version);
+
+        // Set output on context for AFTER plugins
+        pluginContext.setOutputResource(result.result());
+
+        // Execute AFTER plugins
+        pluginOrchestrator.executeAfter(pluginContext);
 
         return buildResponse(result, version);
     }
@@ -301,6 +378,26 @@ public class OperationController {
 
         return ResponseEntity
                 .status(status)
+                .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
+                .body(body);
+    }
+
+    private ResponseEntity<String> buildAbortResponse(PluginResult pluginResult, FhirContext ctx) {
+        int status = pluginResult.getHttpStatus() > 0 ? pluginResult.getHttpStatus() : 400;
+
+        OperationOutcome outcome = pluginResult.getOperationOutcome().orElseGet(() -> {
+            OperationOutcome oo = new OperationOutcome();
+            OperationOutcome.OperationOutcomeIssueComponent issue = oo.addIssue();
+            issue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+            issue.setCode(OperationOutcome.IssueType.PROCESSING);
+            issue.setDiagnostics(pluginResult.getMessage().orElse("Operation aborted by plugin"));
+            return oo;
+        });
+
+        String body = ctx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
+
+        return ResponseEntity
+                .status(HttpStatus.valueOf(status))
                 .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
                 .body(body);
     }

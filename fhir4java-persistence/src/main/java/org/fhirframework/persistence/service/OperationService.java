@@ -5,6 +5,7 @@ import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.operation.*;
 import org.fhirframework.core.version.FhirVersion;
+import org.fhirframework.core.operation.OperationConfigRegistry;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r5.model.OperationOutcome;
 import org.hl7.fhir.r5.model.OperationOutcome.IssueSeverity;
@@ -25,13 +26,16 @@ public class OperationService {
     private static final Logger log = LoggerFactory.getLogger(OperationService.class);
 
     private final OperationRegistry operationRegistry;
+    private final OperationConfigRegistry operationConfigRegistry;
     private final FhirContextFactory contextFactory;
     private final FhirResourceService resourceService;
 
     public OperationService(OperationRegistry operationRegistry,
+                            OperationConfigRegistry operationConfigRegistry,
                             FhirContextFactory contextFactory,
                             FhirResourceService resourceService) {
         this.operationRegistry = operationRegistry;
+        this.operationConfigRegistry = operationConfigRegistry;
         this.contextFactory = contextFactory;
         this.resourceService = resourceService;
     }
@@ -89,6 +93,17 @@ public class OperationService {
                                               FhirVersion version) {
         log.debug("Executing operation ${} at {} level for {}/{}",
                 operationName, scope, resourceType, resourceId);
+
+        // Check if operation is enabled via configuration
+        if (!operationConfigRegistry.isOperationEnabled(operationName, version)) {
+            log.info("Operation ${} is disabled by configuration for version {}", operationName, version);
+            OperationOutcome outcome = new OperationOutcome();
+            outcome.addIssue()
+                    .setSeverity(IssueSeverity.ERROR)
+                    .setCode(IssueType.BUSINESSRULE)
+                    .setDiagnostics(String.format("Operation '$%s' is disabled by configuration", operationName));
+            return new OperationResult(false, outcome, 403);
+        }
 
         Optional<OperationHandler> handlerOpt = operationRegistry.findHandler(
                 operationName, scope, resourceType, version);

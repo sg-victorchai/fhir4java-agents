@@ -44,6 +44,12 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
+        <!-- JSON Patch (RFC 6902) -->
+        <dependency>
+            <groupId>com.github.java-json-tools</groupId>
+            <artifactId>json-patch</artifactId>
+        </dependency>
+
         <!-- HAPI FHIR -->
         <dependency>
             <groupId>ca.uhn.hapi.fhir</groupId>

@@ -1,0 +1,17 @@
+operationName: everything
+enabled: true
+description: "Return all resources in the patient compartment"
+scopes:
+  - TYPE
+  - INSTANCE
+resourceTypes:
+  - Patient
+parameters:
+  - name: _count
+    type: integer
+    required: false
+    description: "Maximum number of resources to return per page"
+  - name: _since
+    type: instant
+    required: false
+    description: "Only include resources updated after this date"
