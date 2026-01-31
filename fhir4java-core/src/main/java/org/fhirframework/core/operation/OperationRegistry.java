@@ -3,6 +3,7 @@ package org.fhirframework.core.operation;
 import org.fhirframework.core.version.FhirVersion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -27,7 +28,7 @@ public class OperationRegistry {
     /**
      * Create an empty registry.
      */
-    public OperationRegistry() {
+    private OperationRegistry() {
     }
 
     /**
@@ -35,6 +36,7 @@ public class OperationRegistry {
      *
      * @param operationHandlers list of operation handlers to register
      */
+    @Autowired
     public OperationRegistry(List<OperationHandler> operationHandlers) {
         if (operationHandlers != null) {
             for (OperationHandler handler : operationHandlers) {
@@ -89,16 +91,21 @@ public class OperationRegistry {
 
         Map<OperationScope, Map<String, OperationHandler>> scopeMap = handlers.get(normalizedName);
         if (scopeMap == null) {
+        	log.debug("No handlers registered for operation ${}", normalizedName);
             return Optional.empty();
         }
 
         Map<String, OperationHandler> typeMap = scopeMap.get(scope);
         if (typeMap == null) {
+        	log.debug("No handlers registered for operation ${} at {} level",
+					normalizedName, scope);
             return Optional.empty();
         }
 
         // Try specific resource type first
         if (resourceType != null) {
+        	log.debug("Looking for handler for operation ${} at {} level for resource type {}",
+        			normalizedName, scope, resourceType);
             OperationHandler handler = typeMap.get(resourceType);
             if (handler != null && handler.supportsVersion(version)) {
                 return Optional.of(handler);
@@ -107,6 +114,8 @@ public class OperationRegistry {
 
         // Try wildcard handler
         OperationHandler wildcardHandler = typeMap.get("*");
+        log.debug("Looking for wildcard handler for operation ${} at {} level",
+       				normalizedName, "*");
         if (wildcardHandler != null && wildcardHandler.supportsVersion(version)) {
             return Optional.of(wildcardHandler);
         }
