@@ -111,6 +111,38 @@ fhir4java:
     enabled: true
     profile-validation: strict  # strict, lenient, off
 
+  # Plugin system settings
+  plugins:
+    enabled: true
+    # Default plugin toggles
+    authentication:
+      enabled: false       # Set true + provide custom AuthenticationPlugin for production
+    authorization:
+      enabled: false       # Set true + provide custom AuthorizationPlugin for production
+    audit:
+      enabled: true        # Logging-based audit by default
+    telemetry:
+      enabled: true        # Logging-based telemetry by default
+    performance:
+      enabled: true        # In-memory performance tracking by default
+    cache:
+      enabled: false       # Enable when cache plugin is provided
+    async-pool-size: 4     # Thread pool size for async plugins
+    business-logic:
+      fail-on-error: true  # Fail the request if a business logic plugin errors
+    # Sample Patient CREATE plugin settings
+    patient-create:
+      enabled: true
+      require-family-name: true     # Reject Patient without family name
+      auto-generate-mrn: true       # Auto-generate MRN identifier if missing
+      mrn-system: "urn:fhir4java:patient:mrn"  # Identifier system URI for auto-generated MRN
+      add-creation-timestamp: true  # Add creation timestamp extension
+      creation-timestamp-url: "http://fhir4java.org/StructureDefinition/creation-timestamp"  # Extension URL for creation timestamp
+      duplicate-check-enabled: true  # Check for duplicate identifiers before creating
+      duplicate-check-systems:       # Identifier systems to check for duplicates (empty = all)
+        - "urn:fhir4java:patient:mrn"
+        - "http://hl7.org/fhir/sid/us-ssn"
+
   # Multi-tenancy
   tenant:
     enabled: false
@@ -143,6 +175,10 @@ logging:
     # For Hibernate 6.x (Spring Boot 3.x), use this instead of type.descriptor.sql
     org.hibernate.orm.jdbc.bind: TRACE
     org.springframework.web: DEBUG
+    # Plugin loggers
+    audit: INFO
+    metrics: INFO
+    org.fhirframework.plugin: DEBUG
 
 ---
 # Development Profile

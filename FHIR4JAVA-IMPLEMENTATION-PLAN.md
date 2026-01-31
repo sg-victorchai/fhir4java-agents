@@ -5303,10 +5303,50 @@ Advanced search functionality implemented with full FHIR search parameter type s
 - Updated `FhirResourceRepositoryImpl` to pass expression parameter to date, number, and string predicate builders
 - Ensures correct JSON path extraction for multi-resource parameters like `clinical-date` and `clinical-code`
 
-### ⏳ Phase 4: Validation Framework - NOT STARTED
-- HAPI FHIR validation with version-specific StructureDefinitions
-- SearchParameterValidator with restriction checking
-- OperationDefinition validation
+### ✅ Phase 4: Validation Framework - COMPLETED
+
+**Commit `3a145c0`** - Implement Phase 4: Validation Framework
+
+#### Validation Core Classes (fhir4java-core)
+- **IssueSeverity.java** - Enum for validation issue severity levels (ERROR, WARNING, INFORMATION) with FHIR OperationOutcome severity mapping
+- **ValidationIssue.java** - Record for individual validation issues with factory methods (error, warning, notFound, notSupported, information)
+- **ValidationResult.java** - Container for validation issues with helper methods (isValid, hasErrors, merge) and static factory methods
+
+#### Validators
+- **SearchParameterValidator.java** - Validates search parameters against:
+  - SearchParameterRegistry (is parameter defined for resource type?)
+  - Resource configuration restrictions (allowlist/denylist via SearchParameterConfig)
+  - Common FHIR parameters (_id, _lastUpdated, _count, _offset, _format, _pretty, _summary, _elements)
+  - Modifier validation (contains, exact, missing, etc.)
+
+- **ProfileValidator.java** - HAPI FHIR integration for profile validation:
+  - Version-specific validators with CachingValidationSupport
+  - ValidationSupportChain with DefaultProfileValidationSupport, InMemoryTerminologyServerValidationSupport, CommonCodeSystemsTerminologyService
+  - FhirInstanceValidator configured with no terminology checks disabled
+  - Validates against base StructureDefinition or specific profiles
+  - `validateAgainstRequiredProfiles()` for resource-type configured profiles
+
+#### Result Conversion
+- **ValidationResultConverter.java** - Converts ValidationResult to FHIR OperationOutcome:
+  - `toOperationOutcome()` with optional success message
+  - Factory methods: `createErrorOutcome()`, `createNotFoundOutcome()`, `createInvalidParameterOutcome()`, `createSuccessOutcome()`
+  - Utility methods: `isSuccessful()`, `countErrors()`
+
+#### Configuration
+- **ValidationConfig.java** - Spring @Value-based configuration:
+  - `fhir4java.validation.enabled` (default: true)
+  - `fhir4java.validation.profile-validation` (strict/lenient/off, default: lenient)
+  - `fhir4java.validation.validate-search-parameters` (default: true)
+  - `fhir4java.validation.fail-on-unknown-search-parameters` (default: false)
+  - ProfileValidationMode enum (STRICT, LENIENT, OFF)
+
+#### Integration
+- **ResourceRegistry.java** - Added `isResourceConfigured()` method for validation checks
+- **FhirResourceService.java** - Integrated validation into CRUD operations:
+  - Profile validation on create/update (when enabled and profile validation not OFF)
+  - Search parameter validation on search (when enabled)
+  - `validateResourceOrThrow()` - throws FhirException on strict mode errors, logs warnings in lenient mode
+  - `validateSearchParametersOrThrow()` - throws FhirException when failOnUnknownSearchParameters is true
 
 ### ⏳ Phase 5: Plugin System - NOT STARTED
 - Plugin SPI interfaces
@@ -5320,7 +5360,6 @@ Advanced search functionality implemented with full FHIR search parameter type s
 - [ ] Batch/transaction support
 - [ ] BDD tests for all features
 - [ ] Plugin system implementation
-- [ ] Full validation framework
 
 ---
 
@@ -5338,8 +5377,13 @@ Advanced search functionality implemented with full FHIR search parameter type s
 | core | `FhirVersionConfig.java` | Version config with default flag |
 | core | `SearchParameterConfig.java` | Search parameter allowlist/denylist configuration |
 | core | `SearchParameterMode.java` | Enum for ALLOWLIST/DENYLIST modes |
-| core | `ProfileValidator.java` | StructureDefinition validation (version-aware) |
-| core | `SearchParameterValidator.java` | Search parameter validation (with restriction checking) |
+| core | `ProfileValidator.java` | StructureDefinition validation (version-aware) ✅ |
+| core | `SearchParameterValidator.java` | Search parameter validation (with restriction checking) ✅ |
+| core | `IssueSeverity.java` | Enum for validation issue severity levels ✅ |
+| core | `ValidationIssue.java` | Record for individual validation issues ✅ |
+| core | `ValidationResult.java` | Container for validation issues ✅ |
+| core | `ValidationResultConverter.java` | Converts ValidationResult to OperationOutcome ✅ |
+| core | `ValidationConfig.java` | Validation configuration with @Value annotations ✅ |
 | persistence | `ResourceEntity.java` | Main JPA entity |
 | persistence | `ResourceRepository.java` | Spring Data repository |
 | persistence | `SchemaManager.java` | Dynamic schema management |

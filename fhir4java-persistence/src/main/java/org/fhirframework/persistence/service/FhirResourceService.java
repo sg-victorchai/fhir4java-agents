@@ -416,7 +416,7 @@ public class FhirResourceService {
                         .map(issue -> issue.message())
                         .reduce((a, b) -> a + "; " + b)
                         .orElse("Validation failed");
-                throw new FhirException("invalid", "Resource validation failed: " + errors);
+                throw new FhirException("Resource validation failed: " + errors, "invalid");
             }
             // In lenient mode, log warnings but continue
             log.warn("Resource validation issues (lenient mode): {}", result);
@@ -441,7 +441,7 @@ public class FhirResourceService {
                         .map(issue -> issue.message())
                         .reduce((a, b) -> a + "; " + b)
                         .orElse("Invalid search parameters");
-                throw new FhirException("invalid", errors);
+                throw new FhirException(errors, "invalid");
             }
             // Log but continue - invalid parameters will be ignored by the repository
             log.warn("Search parameter validation issues: {}", result);

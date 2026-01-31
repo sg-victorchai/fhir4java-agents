@@ -10,8 +10,14 @@ import org.fhirframework.core.interaction.InteractionType;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.FhirResourceService;
 import org.fhirframework.persistence.service.FhirResourceService.ResourceResult;
+import org.fhirframework.plugin.OperationType;
+import org.fhirframework.plugin.PluginContext;
+import org.fhirframework.plugin.PluginOrchestrator;
+import org.fhirframework.plugin.PluginResult;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import jakarta.servlet.http.HttpServletRequest;
 import org.hl7.fhir.r5.model.Bundle;
+import org.hl7.fhir.r5.model.OperationOutcome;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -49,13 +55,16 @@ public class FhirResourceController {
     private final FhirContextFactory contextFactory;
     private final InteractionGuard interactionGuard;
     private final FhirResourceService resourceService;
+    private final PluginOrchestrator pluginOrchestrator;
 
     public FhirResourceController(FhirContextFactory contextFactory,
                                   InteractionGuard interactionGuard,
-                                  FhirResourceService resourceService) {
+                                  FhirResourceService resourceService,
+                                  PluginOrchestrator pluginOrchestrator) {
         this.contextFactory = contextFactory;
         this.interactionGuard = interactionGuard;
         this.resourceService = resourceService;
+        this.pluginOrchestrator = pluginOrchestrator;
     }
 
     // ========== READ Operations ==========
@@ -204,7 +213,40 @@ public class FhirResourceController {
 
         interactionGuard.validateInteraction(resourceType, version, InteractionType.CREATE);
 
-        ResourceResult result = resourceService.create(resourceType, body, version);
+        // Build plugin context
+        FhirContext ctx = contextFactory.getContext(version);
+        IBaseResource parsedResource = ctx.newJsonParser().parseResource(body);
+
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.CREATE)
+                .resourceType(resourceType)
+                .fhirVersion(version)
+                .inputResource(parsedResource)
+                .build();
+
+        // Execute BEFORE plugins (validation, enrichment)
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            return buildAbortResponse(beforeResult, ctx);
+        }
+
+        // Use potentially modified resource
+        String effectiveBody = body;
+        if (beforeResult.isModified() || pluginContext.getInputResource()
+                .map(r -> r != parsedResource).orElse(false)) {
+            IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
+            effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
+        }
+
+        // Execute core operation
+        ResourceResult result = resourceService.create(resourceType, effectiveBody, version);
+
+        // Set output resource on context for AFTER plugins
+        IBaseResource outputResource = ctx.newJsonParser().parseResource(result.content());
+        pluginContext.setOutputResource(outputResource);
+
+        // Execute AFTER plugins (notifications, enrichment)
+        pluginOrchestrator.executeAfter(pluginContext);
 
         String locationUri = String.format("/fhir/%s/%s/%s/_history/%d",
                 version.getCode(), resourceType, result.resourceId(), result.versionId());
@@ -508,5 +550,28 @@ public class FhirResourceController {
     private String formatLastModified(ResourceResult result) {
         return DateTimeFormatter.RFC_1123_DATE_TIME.format(
                 result.lastUpdated().atZone(java.time.ZoneOffset.UTC));
+    }
+
+    /**
+     * Build an error response from an aborted plugin result.
+     */
+    private ResponseEntity<String> buildAbortResponse(PluginResult pluginResult, FhirContext ctx) {
+        int status = pluginResult.getHttpStatus() > 0 ? pluginResult.getHttpStatus() : 400;
+
+        OperationOutcome outcome = pluginResult.getOperationOutcome().orElseGet(() -> {
+            OperationOutcome oo = new OperationOutcome();
+            OperationOutcome.OperationOutcomeIssueComponent issue = oo.addIssue();
+            issue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+            issue.setCode(OperationOutcome.IssueType.PROCESSING);
+            issue.setDiagnostics(pluginResult.getMessage().orElse("Operation aborted by plugin"));
+            return oo;
+        });
+
+        String body = ctx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
+
+        return ResponseEntity
+                .status(HttpStatus.valueOf(status))
+                .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
+                .body(body);
     }
 }
