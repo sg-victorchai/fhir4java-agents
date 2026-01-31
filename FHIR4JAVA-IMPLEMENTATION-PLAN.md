@@ -5268,12 +5268,24 @@ volumes:
 
 **Commit:** `d77abe1` - Implement Phase 3: FHIR resource services and advanced search
 
-### ✅ Phase 6: Extended Operations - PARTIALLY COMPLETED
+### ✅ Phase 6: Extended Operations - COMPLETED
 - Operation framework implemented (OperationHandler, OperationRegistry, OperationContext, OperationScope)
 - OperationService for invoking operations
 - Sample $validate operation handler implemented
+- **PluginOrchestrator integrated into OperationController** with BEFORE/AFTER plugin hooks for system, type, and instance-level operations
+- **PluginContext updated** to exempt `OperationType.OPERATION` from requiring resourceType (for system-level operations)
+- **JSON Patch (RFC 6902) support** via JsonPatchService with `json-patch:1.13` dependency; PATCH endpoint fully functional
+- **OperationConfigRegistry** for declarative YAML-based operation management (loads from `fhir-config/{version}/operations/*.yml`)
+- **OperationConfiguration POJO** with operationName, enabled, description, scopes, resourceTypes, parameters
+- **YAML config files** for validate, everything, and merge operations
+- **OperationService config check** — disabled operations return 403 before handler lookup
+- **$everything OperationHandler** for Patient compartment queries (instance + type level, supports `_count` and `_since`)
+- **$merge OperationHandler** for Patient merge following FHIR R5 spec (source marked inactive with replaced-by link)
+- **BDD test infrastructure** — CucumberIT runner, CucumberSpringConfig, OperationSteps with REST Assured
+- **Feature files** for validate, everything, and patch operations
 
-**Included in Commit:** `d77abe1`
+**Initial Commit:** `d77abe1`
+**Completion Commit:** `7778209` - Implement Phase 6: Extended Operations
 
 ### ✅ Phase 7: Advanced Features - PARTIALLY COMPLETED
 Advanced search functionality implemented with full FHIR search parameter type support:
