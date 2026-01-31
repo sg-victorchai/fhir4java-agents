@@ -6,7 +6,7 @@ import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
-import io.restassured.specification.RequestSpecification;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static io.restassured.RestAssured.given;
@@ -20,10 +20,8 @@ public class OperationSteps {
     @LocalServerPort
     private int port;
 
-    private Response response;
-    private String createdPatientId;
-    private String createdResourceId;
-    private String requestBody;
+    @Autowired
+    private SharedTestContext ctx;
 
     @Before
     public void setUp() {
@@ -50,14 +48,15 @@ public class OperationSteps {
                 }
                 """;
 
-        response = given()
+        Response response = given()
                 .contentType("application/fhir+json")
                 .body(patientJson)
                 .when()
                 .post("/Patient");
 
         response.then().statusCode(201);
-        createdPatientId = extractResourceId(response.body().asString());
+        ctx.setLastResponse(response);
+        ctx.setLastCreatedPatientId(ctx.extractResourceId(response.body().asString()));
     }
 
     @Given("a Patient resource exists with id {string}")
@@ -82,7 +81,7 @@ public class OperationSteps {
                 .when()
                 .post("/Patient");
         sourceResponse.then().statusCode(201);
-        createdPatientId = extractResourceId(sourceResponse.body().asString());
+        ctx.setLastCreatedPatientId(ctx.extractResourceId(sourceResponse.body().asString()));
 
         // Create target patient
         String targetJson = """
@@ -98,12 +97,12 @@ public class OperationSteps {
                 .when()
                 .post("/Patient");
         targetResponse.then().statusCode(201);
-        createdResourceId = extractResourceId(targetResponse.body().asString());
+        ctx.setLastCreatedResourceId(ctx.extractResourceId(targetResponse.body().asString()));
     }
 
     @Given("I have a valid Patient resource")
     public void iHaveAValidPatientResource() {
-        requestBody = """
+        ctx.setRequestBody("""
                 {
                     "resourceType": "Patient",
                     "active": true,
@@ -111,89 +110,89 @@ public class OperationSteps {
                     "gender": "female",
                     "birthDate": "1985-06-15"
                 }
-                """;
+                """);
     }
 
     @Given("I have an invalid Patient resource")
     public void iHaveAnInvalidPatientResource() {
-        requestBody = """
+        ctx.setRequestBody("""
                 {
                     "resourceType": "Patient",
                     "name": "not-valid-name-format"
                 }
-                """;
+                """);
     }
 
     @Given("I have a JSON Patch document to update the patient name")
     public void iHaveAJsonPatchDocument() {
-        requestBody = """
+        ctx.setRequestBody("""
                 [
                     {"op": "replace", "path": "/name/0/family", "value": "Johnson"}
                 ]
-                """;
+                """);
     }
 
     @Given("I have an invalid JSON Patch document")
     public void iHaveAnInvalidJsonPatchDocument() {
-        requestBody = """
+        ctx.setRequestBody("""
                 [
                     {"op": "replace", "path": "/nonexistent/deep/path/0/1/2/3", "value": "test"}
                 ]
-                """;
+                """);
     }
 
     // ========== When Steps ==========
 
     @When("I validate the Patient resource at type level")
     public void iValidateThePatientResourceAtTypeLevel() {
-        response = given()
+        ctx.setLastResponse(given()
                 .contentType("application/fhir+json")
-                .body(requestBody)
+                .body(ctx.getRequestBody())
                 .when()
-                .post("/Patient/$validate");
+                .post("/Patient/$validate"));
     }
 
     @When("I validate the Patient resource at instance level")
     public void iValidateThePatientResourceAtInstanceLevel() {
-        response = given()
+        ctx.setLastResponse(given()
                 .contentType("application/fhir+json")
-                .body(requestBody)
+                .body(ctx.getRequestBody())
                 .when()
-                .post("/Patient/" + createdPatientId + "/$validate");
+                .post("/Patient/" + ctx.getLastCreatedPatientId() + "/$validate"));
     }
 
     @When("I request $everything for the Patient")
     public void iRequestEverythingForThePatient() {
-        response = given()
+        ctx.setLastResponse(given()
                 .accept("application/fhir+json")
                 .when()
-                .get("/Patient/" + createdPatientId + "/$everything");
+                .get("/Patient/" + ctx.getLastCreatedPatientId() + "/$everything"));
     }
 
     @When("I request $everything for the Patient with _count {int}")
     public void iRequestEverythingWithCount(int count) {
-        response = given()
+        ctx.setLastResponse(given()
                 .accept("application/fhir+json")
                 .queryParam("_count", count)
                 .when()
-                .get("/Patient/" + createdPatientId + "/$everything");
+                .get("/Patient/" + ctx.getLastCreatedPatientId() + "/$everything"));
     }
 
     @When("I request type-level $everything for Patient")
     public void iRequestTypeLevelEverythingForPatient() {
-        response = given()
+        ctx.setLastResponse(given()
                 .accept("application/fhir+json")
                 .when()
-                .get("/Patient/$everything");
+                .get("/Patient/$everything"));
     }
 
     @When("I apply the JSON Patch to the Patient")
     public void iApplyTheJsonPatchToThePatient() {
-        response = given()
+        ctx.setLastResponse(given()
                 .contentType("application/json-patch+json")
-                .body(requestBody)
+                .body(ctx.getRequestBody())
                 .when()
-                .patch("/Patient/" + createdPatientId);
+                .patch("/Patient/" + ctx.getLastCreatedPatientId()));
     }
 
     @When("I merge the source patient into the target patient")
@@ -212,13 +211,13 @@ public class OperationSteps {
                         }
                     ]
                 }
-                """, createdPatientId, createdResourceId);
+                """, ctx.getLastCreatedPatientId(), ctx.getLastCreatedResourceId());
 
-        response = given()
+        ctx.setLastResponse(given()
                 .contentType("application/fhir+json")
                 .body(mergeParams)
                 .when()
-                .post("/Patient/$merge");
+                .post("/Patient/$merge"));
     }
 
     @When("I call $merge without required parameters")
@@ -230,80 +229,80 @@ public class OperationSteps {
                 }
                 """;
 
-        response = given()
+        ctx.setLastResponse(given()
                 .contentType("application/fhir+json")
                 .body(emptyParams)
                 .when()
-                .post("/Patient/$merge");
+                .post("/Patient/$merge"));
     }
 
     // ========== Then Steps ==========
 
     @Then("the response status should be {int}")
     public void theResponseStatusShouldBe(int statusCode) {
-        response.then().statusCode(statusCode);
+        ctx.getLastResponse().then().statusCode(statusCode);
     }
 
     @Then("the response should be an OperationOutcome")
     public void theResponseShouldBeAnOperationOutcome() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("resourceType", equalTo("OperationOutcome"));
     }
 
     @Then("the OperationOutcome should indicate success")
     public void theOperationOutcomeShouldIndicateSuccess() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("resourceType", equalTo("OperationOutcome"))
                 .body("issue[0].severity", is(oneOf("information", "warning")));
     }
 
     @Then("the OperationOutcome should indicate an error")
     public void theOperationOutcomeShouldIndicateAnError() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("resourceType", equalTo("OperationOutcome"))
                 .body("issue[0].severity", equalTo("error"));
     }
 
     @Then("the response should be a Bundle")
     public void theResponseShouldBeABundle() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("resourceType", equalTo("Bundle"));
     }
 
     @Then("the Bundle should be of type searchset")
     public void theBundleShouldBeOfTypeSearchset() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("type", equalTo("searchset"));
     }
 
     @Then("the Bundle should contain the Patient resource")
     public void theBundleShouldContainThePatientResource() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("entry.size()", greaterThanOrEqualTo(1))
                 .body("entry.find { it.resource.resourceType == 'Patient' }", notNullValue());
     }
 
     @Then("the response should be a Patient resource")
     public void theResponseShouldBeAPatientResource() {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("resourceType", equalTo("Patient"));
     }
 
     @Then("the Patient family name should be {string}")
     public void thePatientFamilyNameShouldBe(String familyName) {
-        response.then()
+        ctx.getLastResponse().then()
                 .body("name[0].family", equalTo(familyName));
     }
 
     @Then("the response should have an ETag header")
     public void theResponseShouldHaveAnETagHeader() {
-        response.then()
+        ctx.getLastResponse().then()
                 .header("ETag", notNullValue());
     }
 
     @Then("the response should have a Last-Modified header")
     public void theResponseShouldHaveALastModifiedHeader() {
-        response.then()
+        ctx.getLastResponse().then()
                 .header("Last-Modified", notNullValue());
     }
 
@@ -312,7 +311,7 @@ public class OperationSteps {
         Response readResponse = given()
                 .accept("application/fhir+json")
                 .when()
-                .get("/Patient/" + createdPatientId);
+                .get("/Patient/" + ctx.getLastCreatedPatientId());
 
         readResponse.then()
                 .statusCode(200)
@@ -324,31 +323,12 @@ public class OperationSteps {
         Response readResponse = given()
                 .accept("application/fhir+json")
                 .when()
-                .get("/Patient/" + createdPatientId);
+                .get("/Patient/" + ctx.getLastCreatedPatientId());
 
         readResponse.then()
                 .statusCode(200)
                 .body("link.size()", greaterThanOrEqualTo(1))
                 .body("link[0].type", equalTo("replaced-by"))
-                .body("link[0].other.reference", containsString(createdResourceId));
-    }
-
-    // ========== Helper Methods ==========
-
-    private String extractResourceId(String responseBody) {
-        // Extract the ID from the resource JSON
-        // The response body should contain "id": "some-uuid"
-        int idStart = responseBody.indexOf("\"id\"");
-        if (idStart == -1) return null;
-
-        int valueStart = responseBody.indexOf("\"", idStart + 4) + 1;
-        int valueEnd = responseBody.indexOf("\"", valueStart);
-        String fullId = responseBody.substring(valueStart, valueEnd);
-
-        // Handle "Patient/uuid" format
-        if (fullId.contains("/")) {
-            return fullId.substring(fullId.lastIndexOf("/") + 1);
-        }
-        return fullId;
+                .body("link[0].other.reference", containsString(ctx.getLastCreatedResourceId()));
     }
 }

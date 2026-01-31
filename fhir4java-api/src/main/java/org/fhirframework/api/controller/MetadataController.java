@@ -7,7 +7,12 @@ import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.config.ResourceConfiguration;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.interaction.InteractionType;
+import org.fhirframework.core.operation.OperationConfigRegistry;
+import org.fhirframework.core.operation.OperationHandler;
+import org.fhirframework.core.operation.OperationRegistry;
+import org.fhirframework.core.operation.OperationScope;
 import org.fhirframework.core.resource.ResourceRegistry;
+import org.fhirframework.core.searchparam.SearchParameterRegistry;
 import org.fhirframework.core.version.FhirVersion;
 import jakarta.servlet.http.HttpServletRequest;
 import org.hl7.fhir.r5.model.*;
@@ -28,7 +33,8 @@ import java.util.List;
  * Controller for FHIR server metadata endpoints.
  * <p>
  * Provides the CapabilityStatement (metadata) endpoint that describes
- * the server's capabilities.
+ * the server's capabilities including search parameters, operations,
+ * and resource profiles.
  * </p>
  */
 @RestController
@@ -38,6 +44,9 @@ public class MetadataController {
 
     private final FhirContextFactory contextFactory;
     private final ResourceRegistry resourceRegistry;
+    private final SearchParameterRegistry searchParameterRegistry;
+    private final OperationRegistry operationRegistry;
+    private final OperationConfigRegistry operationConfigRegistry;
 
     @Value("${fhir4java.server.base-url:http://localhost:8080/fhir}")
     private String baseUrl;
@@ -49,9 +58,15 @@ public class MetadataController {
     private String serverVersion;
 
     public MetadataController(FhirContextFactory contextFactory,
-                              ResourceRegistry resourceRegistry) {
+                              ResourceRegistry resourceRegistry,
+                              SearchParameterRegistry searchParameterRegistry,
+                              OperationRegistry operationRegistry,
+                              OperationConfigRegistry operationConfigRegistry) {
         this.contextFactory = contextFactory;
         this.resourceRegistry = resourceRegistry;
+        this.searchParameterRegistry = searchParameterRegistry;
+        this.operationRegistry = operationRegistry;
+        this.operationConfigRegistry = operationConfigRegistry;
     }
 
     /**
@@ -139,7 +154,7 @@ public class MetadataController {
         // Add resource capabilities
         List<ResourceConfiguration> resources = resourceRegistry.getResourcesForVersion(version);
         for (ResourceConfiguration resourceConfig : resources) {
-            CapabilityStatementRestResourceComponent resourceComponent = buildResourceComponent(resourceConfig);
+            CapabilityStatementRestResourceComponent resourceComponent = buildResourceComponent(resourceConfig, version);
             rest.addResource(resourceComponent);
         }
 
@@ -149,12 +164,15 @@ public class MetadataController {
         rest.addInteraction(new SystemInteractionComponent().setCode(SystemRestfulInteraction.SEARCHSYSTEM));
         rest.addInteraction(new SystemInteractionComponent().setCode(SystemRestfulInteraction.HISTORYSYSTEM));
 
+        // System-level operations
+        addSystemOperations(rest, version);
+
         cs.addRest(rest);
 
         return cs;
     }
 
-    private CapabilityStatementRestResourceComponent buildResourceComponent(ResourceConfiguration config) {
+    private CapabilityStatementRestResourceComponent buildResourceComponent(ResourceConfiguration config, FhirVersion version) {
         CapabilityStatementRestResourceComponent resource = new CapabilityStatementRestResourceComponent();
 
         resource.setType(config.getResourceType());
@@ -173,18 +191,68 @@ public class MetadataController {
             }
         }
 
-        // Add common search parameters
-        resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
-                .setName("_id")
-                .setType(Enumerations.SearchParamType.TOKEN)
-                .setDocumentation("Logical id of the resource"));
+        // Add all allowed search parameters from SearchParameterRegistry
+        List<org.hl7.fhir.r5.model.SearchParameter> allowedParams =
+                searchParameterRegistry.getAllowedSearchParameters(version, config.getResourceType(), resourceRegistry);
+        for (org.hl7.fhir.r5.model.SearchParameter sp : allowedParams) {
+            resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
+                    .setName(sp.getCode())
+                    .setType(sp.getType())
+                    .setDocumentation(sp.getDescription()));
+        }
 
-        resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
-                .setName("_lastUpdated")
-                .setType(Enumerations.SearchParamType.DATE)
-                .setDocumentation("When the resource was last updated"));
+        // Add supported operations per resource
+        addResourceOperations(resource, config.getResourceType(), version);
+
+        // Add resource profiles
+        for (String profileUrl : config.getRequiredProfiles()) {
+        	//TODO - Manual fix
+        	resource.getSupportedProfile().add(new CanonicalType(profileUrl));
+        }
 
         return resource;
+    }
+
+    private void addResourceOperations(CapabilityStatementRestResourceComponent resource,
+                                        String resourceType, FhirVersion version) {
+        // Type-level operations
+        List<OperationHandler> typeHandlers = operationRegistry.getHandlers(OperationScope.TYPE, resourceType);
+        for (OperationHandler handler : typeHandlers) {
+            if (handler.supportsVersion(version) &&
+                    operationConfigRegistry.isOperationEnabled(handler.getOperationName(), version)) {
+                resource.addOperation(new CapabilityStatementRestResourceOperationComponent()
+                        .setName("$" + handler.getOperationName())
+                        .setDefinition("OperationDefinition/" + handler.getOperationName()));
+            }
+        }
+
+        // Instance-level operations
+        List<OperationHandler> instanceHandlers = operationRegistry.getHandlers(OperationScope.INSTANCE, resourceType);
+        for (OperationHandler handler : instanceHandlers) {
+            if (handler.supportsVersion(version) &&
+                    operationConfigRegistry.isOperationEnabled(handler.getOperationName(), version)) {
+                // Avoid duplicates (handler may appear in both type and instance)
+                boolean alreadyAdded = resource.getOperation().stream()
+                        .anyMatch(op -> op.getName().equals("$" + handler.getOperationName()));
+                if (!alreadyAdded) {
+                    resource.addOperation(new CapabilityStatementRestResourceOperationComponent()
+                            .setName("$" + handler.getOperationName())
+                            .setDefinition("OperationDefinition/" + handler.getOperationName()));
+                }
+            }
+        }
+    }
+
+    private void addSystemOperations(CapabilityStatementRestComponent rest, FhirVersion version) {
+        List<OperationHandler> systemHandlers = operationRegistry.getHandlers(OperationScope.SYSTEM, null);
+        for (OperationHandler handler : systemHandlers) {
+            if (handler.supportsVersion(version) &&
+                    operationConfigRegistry.isOperationEnabled(handler.getOperationName(), version)) {
+                rest.addOperation(new CapabilityStatementRestResourceOperationComponent()
+                        .setName("$" + handler.getOperationName())
+                        .setDefinition("OperationDefinition/" + handler.getOperationName()));
+            }
+        }
     }
 
     private TypeRestfulInteraction mapToFhirInteraction(InteractionType type) {
