@@ -62,7 +62,7 @@ public class OperationController {
      * System-level operation via GET (versioned path).
      */
     @GetMapping(
-            path = "/fhir/{version:\\w+}/\\${operation}",
+            path = "/fhir/{version:(?i)r[0-9][a-z0-9]*}/\\${operation}",
             produces = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, FhirMediaType.APPLICATION_FHIR_XML_VALUE}
     )
     public ResponseEntity<String> systemOperationGetVersioned(
@@ -91,7 +91,7 @@ public class OperationController {
      * System-level operation via POST (versioned path).
      */
     @PostMapping(
-            path = "/fhir/{version:\\w+}/\\${operation}",
+            path = "/fhir/{version:(?i)r[0-9][a-z0-9]*}/\\${operation}",
             consumes = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE},
             produces = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, FhirMediaType.APPLICATION_FHIR_XML_VALUE}
     )
@@ -160,7 +160,7 @@ public class OperationController {
      * Type-level operation via GET (versioned path).
      */
     @GetMapping(
-            path = "/fhir/{version:\\w+}/{resourceType:[A-Z][a-zA-Z]+}/\\${operation}",
+            path = "/fhir/{version:(?i)r[0-9][a-z0-9]*}/{resourceType:[A-Z][a-zA-Z]+}/\\${operation}",
             produces = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, FhirMediaType.APPLICATION_FHIR_XML_VALUE}
     )
     public ResponseEntity<String> typeOperationGetVersioned(
@@ -191,7 +191,7 @@ public class OperationController {
      * Type-level operation via POST (versioned path).
      */
     @PostMapping(
-            path = "/fhir/{version:\\w+}/{resourceType:[A-Z][a-zA-Z]+}/\\${operation}",
+            path = "/fhir/{version:(?i)r[0-9][a-z0-9]*}/{resourceType:[A-Z][a-zA-Z]+}/\\${operation}",
             consumes = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE},
             produces = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, FhirMediaType.APPLICATION_FHIR_XML_VALUE}
     )
@@ -265,7 +265,7 @@ public class OperationController {
      * Instance-level operation via GET (versioned path).
      */
     @GetMapping(
-            path = "/fhir/{version:\\w+}/{resourceType:[A-Z][a-zA-Z]+}/{id}/\\${operation}",
+            path = "/fhir/{version:(?i)r[0-9][a-z0-9]*}/{resourceType:[A-Z][a-zA-Z]+}/{id}/\\${operation}",
             produces = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, FhirMediaType.APPLICATION_FHIR_XML_VALUE}
     )
     public ResponseEntity<String> instanceOperationGetVersioned(
@@ -298,7 +298,7 @@ public class OperationController {
      * Instance-level operation via POST (versioned path).
      */
     @PostMapping(
-            path = "/fhir/{version:\\w+}/{resourceType:[A-Z][a-zA-Z]+}/{id}/\\${operation}",
+            path = "/fhir/{version:(?i)r[0-9][a-z0-9]*}/{resourceType:[A-Z][a-zA-Z]+}/{id}/\\${operation}",
             consumes = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE},
             produces = {FhirMediaType.APPLICATION_FHIR_JSON_VALUE, FhirMediaType.APPLICATION_FHIR_XML_VALUE}
     )

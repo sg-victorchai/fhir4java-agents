@@ -6,16 +6,23 @@ import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Step definitions for Patient CREATE plugin BDD tests.
  */
 public class PluginSteps {
+	
+	 private static final Logger log = LoggerFactory.getLogger(PluginSteps.class);
+
 
     @LocalServerPort
     private int port;
@@ -78,6 +85,7 @@ public class PluginSteps {
 
     @When("I create the Patient resource")
     public void iCreateThePatientResource() {
+    	log.debug("creating patient: " + patientJson);
         Response response = given()
                 .contentType("application/fhir+json")
                 .body(patientJson)

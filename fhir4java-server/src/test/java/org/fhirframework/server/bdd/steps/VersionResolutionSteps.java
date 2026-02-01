@@ -4,6 +4,7 @@ import io.cucumber.java.Before;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
 import io.restassured.RestAssured;
+import io.restassured.specification.RequestSpecification;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
@@ -12,6 +13,7 @@ import static org.hamcrest.Matchers.*;
 
 /**
  * Step definitions for FHIR version resolution BDD tests.
+ * Uses absolute paths (including /fhir prefix), so basePath must be empty.
  */
 public class VersionResolutionSteps {
 
@@ -26,12 +28,20 @@ public class VersionResolutionSteps {
         RestAssured.port = port;
     }
 
+    /**
+     * Build a request with empty basePath to avoid double-prefix issues
+     * since version resolution paths already include /fhir/.
+     */
+    private RequestSpecification request() {
+        return given().basePath("");
+    }
+
     // ========== When Steps ==========
 
     @When("I read the Patient via versioned path {string}")
     public void iReadThePatientViaVersionedPath(String pathTemplate) {
         String path = pathTemplate.replace("{id}", ctx.getLastCreatedPatientId());
-        ctx.setLastResponse(given()
+        ctx.setLastResponse(request()
                 .accept("application/fhir+json")
                 .when()
                 .get(path));
@@ -40,7 +50,7 @@ public class VersionResolutionSteps {
     @When("I read the Patient via unversioned path {string}")
     public void iReadThePatientViaUnversionedPath(String pathTemplate) {
         String path = pathTemplate.replace("{id}", ctx.getLastCreatedPatientId());
-        ctx.setLastResponse(given()
+        ctx.setLastResponse(request()
                 .accept("application/fhir+json")
                 .when()
                 .get(path));
@@ -48,7 +58,7 @@ public class VersionResolutionSteps {
 
     @When("I request metadata via {string}")
     public void iRequestMetadataVia(String path) {
-        ctx.setLastResponse(given()
+        ctx.setLastResponse(request()
                 .accept("application/fhir+json")
                 .when()
                 .get(path));
@@ -56,7 +66,7 @@ public class VersionResolutionSteps {
 
     @When("I search for Patients via {string}")
     public void iSearchForPatientsVia(String path) {
-        ctx.setLastResponse(given()
+        ctx.setLastResponse(request()
                 .accept("application/fhir+json")
                 .when()
                 .get(path));

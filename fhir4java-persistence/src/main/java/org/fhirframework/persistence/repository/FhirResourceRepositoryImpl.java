@@ -381,15 +381,7 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             String valuePath = jsonPath + ",value";
             Expression<String> valueStringExpr = buildJsonPathExpression(cb, contentExpr, valuePath);
 
-            // Use PostgreSQL's to_number() function to convert text to numeric
-            // The format mask '999999999999999D9999999999' handles numbers up to 15 digits
-            // with up to 10 decimal places (D is the decimal point placeholder)
-            Expression<Double> valueExpr = cb.function(
-                "to_number",
-                Double.class,
-                cb.coalesce(valueStringExpr, cb.literal("0")),
-                cb.literal("999999999999999D9999999999")
-            );
+            Expression<Double> valueExpr = toNumericExpression(cb, valueStringExpr);
            
             
             Predicate valuePredicate = switch (quantity.prefix) {
@@ -803,13 +795,7 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             double numValue = Double.parseDouble(parsed.value);
 
             Expression<String> stringValue = buildJsonPathExpression(cb, root.get("content"), jsonPath);
-            // Use PostgreSQL's to_number() function to convert text to numeric
-            Expression<Double> jsonValue = cb.function(
-                "to_number",
-                Double.class,
-                cb.coalesce(stringValue, cb.literal("0")),
-                cb.literal("999999999999999D9999999999")
-            );
+            Expression<Double> jsonValue = toNumericExpression(cb, stringValue);
 
             return switch (parsed.prefix) {
                 case "eq" -> cb.equal(jsonValue, numValue);
@@ -853,6 +839,12 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
             return shouldBeMissing ? cb.isNull(jsonValue) : cb.isNotNull(jsonValue);
         }
 
+        // Copilot suggested -Special handling for HumanName searches (name, family, given)
+        if (isHumanNameSearch(baseParamName)) {
+            return buildHumanNamePredicateAllElements(cb, contentExpr, baseParamName, paramValue, exactMatch, containsMatch);
+        }
+
+        
         Expression<String> jsonValue = buildJsonPathExpression(cb, contentExpr, jsonPath);
 
         if (containsMatch) {
@@ -882,6 +874,15 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
         }
 
         return cb.function("jsonb_extract_path_text", String.class, args);
+    }
+
+    /**
+     * Convert a string expression to a numeric (Double) expression.
+     */
+    private Expression<Double> toNumericExpression(CriteriaBuilder cb, Expression<String> stringExpr) {
+        return cb.function("to_number", Double.class,
+                cb.coalesce(stringExpr, cb.literal("0")),
+                cb.literal("999999999999999D9999999999"));
     }
 
     private <T extends Comparable<T>> Predicate buildComparisonPredicate(
@@ -1003,11 +1004,35 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
         // If we have an expression, try to convert it to a JSON path
     	log.debug("Mapping parameter '{}' with expression '{}'", paramName, expression);
         if (expression != null && !expression.isEmpty()) {
-            String jsonPath = convertExpressionToJsonPath(expression);
-            if (jsonPath != null) {
-                return jsonPath;
+            //String jsonPath = convertExpressionToJsonPath(expression);
+            //if (jsonPath != null) {
+            //    return jsonPath;
+            //}
+        	
+            log.debug("Mapping parameter '{}' with expression '{}'", paramName, expression);
+
+            // Split by pipe (|) to get individual paths for different resource types
+            String[] pathOptions = expression.split("\\|");
+
+            // Use the first path option (simplification - you may need resource-type-specific logic)
+            String firstPath = pathOptions[0].trim();
+
+            // Remove the resource type prefix (e.g., "Account." -> "")
+            String pathWithoutResourceType = removeResourceTypePrefix(firstPath);
+
+            // Resolve FHIRPath expression to JSON path
+            String resolvedPath = resolveFhirExpression(pathWithoutResourceType);
+
+            // For reference types, append '.reference' to get the reference URL
+            if (isReferenceParameter(paramName, resolvedPath)) {
+                resolvedPath = resolvedPath + ",reference";
             }
+
+            // Path is already in comma-separated format from resolveFhirExpression
+            return resolvedPath;
         }
+
+        log.warn("No FHIRPath expression found for parameter '{}', using hardcoded mapping", paramName);
 
         // Fallback to hardcoded mappings
         return switch (paramName) {
@@ -1064,6 +1089,8 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
     /**
      * Converts a FHIRPath expression to a JSON path.
      * This is a simplified conversion that handles common patterns.
+     * 
+     *  @deprecated Use resolveFhirExpression instead for better extensibility
      */
     private String convertExpressionToJsonPath(String expression) {
         if (expression == null || expression.isEmpty()) {
@@ -1197,4 +1224,414 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
      * Parsed value with prefix and actual value separated.
      */
     private record ParsedValue(String prefix, String value) {}
+    
+    //copilot suggested
+    /**
+     * Checks if a parameter is a HumanName search.
+     */
+    private boolean isHumanNameSearch(String paramName) {
+        // Parameters that search across HumanName fields
+        return "name".equals(paramName) || 
+               "family".equals(paramName) || 
+               "given".equals(paramName);
+    }
+
+    /**
+     * Builds a predicate that searches across all HumanName fields.
+     * Matches any of: text, family, given (array), prefix (array), suffix (array)
+     */
+    private Predicate buildHumanNamePredicate(
+            CriteriaBuilder cb,
+            Expression<String> contentExpr,
+            String paramName,
+            String paramValue,
+            boolean exactMatch,
+            boolean containsMatch) {
+
+        List<Predicate> orPredicates = new ArrayList<>();
+        String lowerValue = paramValue.toLowerCase();
+        String pattern = containsMatch ? "%" + lowerValue + "%" : lowerValue + "%";
+
+        // For "name" parameter, search across all fields
+        if ("name".equals(paramName)) {
+            // Search in text field
+            Expression<String> textExpr = buildJsonPathExpression(cb, contentExpr, "name,0,text");
+            orPredicates.add(exactMatch 
+                ? cb.equal(textExpr, paramValue)
+                : cb.like(cb.lower(textExpr), pattern));
+
+            // Search in family field
+            Expression<String> familyExpr = buildJsonPathExpression(cb, contentExpr, "name,0,family");
+            orPredicates.add(exactMatch 
+                ? cb.equal(familyExpr, paramValue)
+                : cb.like(cb.lower(familyExpr), pattern));
+
+            // Search in given array (first element)
+            Expression<String> givenExpr = buildJsonPathExpression(cb, contentExpr, "name,0,given,0");
+            orPredicates.add(exactMatch 
+                ? cb.equal(givenExpr, paramValue)
+                : cb.like(cb.lower(givenExpr), pattern));
+
+            // Search in prefix array (first element)
+            Expression<String> prefixExpr = buildJsonPathExpression(cb, contentExpr, "name,0,prefix,0");
+            orPredicates.add(exactMatch 
+                ? cb.equal(prefixExpr, paramValue)
+                : cb.like(cb.lower(prefixExpr), pattern));
+
+            // Search in suffix array (first element)
+            Expression<String> suffixExpr = buildJsonPathExpression(cb, contentExpr, "name,0,suffix,0");
+            orPredicates.add(exactMatch 
+                ? cb.equal(suffixExpr, paramValue)
+                : cb.like(cb.lower(suffixExpr), pattern));
+        } else if ("family".equals(paramName)) {
+            // Search only in family field
+            Expression<String> familyExpr = buildJsonPathExpression(cb, contentExpr, "name,0,family");
+            orPredicates.add(exactMatch 
+                ? cb.equal(familyExpr, paramValue)
+                : cb.like(cb.lower(familyExpr), pattern));
+        } else if ("given".equals(paramName)) {
+            // Search only in given field (first element)
+            Expression<String> givenExpr = buildJsonPathExpression(cb, contentExpr, "name,0,given,0");
+            orPredicates.add(exactMatch 
+                ? cb.equal(givenExpr, paramValue)
+                : cb.like(cb.lower(givenExpr), pattern));
+        }
+
+        return orPredicates.isEmpty() ? null : cb.or(orPredicates.toArray(new Predicate[0]));
+    }
+
+    /**
+     * Builds a predicate that searches across HumanName arrays (simplified version).
+     * Searches first 3 elements of array fields.
+     */
+    private Predicate buildHumanNamePredicateAllElements(
+            CriteriaBuilder cb,
+            Expression<String> contentExpr,
+            String paramName,
+            String paramValue,
+            boolean exactMatch,
+            boolean containsMatch) {
+
+        List<Predicate> orPredicates = new ArrayList<>();
+        String lowerValue = paramValue.toLowerCase();
+        String pattern = containsMatch ? "%" + lowerValue + "%" : lowerValue + "%";
+
+        if ("name".equals(paramName)) {
+            // Search in scalar fields
+            Expression<String> textExpr = buildJsonPathExpression(cb, contentExpr, "name,0,text");
+            orPredicates.add(exactMatch 
+                ? cb.equal(textExpr, paramValue)
+                : cb.like(cb.lower(textExpr), pattern));
+
+            Expression<String> familyExpr = buildJsonPathExpression(cb, contentExpr, "name,0,family");
+            orPredicates.add(exactMatch 
+                ? cb.equal(familyExpr, paramValue)
+                : cb.like(cb.lower(familyExpr), pattern));
+
+            // Search first 2 elements of array fields (covers most use cases)
+            for (String arrayField : List.of("given", "prefix", "suffix")) {
+                for (int i = 0; i < 2; i++) {
+                    String arrayPath = String.format("name,0,%s,%d", arrayField, i);
+                    Expression<String> arrayExpr = buildJsonPathExpression(cb, contentExpr, arrayPath);
+                    
+                    Predicate arrayPredicate = exactMatch 
+                        ? cb.equal(arrayExpr, paramValue)
+                        : cb.like(cb.lower(arrayExpr), pattern);
+                        
+                    orPredicates.add(arrayPredicate);
+                }
+            }
+        } else if ("family".equals(paramName)) {
+            Expression<String> familyExpr = buildJsonPathExpression(cb, contentExpr, "name,0,family");
+            orPredicates.add(exactMatch 
+                ? cb.equal(familyExpr, paramValue)
+                : cb.like(cb.lower(familyExpr), pattern));
+        } else if ("given".equals(paramName)) {
+            // Search first 2 given names
+            for (int i = 0; i < 2; i++) {
+                Expression<String> givenExpr = buildJsonPathExpression(cb, contentExpr, "name,0,given," + i);
+                orPredicates.add(exactMatch 
+                    ? cb.equal(givenExpr, paramValue)
+                    : cb.like(cb.lower(givenExpr), pattern));
+            }
+        }
+
+        return orPredicates.isEmpty() ? null : cb.or(orPredicates.toArray(new Predicate[0]));
+    }
+
+    //Copilot suggested changes started here for resolving fhirexpression specified 
+    // in search parameter definition eg the following one
+    // expression":"Account.subject.where(resolve() is Patient) | AdverseEvent.subject.where(resolve() is Patient) | AllergyIntolerance.patient | Appointment.participant.actor.where(resolve() is Patient) | Appointment.subject.where(resolve() is Patient) | AppointmentResponse.actor.where(resolve() is Patient) | AuditEvent.patient | Basic.subject.where(resolve() is Patient) | BodyStructure.patient | CarePlan.subject.where(resolve() is Patient) | CareTeam.subject.where(resolve() is Patient) | ChargeItem.subject.where(resolve() is Patient) | Claim.patient | ClaimResponse.patient | ClinicalImpression.subject.where(resolve() is Patient) | Communication.subject.where(resolve() is Patient) | CommunicationRequest.subject.where(resolve() is Patient) | Composition.subject.where(resolve() is Patient) | Condition.subject.where(resolve() is Patient) | Consent.subject.where(resolve() is Patient) | Contract.subject.where(resolve() is Patient) | Coverage.beneficiary | CoverageEligibilityRequest.patient | CoverageEligibilityResponse.patient | DetectedIssue.subject.where(resolve() is Patient) | DeviceRequest.subject.where(resolve() is Patient) | DeviceUsage.patient | DiagnosticReport.subject.where(resolve() is Patient) | DocumentReference.subject.where(resolve() is Patient) | Encounter.subject.where(resolve() is Patient) | EnrollmentRequest.candidate | EpisodeOfCare.patient | ExplanationOfBenefit.patient | FamilyMemberHistory.patient | Flag.subject.where(resolve() is Patient) | Goal.subject.where(resolve() is Patient) | GuidanceResponse.subject.where(resolve() is Patient) | ImagingSelection.subject.where(resolve() is Patient) | ImagingStudy.subject.where(resolve() is Patient) | Immunization.patient | ImmunizationEvaluation.patient | ImmunizationRecommendation.patient | Invoice.subject.where(resolve() is Patient) | List.subject.where(resolve() is Patient) | MeasureReport.subject.where(resolve() is Patient) | MedicationAdministration.subject.where(resolve() is Patient) | MedicationDispense.subject.where(resolve() is Patient) | MedicationRequest.subject.where(resolve() is Patient) | MedicationStatement.subject.where(resolve() is Patient) | MolecularSequence.subject.where(resolve() is Patient) | NutritionIntake.subject.where(resolve() is Patient) | NutritionOrder.subject.where(resolve() is Patient) | Observation.subject.where(resolve() is Patient) | Person.link.target.where(resolve() is Patient) | Procedure.subject.where(resolve() is Patient) | Provenance.patient | QuestionnaireResponse.subject.where(resolve() is Patient) | RelatedPerson.patient | RequestOrchestration.subject.where(resolve() is Patient) | ResearchSubject.subject.where(resolve() is Patient) | RiskAssessment.subject.where(resolve() is Patient) | ServiceRequest.subject.where(resolve() is Patient) | Specimen.subject.where(resolve() is Patient) | SupplyDelivery.patient | SupplyRequest.deliverFor | Task.for.where(resolve() is Patient) | VisionPrescription.patient","processingMode":"normal","target":["Patient"]}
+    /**
+     * Removes resource type prefix from FHIRPath expression.
+     * E.g., "Account.subject.where(...)" -> "subject.where(...)"
+     */
+    private String removeResourceTypePrefix(String fhirPath) {
+        if (fhirPath == null || fhirPath.isEmpty()) {
+            return fhirPath;
+        }
+
+        // Match pattern: ResourceType.fieldPath
+        String[] parts = fhirPath.split("\\.", 2);
+
+        if (parts.length == 2) {
+            String firstPart = parts[0].trim();
+            // Check if first part is a resource type (starts with uppercase)
+            if (!firstPart.isEmpty() && Character.isUpperCase(firstPart.charAt(0))) {
+                return parts[1];
+            }
+        }
+
+        return fhirPath;
+    }
+
+    
+    /*
+    * Resolves a FHIRPath expression to a JSON path format.
+    * This method handles various FHIRPath patterns and converts them to database-queryable paths.
+    * 
+    * @TODO: This is a simplified implementation. A full FHIRPath parser would be needed for complete support.
+    * 
+    * Supported patterns:
+    * - .where(resolve() is Patient) - removes type filters
+    * - .where(condition) - removes general filters
+    * - .resolve() - removes resolve calls
+    * - is ResourceType - removes type checking
+    * - .ofType(Type) - converts polymorphic elements (value.ofType(Quantity) -> valueQuantity)
+    * - as Type - converts type casting (value as Quantity -> valueQuantity)
+    * - .exists(), .first(), etc. - removes function calls
+    * 
+    * @param fhirPath The FHIRPath expression to resolve
+    * @return JSON path in comma-separated format, or null if invalid
+    */
+   private String resolveFhirExpression(String fhirPath) {
+       if (fhirPath == null || fhirPath.isEmpty()) {
+           return null;
+       }
+
+       String path = fhirPath.trim();
+
+       // Remove outer parentheses if present: "(expression)" -> "expression"
+       path = stripOuterParentheses(path);
+
+       // Handle FHIRPath "as" operator for polymorphic elements
+       // Convert "(value as Quantity)" or "value as Quantity" to "valueQuantity"
+       path = resolveAsOperator(path);
+
+       // Handle .ofType() for polymorphic elements
+       // Convert "value.ofType(Quantity)" to "valueQuantity"
+       path = resolveOfType(path);
+
+      
+       // Remove FHIRPath filters like .where(...)
+       path = removeWhereFilters(path);
+
+       // Remove .resolve() calls
+       path = path.replaceAll("\\.resolve\\(\\)", "");
+       
+ 
+       // Remove type checking: "is ResourceType"
+       path = path.replaceAll("\\s+is\\s+\\w+", "");
+
+       // Remove function calls like .exists(), .first(), etc.
+       path = removeFunctionCalls(path);
+
+       // Remove any trailing dots
+       path = path.replaceAll("\\.+$", "");
+
+       // Trim whitespace
+       path = path.trim();
+
+       // Convert dot notation to comma-separated for JSONB path
+       path = path.replace(".", ",");
+
+       // Expand common patterns that need array access
+       path = expandCommonPatterns(path);
+
+       return path.isEmpty() ? null : path;
+   }
+   
+   /**
+    * Strips outer parentheses from an expression.
+    */
+   private String stripOuterParentheses(String expression) {
+       String trimmed = expression.trim();
+       if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+           return trimmed.substring(1, trimmed.length() - 1).trim();
+       }
+       return trimmed;
+   }
+
+   /**
+    * Resolves FHIRPath "as" operator for polymorphic elements.
+    * E.g., "value as Quantity" -> "valueQuantity"
+    */
+   private String resolveAsOperator(String path) {
+       Pattern asPattern = Pattern.compile("([\\w.]+)\\s+as\\s+(\\w+)");
+       Matcher asMatcher = asPattern.matcher(path);
+       
+       if (asMatcher.find()) {
+           String fullPath = asMatcher.group(1);  // e.g., "value"
+           String typeName = asMatcher.group(2);  // e.g., "Quantity"
+
+           // Get just the element name (last part after dot)
+           String elementName = fullPath.contains(".")
+                   ? fullPath.substring(fullPath.lastIndexOf('.') + 1)
+                   : fullPath;
+
+           // Capitalize first letter of type name for camelCase concatenation
+           String capitalizedType = capitalizeFirstLetter(typeName);
+           String polymorphicName = elementName + capitalizedType;
+           
+           log.debug("Resolved 'as' operator: {} as {} -> {}", fullPath, typeName, polymorphicName);
+           return asMatcher.replaceFirst(polymorphicName);
+       }
+       
+       return path;
+   }
+
+   /**
+    * Resolves .ofType() for polymorphic elements.
+    * E.g., "value.ofType(Quantity)" -> "valueQuantity"
+    */
+   private String resolveOfType(String path) {
+       Pattern ofTypePattern = Pattern.compile("(\\w+)\\.ofType\\(([^)]+)\\)");
+       Matcher ofTypeMatcher = ofTypePattern.matcher(path);
+       
+       if (ofTypeMatcher.find()) {
+           String elementName = ofTypeMatcher.group(1);
+           String typeName = ofTypeMatcher.group(2).trim();
+           
+           // Capitalize first letter of type name for camelCase concatenation
+           String capitalizedType = capitalizeFirstLetter(typeName);
+           String polymorphicName = elementName + capitalizedType;
+           
+           log.debug("Resolved ofType: {}.ofType({}) -> {}", elementName, typeName, polymorphicName);
+           return ofTypeMatcher.replaceFirst(polymorphicName);
+       }
+       
+       return path;
+   }
+
+   /**
+    * Removes .where(...) filters from FHIRPath expression.
+    * Handles nested parentheses.
+    */
+   private String removeWhereFilters(String path) {
+       // Simple regex for non-nested where clauses
+	   //TODO: improve to handle nested parentheses - .where(a.where(b.where(c)))
+	   //but I think the above nested where is not likely in search parameter definitions
+       String result = path.replaceAll("\\.where\\([^()]*(?:\\([^()]*\\)[^()]*)*\\)", "");
+        
+            
+       // Handle nested parentheses in where clauses (more complex)
+       while (result.contains(".where(")) {
+           int whereIndex = result.indexOf(".where(");
+           if (whereIndex == -1) break;
+           
+           int parenCount = 0;
+           int endIndex = whereIndex + 7; // Start after ".where("
+           
+           for (; endIndex < result.length(); endIndex++) {
+               char c = result.charAt(endIndex);
+               if (c == '(') parenCount++;
+               else if (c == ')') {
+                   if (parenCount == 0) {
+                       // Found matching closing parenthesis
+                       result = result.substring(0, whereIndex) + result.substring(endIndex + 1);
+                       break;
+                   }
+                   parenCount--;
+               }
+           }
+           
+           // Safety check to avoid infinite loop
+           if (endIndex >= result.length()) break;
+       }
+       
+       
+       return result;
+   }
+
+   /**
+    * Removes function calls from FHIRPath expression.
+    * E.g., .exists(), .first(), .empty(), etc.
+    */
+   private String removeFunctionCalls(String path) {
+       // Remove common FHIRPath functions
+       return path.replaceAll("\\.(?:exists|first|last|tail|skip|take|single|empty|count|distinct|allTrue|anyTrue|allFalse|anyFalse)\\([^)]*\\)", "");
+   }
+
+   /**
+    * Expands common patterns that need array access or CodeableConcept navigation.
+    */
+   private String expandCommonPatterns(String path) {
+       // Handle code paths - expand to full CodeableConcept path
+       if (path.equals("code")) {
+           return "code,coding,0,code";
+       }
+       
+       if (path.equals("category")) {
+           return "category,0,coding,0,code";
+       }
+       
+       if (path.equals("type")) {
+           return "type,coding,0,code";
+       }
+       
+       // Handle nested code paths like "code,concept" -> "code,concept,coding,0,code"
+       if (path.endsWith(",concept") && !path.contains(",coding,")) {
+           return path.replace(",concept", ",concept,coding,0,code");
+       }
+       
+       // Handle name paths
+       if (path.equals("name")) {
+           return "name,0,text";
+       }
+       
+       // Handle identifier paths
+       if (path.equals("identifier")) {
+           return "identifier,0,value";
+       }
+       
+       // Handle address paths
+       if (path.equals("address")) {
+           return "address,0";
+       }
+       
+       // Handle telecom paths
+       if (path.equals("telecom")) {
+           return "telecom,0,value";
+       }
+       
+       return path;
+   }
+
+   /**
+    * Capitalizes the first letter of a string.
+    */
+   private String capitalizeFirstLetter(String str) {
+       if (str == null || str.isEmpty()) {
+           return str;
+       }
+       return str.substring(0, 1).toUpperCase() + str.substring(1);
+   }
+
+   /**
+    * Checks if a parameter represents a reference type that needs ',reference' appended.
+    */
+   private boolean isReferenceParameter(String paramName, String path) {
+       // Common reference parameters
+       Set<String> referenceParams = Set.of(
+           "patient", "subject", "encounter", "performer",
+           "requester", "participant", "actor", "beneficiary",
+           "candidate", "link", "target", "location", "organization",
+           "practitioner", "recorder", "asserter", "managingOrganization"
+       );
+
+       return referenceParams.contains(paramName);
+   }
+
+
+
 }

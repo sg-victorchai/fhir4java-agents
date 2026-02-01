@@ -87,12 +87,13 @@ public interface FhirResourceRepository extends JpaRepository<FhirResourceEntity
      * Soft delete a resource (mark as deleted).
      */
     @Modifying
-    @Query("UPDATE FhirResourceEntity r SET r.isDeleted = true, r.lastUpdated = CURRENT_TIMESTAMP " +
+    @Query("UPDATE FhirResourceEntity r SET r.isDeleted = true, r.lastUpdated = :now " +
            "WHERE r.tenantId = :tenantId AND r.resourceType = :resourceType AND r.resourceId = :resourceId AND r.isCurrent = true")
     void softDelete(
             @Param("tenantId") String tenantId,
             @Param("resourceType") String resourceType,
-            @Param("resourceId") String resourceId);
+            @Param("resourceId") String resourceId,
+            @Param("now") Instant now);
 
     /**
      * Find resources by type with history (for type-level history).

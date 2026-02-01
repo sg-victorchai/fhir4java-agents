@@ -234,13 +234,9 @@ public class FhirResourceController {
             return buildAbortResponse(beforeResult, ctx);
         }
 
-        // Use potentially modified resource
-        String effectiveBody = body;
-        if (beforeResult.isModified() || pluginContext.getInputResource()
-                .map(r -> r != parsedResource).orElse(false)) {
-            IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
-            effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
-        }
+        // Re-encode the resource after plugins (plugins may modify in-place)
+        IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
+        String effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
 
         // Execute core operation
         ResourceResult result = resourceService.create(resourceType, effectiveBody, version);

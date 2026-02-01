@@ -257,7 +257,7 @@ public class FhirResourceService {
         Integer maxVersion = repository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
 
         // Soft delete
-        repository.softDelete(DEFAULT_TENANT, resourceType, resourceId);
+        repository.softDelete(DEFAULT_TENANT, resourceType, resourceId, Instant.now());
 
         log.info("Deleted {}/{}", resourceType, resourceId);
 
