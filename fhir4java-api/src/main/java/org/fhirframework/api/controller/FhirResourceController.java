@@ -509,7 +509,10 @@ public class FhirResourceController {
             }
         }
 
-        Bundle bundle = resourceService.search(resourceType, params, version, count);
+        // Build the full request URL for pagination links
+        String requestUrl = buildRequestUrl(request);
+
+        Bundle bundle = resourceService.search(resourceType, params, version, count, requestUrl);
 
         FhirContext context = contextFactory.getContext(version);
         IParser parser = context.newJsonParser().setPrettyPrint(true);
@@ -518,6 +521,18 @@ public class FhirResourceController {
                 .ok()
                 .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
                 .body(parser.encodeResourceToString(bundle));
+    }
+
+    /**
+     * Build the full request URL including query string.
+     */
+    private String buildRequestUrl(HttpServletRequest request) {
+        String requestUrl = request.getRequestURL().toString();
+        String queryString = request.getQueryString();
+        if (queryString != null && !queryString.isEmpty()) {
+            requestUrl = requestUrl + "?" + queryString;
+        }
+        return requestUrl;
     }
 
     // ========== HISTORY Operations ==========

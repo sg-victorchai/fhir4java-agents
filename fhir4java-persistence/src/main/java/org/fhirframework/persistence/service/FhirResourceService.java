@@ -23,13 +23,18 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Service for FHIR resource CRUD operations.
@@ -275,6 +280,23 @@ public class FhirResourceService {
      */
     @Transactional(readOnly = true)
     public Bundle search(String resourceType, Map<String, String> params, FhirVersion version, int count) {
+        // Use a simple default URL when not provided
+        String defaultUrl = "/" + resourceType;
+        return search(resourceType, params, version, count, defaultUrl);
+    }
+
+    /**
+     * Search for FHIR resources.
+     *
+     * @param resourceType the FHIR resource type
+     * @param params search parameters
+     * @param version the FHIR version
+     * @param count maximum number of results (default 20)
+     * @param requestUrl the full request URL for building pagination links
+     * @return search result bundle
+     */
+    @Transactional(readOnly = true)
+    public Bundle search(String resourceType, Map<String, String> params, FhirVersion version, int count, String requestUrl) {
         FhirContext context = contextFactory.getContext(version);
         IParser parser = context.newJsonParser();
 
@@ -309,6 +331,9 @@ public class FhirResourceService {
             entry.setFullUrl(buildFullUrl(resourceType, entity.getResourceId()));
             entry.setResource((org.hl7.fhir.r5.model.Resource) resource);
         }
+
+        // Add pagination links
+        addPaginationLinks(bundle, requestUrl, params, count, offset, page);
 
         log.debug("Search {} with params {} returned {} results (total: {})",
                 resourceType, params.keySet(), page.getNumberOfElements(), page.getTotalElements());
@@ -446,6 +471,98 @@ public class FhirResourceService {
             // Log but continue - invalid parameters will be ignored by the repository
             log.warn("Search parameter validation issues: {}", result);
         }
+    }
+
+    /**
+     * Add FHIR pagination links to the search Bundle.
+     * According to FHIR spec: https://hl7.org/fhir/http.html#paging
+     *
+     * @param bundle the Bundle to add links to
+     * @param requestUrl the original request URL
+     * @param params the search parameters
+     * @param count the page size
+     * @param offset the current offset
+     * @param page the Page result
+     */
+    private void addPaginationLinks(Bundle bundle, String requestUrl, Map<String, String> params, 
+                                     int count, int offset, Page<FhirResourceEntity> page) {
+        // Remove pagination parameters from params for building base URL
+        Map<String, String> baseParams = new HashMap<>(params);
+        baseParams.remove("_count");
+        baseParams.remove("_offset");
+
+        // Extract base URL (everything before query string)
+        String baseUrl = requestUrl;
+        int queryIndex = requestUrl.indexOf('?');
+        if (queryIndex > 0) {
+            baseUrl = requestUrl.substring(0, queryIndex);
+        }
+
+        // 1. Self link - current page
+        String selfUrl = buildSearchUrl(baseUrl, baseParams, count, offset);
+        Bundle.BundleLinkComponent selfLink = bundle.addLink();
+        selfLink.setRelation(Bundle.LinkRelationTypes.SELF);
+        selfLink.setUrl(selfUrl);
+
+        // 2. First link - first page
+        String firstUrl = buildSearchUrl(baseUrl, baseParams, count, 0);
+        Bundle.BundleLinkComponent firstLink = bundle.addLink();
+        firstLink.setRelation(Bundle.LinkRelationTypes.FIRST);
+        firstLink.setUrl(firstUrl);
+
+        // 3. Previous link - only if not on first page
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - count);
+            String prevUrl = buildSearchUrl(baseUrl, baseParams, count, prevOffset);
+            Bundle.BundleLinkComponent prevLink = bundle.addLink();
+            prevLink.setRelation(Bundle.LinkRelationTypes.PREVIOUS);
+            prevLink.setUrl(prevUrl);
+        }
+
+        // 4. Next link - only if there are more results
+        if (page.hasNext()) {
+            int nextOffset = offset + count;
+            String nextUrl = buildSearchUrl(baseUrl, baseParams, count, nextOffset);
+            Bundle.BundleLinkComponent nextLink = bundle.addLink();
+            nextLink.setRelation(Bundle.LinkRelationTypes.NEXT);
+            nextLink.setUrl(nextUrl);
+        }
+
+        // 5. Last link - calculate last page offset
+        long totalElements = page.getTotalElements();
+        if (totalElements > 0) {
+            int lastOffset = (int) ((totalElements - 1) / count) * count;
+            String lastUrl = buildSearchUrl(baseUrl, baseParams, count, lastOffset);
+            Bundle.BundleLinkComponent lastLink = bundle.addLink();
+            lastLink.setRelation(Bundle.LinkRelationTypes.LAST);
+            lastLink.setUrl(lastUrl);
+        }
+    }
+
+    /**
+     * Build a search URL with pagination parameters.
+     *
+     * @param baseUrl the base URL (without query string)
+     * @param params the search parameters (without _count and _offset)
+     * @param count the page size
+     * @param offset the offset
+     * @return the complete URL with query parameters
+     */
+    private String buildSearchUrl(String baseUrl, Map<String, String> params, int count, int offset) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl);
+        
+        // Add all search parameters
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            builder.queryParam(entry.getKey(), entry.getValue());
+        }
+        
+        // Add pagination parameters
+        builder.queryParam("_count", count);
+        if (offset > 0) {
+            builder.queryParam("_offset", offset);
+        }
+        
+        return builder.build().toUriString();
     }
 
     /**

@@ -116,7 +116,7 @@ public class EverythingOperationHandler implements OperationHandler {
             patientParams.put("_lastUpdated", "ge" + since);
         }
 
-        Bundle patientBundle = resourceService.search("Patient", patientParams, version, count);
+        Bundle patientBundle = resourceService.search("Patient", patientParams, version, count, "urn:uuid:Patient");
 
         // Add patients and their compartment resources
         for (Bundle.BundleEntryComponent patientEntry : patientBundle.getEntry()) {
@@ -146,7 +146,7 @@ public class EverythingOperationHandler implements OperationHandler {
                 searchParams.put("_lastUpdated", "ge" + since);
             }
 
-            Bundle compartmentBundle = resourceService.search(compartmentType, searchParams, version, count);
+            Bundle compartmentBundle = resourceService.search(compartmentType, searchParams, version, count, "urn:uuid:" + compartmentType);
 
             for (Bundle.BundleEntryComponent entry : compartmentBundle.getEntry()) {
                 resultBundle.addEntry(entry);

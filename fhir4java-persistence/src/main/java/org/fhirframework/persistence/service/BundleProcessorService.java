@@ -128,8 +128,9 @@ public class BundleProcessorService {
             response.setLastModified(Date.from(result.lastUpdated()));
             responseEntry.setResponse(response);
         } else {
-            // Search
-            Bundle searchResult = resourceService.search(parsed.resourceType, java.util.Map.of(), version, 20);
+            // Search - use placeholder URL since we're in batch/transaction context
+            String placeholderUrl = "urn:uuid:" + parsed.resourceType;
+            Bundle searchResult = resourceService.search(parsed.resourceType, java.util.Map.of(), version, 20, placeholderUrl);
             BundleEntryResponseComponent response = new BundleEntryResponseComponent();
             response.setStatus("200 OK");
             responseEntry.setResource(searchResult);
