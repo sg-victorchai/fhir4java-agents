@@ -1,6 +1,7 @@
 package org.fhirframework.api.exception;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.parser.DataFormatException;
 import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.context.FhirContextFactory;
@@ -27,7 +28,11 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  * Global exception handler for FHIR API endpoints.
  * <p>
  * Converts exceptions to FHIR OperationOutcome responses with appropriate
- * HTTP status codes.
+ * HTTP status codes following FHIR specification guidelines:
+ * - 400 Bad Request: Malformed JSON/XML or unparseable content
+ * - 422 Unprocessable Entity: Valid structure but fails validation/business rules
+ * - 404 Not Found: Resource or endpoint doesn't exist
+ * - 500 Internal Server Error: Unexpected server errors
  * </p>
  */
 @RestControllerAdvice
@@ -89,6 +94,28 @@ public class FhirExceptionHandler {
 
         HttpStatus status = mapToHttpStatus(ex.getIssueCode());
         return buildResponse(outcome, status, request);
+    }
+
+    /**
+     * Handle HAPI FHIR parsing errors (e.g., invalid JSON structure, invalid enum values).
+     * Returns 422 Unprocessable Entity as the content is well-formed but semantically invalid.
+     */
+    @ExceptionHandler(DataFormatException.class)
+    public ResponseEntity<String> handleDataFormatException(DataFormatException ex,
+                                                            HttpServletRequest request) {
+        log.debug("Invalid resource format: {}", ex.getMessage());
+
+        // Extract more meaningful error message from DataFormatException
+        String errorMessage = ex.getMessage();
+        if (errorMessage == null || errorMessage.isBlank()) {
+            errorMessage = "Invalid resource format or content";
+        }
+
+        OperationOutcome outcome = new OperationOutcomeBuilder()
+                .error(IssueType.STRUCTURE, "Resource validation failed", errorMessage)
+                .build();
+
+        return buildResponse(outcome, HttpStatus.UNPROCESSABLE_ENTITY, request);
     }
 
     @ExceptionHandler(NoHandlerFoundException.class)
@@ -165,6 +192,10 @@ public class FhirExceptionHandler {
             case "not-found" -> IssueType.NOTFOUND;
             case "not-supported" -> IssueType.NOTSUPPORTED;
             case "invalid" -> IssueType.INVALID;
+            case "structure" -> IssueType.STRUCTURE;
+            case "required" -> IssueType.REQUIRED;
+            case "value" -> IssueType.VALUE;
+            case "invariant" -> IssueType.INVARIANT;
             case "forbidden" -> IssueType.FORBIDDEN;
             case "security" -> IssueType.SECURITY;
             case "processing" -> IssueType.PROCESSING;
@@ -178,18 +209,38 @@ public class FhirExceptionHandler {
         };
     }
 
+    /**
+     * Map FHIR issue codes to appropriate HTTP status codes following FHIR specification.
+     * 
+     * @param issueCode The FHIR issue code from FhirException
+     * @return Appropriate HTTP status code
+     */
     private HttpStatus mapToHttpStatus(String issueCode) {
         if (issueCode == null) {
             return HttpStatus.INTERNAL_SERVER_ERROR;
         }
 
         return switch (issueCode.toLowerCase()) {
+            // 404 Not Found
             case "not-found" -> HttpStatus.NOT_FOUND;
+            
+            // 501 Not Implemented
             case "not-supported" -> HttpStatus.NOT_IMPLEMENTED;
-            case "invalid" -> HttpStatus.BAD_REQUEST;
+            
+            // 422 Unprocessable Entity - Validation and business rule failures
+            case "invalid", "structure", "required", "value", "invariant", "business-rule" -> 
+                HttpStatus.UNPROCESSABLE_ENTITY;
+            
+            // 403 Forbidden
             case "forbidden", "security" -> HttpStatus.FORBIDDEN;
+            
+            // 409 Conflict
             case "conflict", "duplicate" -> HttpStatus.CONFLICT;
+            
+            // 429 Too Many Requests
             case "too-costly" -> HttpStatus.TOO_MANY_REQUESTS;
+            
+            // 500 Internal Server Error (default)
             default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     }

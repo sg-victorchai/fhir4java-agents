@@ -1,0 +1,193 @@
+{
+  "dashboard": {
+    "title": "FHIR Profile Validation Metrics",
+    "tags": ["fhir", "validation", "metrics"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Validation Request Rate by FHIR Version",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(fhir_validation_attempts_total[5m])",
+            "legendFormat": "{{version}} - {{result}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Validation Success/Failure Ratio",
+        "type": "piechart",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum by (result) (fhir_validation_attempts_total)",
+            "legendFormat": "{{result}}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Validation Duration Percentiles by Version",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(fhir_validation_duration_bucket[5m]))",
+            "legendFormat": "p50 - {{version}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(fhir_validation_duration_bucket[5m]))",
+            "legendFormat": "p95 - {{version}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(fhir_validation_duration_bucket[5m]))",
+            "legendFormat": "p99 - {{version}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "ms", "label": "Duration"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Top 10 Slowest Resource Types to Validate",
+        "type": "table",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "topk(10, avg by (resourceType, version) (fhir_validation_duration_sum / fhir_validation_duration_count))",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"Time": true},
+              "indexByName": {
+                "resourceType": 0,
+                "version": 1,
+                "Value": 2
+              },
+              "renameByName": {
+                "resourceType": "Resource Type",
+                "version": "FHIR Version",
+                "Value": "Avg Duration (ms)"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Validation Duration by Resource Type",
+        "type": "heatmap",
+        "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(fhir_validation_duration_bucket[5m])",
+            "legendFormat": "{{resourceType}}"
+          }
+        ],
+        "dataFormat": "tsbuckets"
+      },
+      {
+        "id": 6,
+        "title": "ProfileValidator Health Status",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 24, "w": 8, "h": 4},
+        "targets": [
+          {
+            "expr": "up{job=\"fhir4java-server\"}",
+            "legendFormat": "Health Status"
+          }
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "textMode": "value_and_name"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"type": "value", "value": "0", "text": "DOWN", "color": "red"},
+              {"type": "value", "value": "1", "text": "UP", "color": "green"}
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Validation Requests Over Time",
+        "type": "graph",
+        "gridPos": {"x": 8, "y": 24, "w": 16, "h": 8},
+        "targets": [
+          {
+            "expr": "sum by (version) (rate(fhir_validation_attempts_total[5m]))",
+            "legendFormat": "{{version}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Validation Failure Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum by (version) (rate(fhir_validation_attempts_total{result=\"failure\"}[5m])) / sum by (version) (rate(fhir_validation_attempts_total[5m]))",
+            "legendFormat": "{{version}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "percentunit", "label": "Failure Rate"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Average Validation Duration by Resource Type",
+        "type": "bargauge",
+        "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "avg by (resourceType) (fhir_validation_duration_sum / fhir_validation_duration_count)",
+            "legendFormat": "{{resourceType}}"
+          }
+        ],
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms"
+          }
+        }
+      }
+    ]
+  }
+}

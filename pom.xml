@@ -40,6 +40,9 @@
         <!-- HAPI FHIR Version -->
         <hapi-fhir.version>7.6.0</hapi-fhir.version>
 
+        <!-- Apache Commons -->
+        <commons-compress.version>1.26.0</commons-compress.version>
+
         <!-- Database -->
         <postgresql.version>42.7.4</postgresql.version>
         <flyway.version>10.21.0</flyway.version>
@@ -119,6 +122,18 @@
                 <groupId>ca.uhn.hapi.fhir</groupId>
                 <artifactId>hapi-fhir-server</artifactId>
                 <version>${hapi-fhir.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>hapi-fhir-caching-caffeine</artifactId>
+                <version>${hapi-fhir.version}</version>
+            </dependency>
+
+            <!-- Apache Commons -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons-compress.version}</version>
             </dependency>
 
             <!-- Database -->

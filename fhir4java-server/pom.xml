@@ -51,6 +51,12 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- HAPI FHIR Caching (required for ProfileValidator) -->
+        <dependency>
+            <groupId>ca.uhn.hapi.fhir</groupId>
+            <artifactId>hapi-fhir-caching-caffeine</artifactId>
+        </dependency>
+
         <!-- BDD Testing -->
         <dependency>
             <groupId>io.cucumber</groupId>

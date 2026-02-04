@@ -5,6 +5,9 @@ import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
 import ca.uhn.fhir.context.support.IValidationSupport;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.SingleValidationMessage;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.resource.ResourceRegistry;
 import org.fhirframework.core.version.FhirVersion;
@@ -17,12 +20,15 @@ import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r5.model.OperationOutcome.IssueType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Validates FHIR resources against StructureDefinitions and profiles using HAPI FHIR.
@@ -37,28 +43,116 @@ public class ProfileValidator {
 
     private final FhirContextFactory contextFactory;
     private final ResourceRegistry resourceRegistry;
+    private final ValidationConfig validationConfig;
+    private final MeterRegistry meterRegistry;
 
     // Version-specific validators
     private final Map<FhirVersion, FhirValidator> validators = new EnumMap<>(FhirVersion.class);
     private final Map<FhirVersion, IValidationSupport> validationSupports = new EnumMap<>(FhirVersion.class);
+    
+    // Initialization tracking
+    private final Map<FhirVersion, Boolean> initializationStatus = new EnumMap<>(FhirVersion.class);
+    private final Map<FhirVersion, Long> initializationDurations = new EnumMap<>(FhirVersion.class);
+    private long totalInitializationTime = 0;
+    private boolean validatorEnabled = false;
 
-    public ProfileValidator(FhirContextFactory contextFactory, ResourceRegistry resourceRegistry) {
+    public ProfileValidator(FhirContextFactory contextFactory, 
+                          ResourceRegistry resourceRegistry,
+                          ValidationConfig validationConfig,
+                          @Autowired(required = false) MeterRegistry meterRegistry) {
         this.contextFactory = contextFactory;
         this.resourceRegistry = resourceRegistry;
+        this.validationConfig = validationConfig;
+        this.meterRegistry = meterRegistry;
     }
 
     @PostConstruct
     public void initialize() {
-        log.info("Initializing FHIR profile validators");
+        log.info("Starting ProfileValidator initialization");
+        
+        // Check if profile validator is enabled
+        if (!validationConfig.isProfileValidatorEnabled()) {
+            log.info("Profile validation is disabled by configuration - ProfileValidator will not initialize validators");
+            validatorEnabled = false;
+            return;
+        }
+        
+        validatorEnabled = true;
+        long startTime = System.currentTimeMillis();
+        int successCount = 0;
+        int totalCount = FhirVersion.values().length;
 
         for (FhirVersion version : FhirVersion.values()) {
+            long versionStartTime = System.currentTimeMillis();
+            log.info("Initializing validator for FHIR {}...", version.getCode());
+            
             try {
                 initializeValidatorForVersion(version);
-                log.info("Initialized validator for FHIR {}", version.getCode());
+                long duration = System.currentTimeMillis() - versionStartTime;
+                initializationStatus.put(version, true);
+                initializationDurations.put(version, duration);
+                successCount++;
+                log.info("Initialized validator for FHIR {} in {}ms", version.getCode(), duration);
             } catch (Exception e) {
-                log.error("Failed to initialize validator for FHIR {}: {}", version.getCode(), e.getMessage(), e);
+                long duration = System.currentTimeMillis() - versionStartTime;
+                initializationStatus.put(version, false);
+                initializationDurations.put(version, duration);
+                log.warn("Failed to initialize validator for FHIR {} after {}ms: {}", 
+                        version.getCode(), duration, e.getMessage(), e);
             }
         }
+        
+        totalInitializationTime = System.currentTimeMillis() - startTime;
+        log.info("ProfileValidator initialization complete: {}/{} versions initialized in {}ms", 
+                successCount, totalCount, totalInitializationTime);
+        
+        // Register metrics eagerly so they appear in /actuator/metrics immediately
+        registerMetricsEagerly();
+    }
+    
+    /**
+     * Register metrics eagerly during initialization so they appear in /actuator/metrics
+     * even before any validation is performed.
+     */
+    private void registerMetricsEagerly() {
+        if (meterRegistry == null) {
+            log.debug("MeterRegistry is null - skipping eager metrics registration");
+            return;
+        }
+        
+        if (!validatorEnabled) {
+            log.debug("Validator is disabled - skipping eager metrics registration");
+            return;
+        }
+        
+        int registeredCount = 0;
+        for (FhirVersion version : FhirVersion.values()) {
+            if (initializationStatus.getOrDefault(version, false)) {
+                try {
+                    // Register counter with dummy tags to make it visible in metrics list
+                    Counter.builder("fhir.validation.attempts")
+                            .description("Total number of FHIR resource validation attempts")
+                            .tag("version", version.getCode())
+                            .tag("result", "success")
+                            .tag("resourceType", "_initialized")
+                            .register(meterRegistry);
+                    
+                    // Register timer with dummy tags to make it visible in metrics list
+                    Timer.builder("fhir.validation.duration")
+                            .description("Duration of FHIR resource validation operations")
+                            .tag("version", version.getCode())
+                            .tag("resourceType", "_initialized")
+                            .register(meterRegistry);
+                    
+                    registeredCount++;
+                } catch (Exception e) {
+                    log.debug("Failed to eagerly register metrics for FHIR {}: {}", 
+                             version.getCode(), e.getMessage());
+                }
+            }
+        }
+        
+        log.info("Eagerly registered validation metrics for {} FHIR version(s)", registeredCount);
     }
 
     private void initializeValidatorForVersion(FhirVersion version) {
@@ -89,6 +183,41 @@ public class ProfileValidator {
     }
 
     /**
+     * Get or lazily initialize validator for a FHIR version.
+     * Returns null if lazy initialization is disabled and validator doesn't exist.
+     */
+    private FhirValidator getOrInitializeValidator(FhirVersion version) {
+        FhirValidator validator = validators.get(version);
+        
+        if (validator == null && validationConfig.isLazyInitialization() && validatorEnabled) {
+            synchronized (this) {
+                // Double-check after acquiring lock
+                validator = validators.get(version);
+                if (validator == null) {
+                    log.info("Lazy initializing validator for FHIR {}...", version.getCode());
+                    long startTime = System.currentTimeMillis();
+                    try {
+                        initializeValidatorForVersion(version);
+                        validator = validators.get(version);
+                        long duration = System.currentTimeMillis() - startTime;
+                        initializationStatus.put(version, true);
+                        initializationDurations.put(version, duration);
+                        log.info("Lazy initialized validator for FHIR {} in {}ms", version.getCode(), duration);
+                    } catch (Exception e) {
+                        long duration = System.currentTimeMillis() - startTime;
+                        initializationStatus.put(version, false);
+                        initializationDurations.put(version, duration);
+                        log.warn("Failed to lazy initialize validator for FHIR {} after {}ms: {}", 
+                                version.getCode(), duration, e.getMessage(), e);
+                    }
+                }
+            }
+        }
+        
+        return validator;
+    }
+
+    /**
      * Validate a resource against its base StructureDefinition.
      *
      * @param resource The resource to validate
@@ -112,13 +241,31 @@ public class ProfileValidator {
             return ValidationResult.failure("No resource provided for validation");
         }
 
-        FhirValidator validator = validators.get(version);
+        // Check if validator is enabled
+        if (!validatorEnabled) {
+            log.warn("Profile validation is disabled - returning success without validation");
+            return new ValidationResult();  // empty result — no issues
+        }
+
+        FhirValidator validator = getOrInitializeValidator(version);
         if (validator == null) {
             log.warn("No validator available for FHIR version: {}; skipping profile validation", version.getCode());
             return new ValidationResult();  // empty result — no issues
         }
 
+        String resourceType = resource.fhirType();
+        long startTime = System.currentTimeMillis();
+        
         try {
+            // Conditional operation logging
+            if (validationConfig.isLogValidationOperations()) {
+                if (profileUrl != null && !profileUrl.isBlank()) {
+                    log.debug("Validating {} against profile {}", resourceType, profileUrl);
+                } else {
+                    log.debug("Validating {} against base StructureDefinition", resourceType);
+                }
+            }
+
             ca.uhn.fhir.validation.ValidationResult hapiResult;
 
             if (profileUrl != null && !profileUrl.isBlank()) {
@@ -130,10 +277,24 @@ public class ProfileValidator {
                 hapiResult = validator.validateWithResult(resource);
             }
 
-            return convertHapiResult(hapiResult);
+            ValidationResult result = convertHapiResult(hapiResult);
+            
+            // Record metrics
+            recordValidationMetrics(version, resourceType, result.isValid(), 
+                                   System.currentTimeMillis() - startTime);
+            
+            // Conditional operation logging
+            if (validationConfig.isLogValidationOperations()) {
+                log.debug("Validation completed for {}: {} issues found", 
+                         resourceType, result.getIssues().size());
+            }
+
+            return result;
 
         } catch (Exception e) {
             log.error("Error during validation: {}", e.getMessage(), e);
+            recordValidationMetrics(version, resourceType, false, 
+                                   System.currentTimeMillis() - startTime);
             return ValidationResult.failure("Validation error: " + e.getMessage());
         }
     }
@@ -250,5 +411,71 @@ public class ProfileValidator {
      */
     public IValidationSupport getValidationSupport(FhirVersion version) {
         return validationSupports.get(version);
+    }
+
+    /**
+     * Check if validator is enabled.
+     */
+    public boolean isValidatorEnabled() {
+        return validatorEnabled;
+    }
+
+    /**
+     * Get initialization status for all versions.
+     */
+    public Map<FhirVersion, Boolean> getInitializationStatus() {
+        return new EnumMap<>(initializationStatus);
+    }
+
+    /**
+     * Get initialization durations for all versions.
+     */
+    public Map<FhirVersion, Long> getInitializationDurations() {
+        return new EnumMap<>(initializationDurations);
+    }
+
+    /**
+     * Get total initialization time in milliseconds.
+     */
+    public long getTotalInitializationTime() {
+        return totalInitializationTime;
+    }
+
+    /**
+     * Record validation metrics if MeterRegistry is available.
+     */
+    private void recordValidationMetrics(FhirVersion version, String resourceType, 
+                                        boolean success, long durationMs) {
+        if (meterRegistry == null) {
+            log.debug("MeterRegistry is null - metrics will not be recorded");
+            return;
+        }
+
+        try {
+            // Record validation attempt counter (using dotted notation)
+            Counter counter = Counter.builder("fhir.validation.attempts")
+                    .description("Total number of FHIR resource validation attempts")
+                    .tag("version", version.getCode())
+                    .tag("result", success ? "success" : "failure")
+                    .tag("resourceType", resourceType)
+                    .register(meterRegistry);
+            counter.increment();
+            
+            log.debug("Recorded metric: fhir.validation.attempts [version={}, result={}, resourceType={}]",
+                     version.getCode(), success ? "success" : "failure", resourceType);
+
+            // Record validation duration timer (using dotted notation)
+            Timer timer = Timer.builder("fhir.validation.duration")
+                    .description("Duration of FHIR resource validation operations")
+                    .tag("version", version.getCode())
+                    .tag("resourceType", resourceType)
+                    .register(meterRegistry);
+            timer.record(durationMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            
+            log.debug("Recorded metric: fhir.validation.duration [version={}, resourceType={}, duration={}ms]",
+                     version.getCode(), resourceType, durationMs);
+        } catch (Exception e) {
+            log.warn("Failed to record validation metrics: {}", e.getMessage(), e);
+        }
     }
 }

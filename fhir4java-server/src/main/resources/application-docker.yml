@@ -16,6 +16,40 @@ fhir:
   server:
     base-url: ${FHIR_SERVER_BASE_URL:http://localhost:8080/fhir/r5}
 
+fhir4java:
+  validation:
+    # ============================================================================
+    # DOCKER PROFILE VALIDATION CONFIGURATION
+    # ============================================================================
+    # IMPORTANT: This Docker profile configuration OVERRIDES application.yml
+    #
+    # Spring Boot Property Precedence:
+    #   Profile-specific files (application-docker.yml) take precedence over
+    #   base configuration files (application.yml) when that profile is active.
+    #
+    # Default Behavior:
+    #   profile-validator-enabled defaults to FALSE in Docker for:
+    #   - Faster container startup (saves ~2-3 seconds)
+    #   - Reduced memory footprint (saves ~300-400 MB)
+    #   - Optimized for production deployments where validation may not be needed
+    #
+    # To Enable Validation in Docker:
+    #   Option 1: Set environment variable in docker-compose.yml:
+    #             environment:
+    #               - PROFILE_VALIDATOR_ENABLED=true
+    #
+    #   Option 2: Set environment variable when running container:
+    #             docker run -e PROFILE_VALIDATOR_ENABLED=true ...
+    #
+    #   Option 3: Modify this file to change default:
+    #             profile-validator-enabled: ${PROFILE_VALIDATOR_ENABLED:true}
+    # ============================================================================
+    profile-validator-enabled: ${PROFILE_VALIDATOR_ENABLED:false}
+    
+    # Use warn mode in Docker to allow startup even if validation fails to initialize
+    # This provides graceful degradation in containerized environments
+    health-check-mode: ${HEALTH_CHECK_MODE:warn}
+
 logging:
   level:
     root: ${LOG_LEVEL_ROOT:INFO}

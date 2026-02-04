@@ -109,7 +109,31 @@ fhir4java:
   # Validation settings
   validation:
     enabled: true
-    profile-validation: strict  # strict, lenient, off
+    
+    # Enable/disable ProfileValidator initialization
+    # Set to false for faster startup in dev/test environments where profile validation is not needed
+    profile-validator-enabled: true
+    
+    # Profile validation strictness mode (controls how validation results are handled)
+    # - strict: Full validation, errors cause rejection
+    # - lenient: Validation is performed but warnings don't cause rejection
+    # - off: No profile validation is performed
+    profile-validation: strict
+    
+    # Enable detailed logging of validation operations
+    # Set to true for debugging validation issues (logs each validation attempt and result)
+    log-validation-operations: false
+    
+    # Enable lazy per-version initialization (experimental feature)
+    # When true, validators initialize on first use per FHIR version
+    # This reduces startup time to near-zero while maintaining functionality for actively used versions
+    lazy-initialization: false
+    
+    # Health check sensitivity mode
+    # - strict: Report DOWN if no validators initialized successfully (default, ensures operators know when validation is broken)
+    # - warn: Report UP with warning details if no validators initialized (allows graceful degradation)
+    # - disabled: Always report UP regardless of validator status
+    health-check-mode: strict
 
   # Plugin system settings
   plugins:
@@ -158,12 +182,22 @@ management:
       base-path: /actuator
   endpoint:
     health:
-      show-details: when_authorized
+      show-details: always
+      show-components: always  # Expose individual health indicators including profileValidator
+  metrics:
+    enable:
+      all: true  # Enable all metrics
+    tags:
+      application: fhir4java-server
+      environment: ${spring.profiles.active:default}
   health:
     db:
       enabled: true
     redis:
       enabled: true
+    # Profile validator health indicator automatically enabled
+    # Reports initialization status of FHIR version validators
+    # Sensitivity controlled by fhir4java.validation.health-check-mode
 
 # Logging Configuration
 logging:
