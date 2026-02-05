@@ -1,14 +1,11 @@
 package org.fhirframework.server.bdd.steps;
 
-import io.cucumber.java.Before;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
-import io.restassured.RestAssured;
 import io.restassured.response.Response;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
@@ -18,26 +15,16 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Step definitions for Patient CREATE plugin BDD tests.
+ * Relies on CucumberSpringConfig to set basePath="/fhir".
  */
 public class PluginSteps {
-	
-	 private static final Logger log = LoggerFactory.getLogger(PluginSteps.class);
 
-
-    @LocalServerPort
-    private int port;
+    private static final Logger log = LoggerFactory.getLogger(PluginSteps.class);
 
     @Autowired
     private SharedTestContext ctx;
 
     private String patientJson;
-
-    @Before
-    public void setUp() {
-        RestAssured.port = port;
-        RestAssured.basePath = "/fhir";
-        patientJson = null;
-    }
 
     // ========== Given Steps ==========
 

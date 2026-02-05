@@ -21,7 +21,7 @@ Feature: HTTP 422 Validation Error Handling
 
   @422 @invalid-enum
   Scenario: Various invalid gender codes return HTTP 422
-    Given I have invalid gender codes: "99", "invalid", "M", "F"
+    Given I have invalid gender codes: "99,invalid,M,F"
     When I POST Patient resources with each invalid code
     Then all responses should have status code 422
     And each should return an OperationOutcome
@@ -29,7 +29,7 @@ Feature: HTTP 422 Validation Error Handling
 
   @422 @valid-enum
   Scenario: Valid enum values return HTTP 201 Created
-    Given I have valid gender codes: "male", "female", "other", "unknown"
+    Given I have valid gender codes: "male,female,other,unknown"
     When I POST Patient resources with each valid code
     Then all responses should have status code 201
     And each should return the created Patient resource

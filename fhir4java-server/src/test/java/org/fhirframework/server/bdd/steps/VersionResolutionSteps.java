@@ -1,12 +1,9 @@
 package org.fhirframework.server.bdd.steps;
 
-import io.cucumber.java.Before;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
-import io.restassured.RestAssured;
 import io.restassured.specification.RequestSpecification;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
@@ -17,16 +14,8 @@ import static org.hamcrest.Matchers.*;
  */
 public class VersionResolutionSteps {
 
-    @LocalServerPort
-    private int port;
-
     @Autowired
     private SharedTestContext ctx;
-
-    @Before
-    public void setUp() {
-        RestAssured.port = port;
-    }
 
     /**
      * Build a request with empty basePath to avoid double-prefix issues

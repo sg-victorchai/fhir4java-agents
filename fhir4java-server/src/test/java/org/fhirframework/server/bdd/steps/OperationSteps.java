@@ -1,34 +1,24 @@
 package org.fhirframework.server.bdd.steps;
 
-import io.cucumber.java.Before;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
-import io.restassured.RestAssured;
 import io.restassured.response.Response;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
 /**
  * Step definitions for FHIR extended operation BDD tests.
+ * Relies on CucumberSpringConfig to set basePath="/fhir".
  */
 public class OperationSteps {
-
-    @LocalServerPort
-    private int port;
 
     @Autowired
     private SharedTestContext ctx;
 
-    @Before
-    public void setUp() {
-        RestAssured.port = port;
-        RestAssured.basePath = "/fhir";
-    }
-
+    
     // ========== Given Steps ==========
 
     @Given("the FHIR server is running")
@@ -48,7 +38,7 @@ public class OperationSteps {
                 }
                 """;
 
-        Response response = given()
+         Response response = given()
                 .contentType("application/fhir+json")
                 .body(patientJson)
                 .when()

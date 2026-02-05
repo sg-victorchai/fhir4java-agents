@@ -1,13 +1,10 @@
 package org.fhirframework.server.bdd.steps;
 
-import io.cucumber.java.Before;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
-import io.restassured.RestAssured;
 import io.restassured.path.json.JsonPath;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.web.server.LocalServerPort;
 
 import java.util.List;
 
@@ -17,22 +14,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Step definitions for batch/transaction bundle BDD tests.
+ * Uses explicit .basePath("/fhir") on requests since it needs the /fhir context path.
  */
 public class BatchTransactionSteps {
-
-    @LocalServerPort
-    private int port;
 
     @Autowired
     private SharedTestContext ctx;
 
     private String bundleJson;
-
-    @Before
-    public void setUp() {
-        RestAssured.port = port;
-        bundleJson = null;
-    }
 
     // ========== Given Steps ==========
 

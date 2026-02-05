@@ -6,7 +6,7 @@ Feature: Profile Validator Initialization
 
   Background:
     Given the FHIR server is starting up
-    And commons-compress version 1.26.0 or higher is available
+    And commons-compress version "1.26.0" or higher is available
     And hapi-fhir-caching-caffeine is available
 
   @smoke @initialization
