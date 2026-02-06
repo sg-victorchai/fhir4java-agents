@@ -5,6 +5,8 @@ import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.api.config.FhirMediaType;
 import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.config.ResourceConfiguration;
+import org.fhirframework.core.conformance.ConformanceResourceRegistry;
+import org.fhirframework.core.conformance.ConformanceResourceType;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.interaction.InteractionType;
 import org.fhirframework.core.operation.OperationConfigRegistry;
@@ -47,6 +49,7 @@ public class MetadataController {
     private final SearchParameterRegistry searchParameterRegistry;
     private final OperationRegistry operationRegistry;
     private final OperationConfigRegistry operationConfigRegistry;
+    private final ConformanceResourceRegistry conformanceResourceRegistry;
 
     @Value("${fhir4java.server.base-url:http://localhost:8080/fhir}")
     private String baseUrl;
@@ -61,12 +64,14 @@ public class MetadataController {
                               ResourceRegistry resourceRegistry,
                               SearchParameterRegistry searchParameterRegistry,
                               OperationRegistry operationRegistry,
-                              OperationConfigRegistry operationConfigRegistry) {
+                              OperationConfigRegistry operationConfigRegistry,
+                              ConformanceResourceRegistry conformanceResourceRegistry) {
         this.contextFactory = contextFactory;
         this.resourceRegistry = resourceRegistry;
         this.searchParameterRegistry = searchParameterRegistry;
         this.operationRegistry = operationRegistry;
         this.operationConfigRegistry = operationConfigRegistry;
+        this.conformanceResourceRegistry = conformanceResourceRegistry;
     }
 
     /**
@@ -157,6 +162,9 @@ public class MetadataController {
             CapabilityStatementRestResourceComponent resourceComponent = buildResourceComponent(resourceConfig, version);
             rest.addResource(resourceComponent);
         }
+
+        // Add conformance resource capabilities (StructureDefinition, SearchParameter, OperationDefinition)
+        addConformanceResources(rest, version);
 
         // System-level interactions
         rest.addInteraction(new SystemInteractionComponent().setCode(SystemRestfulInteraction.TRANSACTION));
@@ -251,6 +259,52 @@ public class MetadataController {
                 rest.addOperation(new CapabilityStatementRestResourceOperationComponent()
                         .setName("$" + handler.getOperationName())
                         .setDefinition("OperationDefinition/" + handler.getOperationName()));
+            }
+        }
+    }
+
+    private void addConformanceResources(CapabilityStatementRestComponent rest, FhirVersion version) {
+        for (ConformanceResourceType type : ConformanceResourceType.values()) {
+            int count = conformanceResourceRegistry.count(version, type);
+            if (count > 0) {
+                CapabilityStatementRestResourceComponent resource = new CapabilityStatementRestResourceComponent();
+                resource.setType(type.getResourceTypeName());
+                resource.setVersioning(ResourceVersionPolicy.NOVERSION);
+                resource.setReadHistory(false);
+                resource.setUpdateCreate(false);
+                resource.setConditionalCreate(false);
+                resource.setConditionalUpdate(false);
+                resource.setConditionalDelete(ConditionalDeleteStatus.NOTSUPPORTED);
+
+                // Read-only: only READ and SEARCH interactions
+                resource.addInteraction(new ResourceInteractionComponent().setCode(TypeRestfulInteraction.READ));
+                resource.addInteraction(new ResourceInteractionComponent().setCode(TypeRestfulInteraction.SEARCHTYPE));
+
+                // Add search parameters based on resource type
+                resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
+                        .setName("_id")
+                        .setType(Enumerations.SearchParamType.TOKEN)
+                        .setDocumentation("Resource ID"));
+                resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
+                        .setName("url")
+                        .setType(Enumerations.SearchParamType.URI)
+                        .setDocumentation("Canonical URL"));
+                resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
+                        .setName("name")
+                        .setType(Enumerations.SearchParamType.STRING)
+                        .setDocumentation("Resource name"));
+
+                // SearchParameter-specific search param
+                if (type == ConformanceResourceType.SEARCH_PARAMETER) {
+                    resource.addSearchParam(new CapabilityStatementRestResourceSearchParamComponent()
+                            .setName("base")
+                            .setType(Enumerations.SearchParamType.TOKEN)
+                            .setDocumentation("Base resource type for SearchParameter"));
+                }
+
+                rest.addResource(resource);
+                log.debug("Added conformance resource {} with {} definitions to CapabilityStatement",
+                        type.getResourceTypeName(), count);
             }
         }
     }

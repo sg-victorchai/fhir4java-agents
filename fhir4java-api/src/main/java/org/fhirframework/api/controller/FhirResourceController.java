@@ -51,7 +51,8 @@ public class FhirResourceController {
 
     // Regex patterns
     private static final String VERSION_PATTERN = "r5|r4b|R5|R4B";
-    private static final String RESOURCE_TYPE_PATTERN = "[A-Z][a-zA-Z]+";
+    // Exclude conformance resource types (handled by ConformanceResourceController)
+    private static final String RESOURCE_TYPE_PATTERN = "(?!StructureDefinition|SearchParameter|OperationDefinition)[A-Z][a-zA-Z]+";
 
     private final FhirContextFactory contextFactory;
     private final InteractionGuard interactionGuard;
