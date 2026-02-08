@@ -10,7 +10,7 @@ Complete index of all ProfileValidator documentation with consistent "PROFILE-" 
 ## 📚 Core Documentation (PROFILE- prefix)
 
 ### 1. PROFILE-IMPLEMENTATION-SUMMARY.md
-**Location**: `/fhir4java-agents/PROFILE-IMPLEMENTATION-SUMMARY.md`  
+**Location**: `/fhir4java-agents/docs/PROFILE-IMPLEMENTATION-SUMMARY.md`  
 **Purpose**: Complete implementation history covering all 4 phases  
 **Content**: 591 lines | All phases documented | Production-ready  
 
@@ -67,7 +67,7 @@ Complete index of all ProfileValidator documentation with consistent "PROFILE-" 
 ---
 
 ### 4. PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md
-**Location**: `/fhir4java-agents/PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md`  
+**Location**: `/fhir4java-agents/docs/PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md`  
 **Purpose**: Meta-documentation describing the complete documentation package  
 **Content**: Overview of all created documentation and resources  
 
@@ -87,7 +87,7 @@ Complete index of all ProfileValidator documentation with consistent "PROFILE-" 
 ## 📖 Supporting Documentation
 
 ### 5. PROFILE-QUICK-REFERENCE.md
-**Location**: `/fhir4java-agents/PROFILE-QUICK-REFERENCE.md`  
+**Location**: `/fhir4java-agents/docs/PROFILE-QUICK-REFERENCE.md`  
 **Purpose**: One-page quick reference card  
 **Content**: 240 lines | Compact format | Printable  
 
@@ -123,7 +123,7 @@ Complete index of all ProfileValidator documentation with consistent "PROFILE-" 
 ---
 
 ### 7. TESTING-GUIDE.md
-**Location**: `/fhir4java-agents/TESTING-GUIDE.md`  
+**Location**: `/fhir4java-agents/docs/TESTING-GUIDE.md`  
 **Purpose**: General testing procedures and guidelines  
 **Content**: Testing instructions for verification  
 
@@ -132,7 +132,7 @@ Complete index of all ProfileValidator documentation with consistent "PROFILE-" 
 ---
 
 ### 8. PROFILE-FIX-TESTING-GUIDE.md
-**Location**: `/fhir4java-agents/PROFILE-FIX-TESTING-GUIDE.md`  
+**Location**: `/fhir4java-agents/tasks/PROFILE-FIX-TESTING-GUIDE.md`  
 **Purpose**: Specific testing guide for ProfileValidator fixes  
 **Content**: Phase-specific testing instructions  
 
@@ -211,7 +211,7 @@ chmod +x scripts/test-validation-errors.sh
 ## 📋 Meta Documentation
 
 ### 12. FILE-RENAME-SUMMARY.md
-**Location**: `/fhir4java-agents/FILE-RENAME-SUMMARY.md`  
+**Location**: `/fhir4java-agents/tasks/FILE-RENAME-SUMMARY.md`  
 **Purpose**: Documents file rename operations for consistency  
 **Content**: Tracks all renames applied to documentation  
 
@@ -226,19 +226,16 @@ chmod +x scripts/test-validation-errors.sh
 ```
 fhir4java-agents/
 │
-├── PROFILE-* Documentation (Core - 4 files)
-│   ├── PROFILE-IMPLEMENTATION-SUMMARY.md       ✅ Primary reference
-│   ├── PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md ✅ Documentation index
-│   ├── PROFILE-FIX-TESTING-GUIDE.md            ✅ Testing guide
-│   └── docs/
-│       ├── PROFILE-VALIDATION.md               ✅ Feature documentation
-│       └── PROFILE-ARCHITECTURE-DIAGRAMS.md    ✅ Visual diagrams
-│
-├── Supporting Documentation (3 files)
-│   ├── PROFILE-QUICK-REFERENCE.md              Quick lookup
-│   ├── TESTING-GUIDE.md                        General testing
-│   └── docs/
-│       └── TROUBLESHOOTING-FLOWCHARTS.md       Problem resolution
+├── PROFILE-*  Documentation
+|   └──  docs/
+│        ├── PROFILE-IMPLEMENTATION-SUMMARY.md         ✅ Primary reference
+│        ├── PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md  ✅ Documentation index
+│        ├── PROFILE-FIX-TESTING-GUIDE.md              ✅ Testing guide
+│        ├── PROFILE-VALIDATION.md                     ✅ Feature documentation
+│        └── PROFILE-ARCHITECTURE-DIAGRAMS.md          ✅ Visual diagrams
+│        ├── PROFILE-QUICK-REFERENCE.md                ✅ Quick lookup
+│        ├── TESTING-GUIDE.md                          ✅ General testing
+│        └── TROUBLESHOOTING-FLOWCHARTS.md             ✅ Problem resolution
 │
 ├── Scripts & Automation (2 files)
 │   └── scripts/
@@ -246,11 +243,9 @@ fhir4java-agents/
 │       └── test-validation-errors.sh           Phase 4 tests
 │
 ├── Monitoring (1 file)
-│   └── docs/
-│       └── grafana-validation-dashboard.json   Grafana dashboard
-│
-└── Meta Documentation (1 file)
-    └── FILE-RENAME-SUMMARY.md                  Rename tracking
+    └── docs/
+        └── grafana-validation-dashboard.json   Grafana dashboard
+
 ```
 
 ---

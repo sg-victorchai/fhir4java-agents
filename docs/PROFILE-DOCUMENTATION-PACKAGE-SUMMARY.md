@@ -55,7 +55,7 @@ chmod +x scripts/test-all-phases.sh
 ---
 
 ### 3. ✅ Architecture Diagrams
-**File**: `docs/PROFILE-ARCHITECTURE-DIAGRAMS.md`  
+**File**: `PROFILE-ARCHITECTURE-DIAGRAMS.md`  
 **Purpose**: Visual representation of system components and data flows  
 **Format**: ASCII diagrams (universal, version control friendly)  
 
@@ -84,7 +84,7 @@ chmod +x scripts/test-all-phases.sh
 ---
 
 ### 4. ✅ Troubleshooting Flowcharts
-**File**: `docs/TROUBLESHOOTING-FLOWCHARTS.md`  
+**File**: `TROUBLESHOOTING-FLOWCHARTS.md`  
 **Purpose**: Step-by-step problem resolution guides  
 **Format**: Decision trees with clear paths to resolution  
 
@@ -144,18 +144,27 @@ chmod +x scripts/test-all-phases.sh
 
 ```
 fhir4java-agents/
-├── PROFILE-QUICK-REFERENCE.md                (NEW)
-├── PROFILE-IMPLEMENTATION-SUMMARY.md     (UPDATED - Added Phase 4)
-├── FIX-HTTP-422-VALIDATION-ERRORS.md    (MERGED into summary)
-├── TESTING-GUIDE.md                      (EXISTING)
-├── docs/
-│   ├── PROFILE-ARCHITECTURE-DIAGRAMS.md  (NEW)
-│   ├── TROUBLESHOOTING-FLOWCHARTS.md     (NEW)
-│   ├── PROFILE-VALIDATION.md             (EXISTING)
-│   └── grafana-validation-dashboard.json (EXISTING)
-└── scripts/
-    ├── test-all-phases.sh                (NEW)
-    └── test-validation-errors.sh         (EXISTING)
+│
+├── PROFILE-*  Documentation
+|   └──  docs/
+│        ├── PROFILE-IMPLEMENTATION-SUMMARY.md         ✅ Primary reference
+│        ├── PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md  ✅ Documentation index
+│        ├── PROFILE-FIX-TESTING-GUIDE.md              ✅ Testing guide
+│        ├── PROFILE-VALIDATION.md                     ✅ Feature documentation
+│        └── PROFILE-ARCHITECTURE-DIAGRAMS.md          ✅ Visual diagrams
+│        ├── PROFILE-QUICK-REFERENCE.md                ✅ Quick lookup
+│        ├── TESTING-GUIDE.md                          ✅ General testing
+│        └── TROUBLESHOOTING-FLOWCHARTS.md             ✅ Problem resolution
+│
+├── Scripts & Automation (2 files)
+│   └── scripts/
+│       ├── test-all-phases.sh                  Comprehensive tests
+│       └── test-validation-errors.sh           Phase 4 tests
+│
+├── Monitoring (1 file)
+    └── docs/
+        └── grafana-validation-dashboard.json   Grafana dashboard
+
 ```
 
 ---
@@ -166,12 +175,12 @@ fhir4java-agents/
 
 **Getting Started**:
 1. Read: `PROFILE-QUICK-REFERENCE.md` (5 min)
-2. Review: `docs/PROFILE-ARCHITECTURE-DIAGRAMS.md` (15 min)
+2. Review: `PROFILE-ARCHITECTURE-DIAGRAMS.md` (15 min)
 3. Deep dive: `PROFILE-IMPLEMENTATION-SUMMARY.md` (30 min)
 
 **Daily Use**:
 - Quick lookup: `PROFILE-QUICK-REFERENCE.md`
-- Troubleshooting: `docs/TROUBLESHOOTING-FLOWCHARTS.md`
+- Troubleshooting: `TROUBLESHOOTING-FLOWCHARTS.md`
 - Testing: `./scripts/test-all-phases.sh`
 
 ### For DevOps/SRE
@@ -182,7 +191,7 @@ fhir4java-agents/
 3. Monitor: Health endpoint & metrics
 
 **Troubleshooting**:
-1. Use: `docs/TROUBLESHOOTING-FLOWCHARTS.md` → Flowchart #6 (Docker)
+1. Use: `TROUBLESHOOTING-FLOWCHARTS.md` → Flowchart #6 (Docker)
 2. Run: Quick diagnostic commands
 3. Check: Logs with provided grep patterns
 
@@ -201,7 +210,7 @@ fhir4java-agents/
 ### For Technical Writers
 
 **Documentation Updates**:
-1. Reference: `docs/PROFILE-ARCHITECTURE-DIAGRAMS.md` for diagrams
+1. Reference: `PROFILE-ARCHITECTURE-DIAGRAMS.md` for diagrams
 2. Use: `PROFILE-IMPLEMENTATION-SUMMARY.md` for complete context
 3. Copy: Examples from `PROFILE-QUICK-REFERENCE.md`
 
@@ -314,24 +323,29 @@ fhir4java-agents/
 ### Document Hierarchy
 
 ```
-Primary Documents:
-├── PROFILE-QUICK-REFERENCE.md ────────► Quick lookup
-├── PROFILE-IMPLEMENTATION-SUMMARY.md ──► Complete history
-└── TESTING-GUIDE.md ──────────► Testing procedures
+fhir4java-agents/
+│
+├── PROFILE-*  Documentation
+|   ├── docs/
+│        ├── PROFILE-IMPLEMENTATION-SUMMARY.md         ✅ Primary reference
+│        ├── PROFILE-DOCUMENTATION-PACKAGE-SUMMARY.md  ✅ Documentation index
+│        ├── PROFILE-FIX-TESTING-GUIDE.md              ✅ Testing guide
+│        ├── PROFILE-VALIDATION.md                     ✅ Feature documentation
+│        └── PROFILE-ARCHITECTURE-DIAGRAMS.md          ✅ Visual diagrams
+│        ├── PROFILE-QUICK-REFERENCE.md                ✅ Quick lookup
+│        ├── TESTING-GUIDE.md                          ✅ General testing
+│        └── TROUBLESHOOTING-FLOWCHARTS.md             ✅ Problem resolution
+│
+├── Scripts & Automation (2 files)
+│   └── scripts/
+│       ├── test-all-phases.sh                  Comprehensive tests
+│       └── test-validation-errors.sh           Phase 4 tests
+│
+├── Monitoring (1 file)
+    └── docs/
+        └── grafana-validation-dashboard.json   Grafana dashboard
 
-Supporting Documents:
-├── docs/PROFILE-ARCHITECTURE-DIAGRAMS.md ──► Visual reference
-├── docs/TROUBLESHOOTING-FLOWCHARTS.md ──► Problem solving
-└── docs/PROFILE-VALIDATION.md ──► Feature details
-
-Automation:
-├── scripts/test-all-phases.sh ──► Comprehensive testing
-└── scripts/test-validation-errors.sh ──► Phase 4 specific
-
-Monitoring:
-└── docs/grafana-validation-dashboard.json ──► Production monitoring
 ```
-
 ### Cross-References
 
 Each document references others where appropriate:
