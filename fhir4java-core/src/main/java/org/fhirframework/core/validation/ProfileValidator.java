@@ -11,6 +11,9 @@ import io.micrometer.core.instrument.Timer;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.resource.ResourceRegistry;
 import org.fhirframework.core.version.FhirVersion;
+import org.fhirframework.core.validation.CustomResourceBundle;
+import org.fhirframework.core.validation.CustomResourceLoader;
+import org.fhirframework.core.validation.CustomResourceValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.CachingValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.CommonCodeSystemsTerminologyService;
 import org.hl7.fhir.common.hapi.validation.support.InMemoryTerminologyServerValidationSupport;
@@ -45,6 +48,7 @@ public class ProfileValidator {
     private final ResourceRegistry resourceRegistry;
     private final ValidationConfig validationConfig;
     private final MeterRegistry meterRegistry;
+    private final CustomResourceLoader customResourceLoader;
 
     // Version-specific validators
     private final Map<FhirVersion, FhirValidator> validators = new EnumMap<>(FhirVersion.class);
@@ -56,13 +60,15 @@ public class ProfileValidator {
     private long totalInitializationTime = 0;
     private boolean validatorEnabled = false;
 
-    public ProfileValidator(FhirContextFactory contextFactory, 
+    public ProfileValidator(FhirContextFactory contextFactory,
                           ResourceRegistry resourceRegistry,
                           ValidationConfig validationConfig,
+                          CustomResourceLoader customResourceLoader,
                           @Autowired(required = false) MeterRegistry meterRegistry) {
         this.contextFactory = contextFactory;
         this.resourceRegistry = resourceRegistry;
         this.validationConfig = validationConfig;
+        this.customResourceLoader = customResourceLoader;
         this.meterRegistry = meterRegistry;
     }
 
@@ -158,8 +164,15 @@ public class ProfileValidator {
     private void initializeValidatorForVersion(FhirVersion version) {
         FhirContext ctx = contextFactory.getContext(version);
 
+        // Load custom resources (StructureDefinitions, CodeSystems, ValueSets)
+        CustomResourceBundle customResources = customResourceLoader.loadCustomResources(version);
+        log.info("Loaded {} custom conformance resources for FHIR {}",
+                customResources.getTotalCount(), version.getCode());
+
         // Build validation support chain
+        // Custom resources go FIRST so they take precedence over default resources
         ValidationSupportChain supportChain = new ValidationSupportChain(
+                new CustomResourceValidationSupport(ctx, customResources),
                 new DefaultProfileValidationSupport(ctx),
                 new InMemoryTerminologyServerValidationSupport(ctx),
                 new CommonCodeSystemsTerminologyService(ctx)
@@ -397,6 +410,84 @@ public class ProfileValidator {
         } else {
             return IssueType.INVALID;
         }
+    }
+
+    /**
+     * Validate a JSON string directly against the configured profiles and StructureDefinitions.
+     * This is useful for custom resources that cannot be parsed by HAPI FHIR.
+     *
+     * @param jsonString The JSON string to validate
+     * @param version    The FHIR version to use
+     * @return ValidationResult with any issues found
+     */
+    public ValidationResult validateJsonString(String jsonString, FhirVersion version) {
+        if (jsonString == null || jsonString.isBlank()) {
+            return ValidationResult.failure("No JSON string provided for validation");
+        }
+
+        // Check if validator is enabled
+        if (!validatorEnabled) {
+            log.warn("Profile validation is disabled - returning success without validation");
+            return new ValidationResult();
+        }
+
+        FhirValidator validator = getOrInitializeValidator(version);
+        if (validator == null) {
+            log.warn("No validator available for FHIR version: {}; skipping profile validation", version.getCode());
+            return new ValidationResult();
+        }
+
+        long startTime = System.currentTimeMillis();
+        String resourceType = extractResourceTypeFromJson(jsonString);
+
+        try {
+            if (validationConfig.isLogValidationOperations()) {
+                log.debug("Validating JSON string for resource type {} against profiles", resourceType);
+            }
+
+            // HAPI validator can validate JSON strings directly
+            ca.uhn.fhir.validation.ValidationResult hapiResult = validator.validateWithResult(jsonString);
+            ValidationResult result = convertHapiResult(hapiResult);
+
+            // Record metrics
+            recordValidationMetrics(version, resourceType != null ? resourceType : "unknown",
+                                   result.isValid(), System.currentTimeMillis() - startTime);
+
+            if (validationConfig.isLogValidationOperations()) {
+                log.debug("JSON validation completed for {}: {} issues found",
+                         resourceType, result.getIssues().size());
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            log.error("Error during JSON string validation: {}", e.getMessage(), e);
+            recordValidationMetrics(version, resourceType != null ? resourceType : "unknown",
+                                   false, System.currentTimeMillis() - startTime);
+            return ValidationResult.failure("Validation error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Extract resource type from a JSON string.
+     */
+    private String extractResourceTypeFromJson(String jsonString) {
+        try {
+            int idx = jsonString.indexOf("\"resourceType\"");
+            if (idx >= 0) {
+                int colonIdx = jsonString.indexOf(":", idx);
+                if (colonIdx >= 0) {
+                    int startQuote = jsonString.indexOf("\"", colonIdx + 1);
+                    int endQuote = jsonString.indexOf("\"", startQuote + 1);
+                    if (startQuote >= 0 && endQuote > startQuote) {
+                        return jsonString.substring(startQuote + 1, endQuote);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to extract resourceType from JSON string: {}", e.getMessage());
+        }
+        return null;
     }
 
     /**

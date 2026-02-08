@@ -1,0 +1,18 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "MedicationInventory-location",
+  "url": "http://fhir4java.org/SearchParameter/MedicationInventory-location",
+  "version": "1.0.0",
+  "name": "location",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Search by storage location",
+  "code": "location",
+  "base": ["MedicationInventory"],
+  "type": "reference",
+  "expression": "MedicationInventory.location",
+  "processingMode": "normal",
+  "target": ["Location"]
+}

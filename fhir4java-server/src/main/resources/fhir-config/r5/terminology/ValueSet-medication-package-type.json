@@ -1,0 +1,20 @@
+{
+  "resourceType": "ValueSet",
+  "id": "medication-package-type",
+  "url": "http://fhir4java.org/ValueSet/medication-package-type",
+  "version": "1.0.0",
+  "name": "MedicationPackageTypeValueSet",
+  "title": "Medication Package Type Value Set",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Allowed package types for medication inventory",
+  "compose": {
+    "include": [
+      {
+        "system": "http://fhir4java.org/CodeSystem/medication-package-type"
+      }
+    ]
+  }
+}

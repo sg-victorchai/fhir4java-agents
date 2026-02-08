@@ -1,0 +1,34 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "medication-inventory-status",
+  "url": "http://fhir4java.org/CodeSystem/medication-inventory-status",
+  "version": "1.0.0",
+  "name": "MedicationInventoryStatus",
+  "title": "Medication Inventory Status",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Status codes for medication inventory items",
+  "caseSensitive": true,
+  "valueSet": "http://fhir4java.org/ValueSet/medication-inventory-status",
+  "content": "complete",
+  "count": 3,
+  "concept": [
+    {
+      "code": "active",
+      "display": "Active",
+      "definition": "The inventory item is active and available for use or dispensing."
+    },
+    {
+      "code": "inactive",
+      "display": "Inactive",
+      "definition": "The inventory item is inactive (e.g., recalled, on hold, or reserved)."
+    },
+    {
+      "code": "depleted",
+      "display": "Depleted",
+      "definition": "The inventory item has been fully consumed or dispensed."
+    }
+  ]
+}

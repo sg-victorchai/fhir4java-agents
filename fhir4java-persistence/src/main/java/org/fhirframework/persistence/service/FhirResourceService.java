@@ -5,6 +5,7 @@ import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.exception.FhirException;
 import org.fhirframework.core.exception.ResourceNotFoundException;
+import org.fhirframework.core.resource.CustomResourceHelper;
 import org.fhirframework.core.validation.ProfileValidator;
 import org.fhirframework.core.validation.SearchParameterValidator;
 import org.fhirframework.core.validation.ValidationConfig;
@@ -29,6 +30,8 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -54,17 +57,20 @@ public class FhirResourceService {
     private final SearchParameterValidator searchParameterValidator;
     private final ProfileValidator profileValidator;
     private final ValidationConfig validationConfig;
+    private final CustomResourceHelper customResourceHelper;
 
     public FhirResourceService(FhirResourceRepository repository,
                                FhirContextFactory contextFactory,
                                SearchParameterValidator searchParameterValidator,
                                ProfileValidator profileValidator,
-                               ValidationConfig validationConfig) {
+                               ValidationConfig validationConfig,
+                               CustomResourceHelper customResourceHelper) {
         this.repository = repository;
         this.contextFactory = contextFactory;
         this.searchParameterValidator = searchParameterValidator;
         this.profileValidator = profileValidator;
         this.validationConfig = validationConfig;
+        this.customResourceHelper = customResourceHelper;
     }
 
     /**
@@ -77,6 +83,11 @@ public class FhirResourceService {
      */
     @Transactional
     public ResourceResult create(String resourceType, String resourceJson, FhirVersion version) {
+        // Branch for custom resources that HAPI doesn't know about
+        if (customResourceHelper.isCustomResource(resourceType, version)) {
+            return createCustomResource(resourceType, resourceJson, version);
+        }
+
         FhirContext context = contextFactory.getContext(version);
         IParser parser = context.newJsonParser();
 
@@ -119,6 +130,57 @@ public class FhirResourceService {
         repository.save(entity);
 
         log.info("Created {}/{} version {}", resourceType, resourceId, versionId);
+
+        return new ResourceResult(resourceId, versionId, updatedJson, now, false);
+    }
+
+    /**
+     * Create a custom FHIR resource that HAPI doesn't natively support.
+     * Uses JSON manipulation and HAPI's string-based validation.
+     */
+    private ResourceResult createCustomResource(String resourceType, String resourceJson, FhirVersion version) {
+        log.debug("Creating custom resource type: {}", resourceType);
+
+        // Validate basic structure
+        if (!customResourceHelper.validateBasicStructure(resourceJson, resourceType)) {
+            throw new FhirException("Invalid resource structure for " + resourceType, "invalid");
+        }
+
+        // Full profile validation using HAPI validator with JSON string
+        if (validationConfig.isEnabled() && validationConfig.isProfileValidationEnabled()) {
+            validateCustomResourceOrThrow(resourceJson, version);
+        }
+
+        // Generate ID if not present
+        String resourceId = customResourceHelper.extractId(resourceJson);
+        if (resourceId == null || resourceId.isBlank()) {
+            resourceId = UUID.randomUUID().toString();
+        }
+
+        // Update JSON with ID and meta
+        int versionId = 1;
+        Instant now = Instant.now();
+        String updatedJson = customResourceHelper.setId(resourceJson, resourceId);
+        updatedJson = customResourceHelper.updateMeta(updatedJson, versionId,
+                now.atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT));
+
+        // Create entity and persist
+        FhirResourceEntity entity = FhirResourceEntity.builder()
+                .resourceType(resourceType)
+                .resourceId(resourceId)
+                .fhirVersion(version.getCode())
+                .versionId(versionId)
+                .isCurrent(true)
+                .isDeleted(false)
+                .content(updatedJson)
+                .lastUpdated(now)
+                .createdAt(now)
+                .tenantId(DEFAULT_TENANT)
+                .build();
+
+        repository.save(entity);
+
+        log.info("Created custom resource {}/{} version {}", resourceType, resourceId, versionId);
 
         return new ResourceResult(resourceId, versionId, updatedJson, now, false);
     }
@@ -187,6 +249,11 @@ public class FhirResourceService {
      */
     @Transactional
     public ResourceResult update(String resourceType, String resourceId, String resourceJson, FhirVersion version) {
+        // Branch for custom resources that HAPI doesn't know about
+        if (customResourceHelper.isCustomResource(resourceType, version)) {
+            return updateCustomResource(resourceType, resourceId, resourceJson, version);
+        }
+
         FhirContext context = contextFactory.getContext(version);
         IParser parser = context.newJsonParser();
 
@@ -236,6 +303,61 @@ public class FhirResourceService {
         repository.save(entity);
 
         log.info("Updated {}/{} to version {}", resourceType, resourceId, newVersionId);
+
+        return new ResourceResult(resourceId, newVersionId, updatedJson, now, false);
+    }
+
+    /**
+     * Update a custom FHIR resource that HAPI doesn't natively support.
+     * Uses JSON manipulation and HAPI's string-based validation.
+     */
+    private ResourceResult updateCustomResource(String resourceType, String resourceId, String resourceJson, FhirVersion version) {
+        log.debug("Updating custom resource type: {}/{}", resourceType, resourceId);
+
+        // Validate basic structure
+        if (!customResourceHelper.validateBasicStructure(resourceJson, resourceType)) {
+            throw new FhirException("Invalid resource structure for " + resourceType, "invalid");
+        }
+
+        // Full profile validation using HAPI validator with JSON string
+        if (validationConfig.isEnabled() && validationConfig.isProfileValidationEnabled()) {
+            validateCustomResourceOrThrow(resourceJson, version);
+        }
+
+        // Get current version to determine new version number
+        Integer maxVersion = repository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
+        int newVersionId = (maxVersion != null ? maxVersion : 0) + 1;
+        boolean isCreate = (maxVersion == null || maxVersion == 0);
+
+        Instant now = Instant.now();
+
+        // Update JSON with ID and meta
+        String updatedJson = customResourceHelper.setId(resourceJson, resourceId);
+        updatedJson = customResourceHelper.updateMeta(updatedJson, newVersionId,
+                now.atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT));
+
+        // Mark all existing versions as not current
+        if (!isCreate) {
+            repository.markAllVersionsNotCurrent(DEFAULT_TENANT, resourceType, resourceId);
+        }
+
+        // Create new version entity
+        FhirResourceEntity entity = FhirResourceEntity.builder()
+                .resourceType(resourceType)
+                .resourceId(resourceId)
+                .fhirVersion(version.getCode())
+                .versionId(newVersionId)
+                .isCurrent(true)
+                .isDeleted(false)
+                .content(updatedJson)
+                .lastUpdated(now)
+                .createdAt(isCreate ? now : null)
+                .tenantId(DEFAULT_TENANT)
+                .build();
+
+        repository.save(entity);
+
+        log.info("Updated custom resource {}/{} to version {}", resourceType, resourceId, newVersionId);
 
         return new ResourceResult(resourceId, newVersionId, updatedJson, now, false);
     }
@@ -325,11 +447,23 @@ public class FhirResourceService {
         bundle.setType(Bundle.BundleType.SEARCHSET);
         bundle.setTotal((int) page.getTotalElements());
 
+        // Check if this is a custom resource type
+        boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
+
         for (FhirResourceEntity entity : page.getContent()) {
-            IBaseResource resource = parser.parseResource(entity.getContent());
             Bundle.BundleEntryComponent entry = bundle.addEntry();
             entry.setFullUrl(buildFullUrl(resourceType, entity.getResourceId()));
-            entry.setResource((org.hl7.fhir.r5.model.Resource) resource);
+
+            if (isCustomResource) {
+                // For custom resources: parse as Basic with raw JSON stored in extension
+                org.hl7.fhir.r5.model.Basic basic = createBasicWrapperForCustomResource(
+                        entity.getContent(), resourceType, entity.getResourceId());
+                entry.setResource(basic);
+            } else {
+                // Standard FHIR resources: parse normally
+                IBaseResource resource = parser.parseResource(entity.getContent());
+                entry.setResource((org.hl7.fhir.r5.model.Resource) resource);
+            }
         }
 
         // Add pagination links
@@ -339,6 +473,166 @@ public class FhirResourceService {
                 resourceType, params.keySet(), page.getNumberOfElements(), page.getTotalElements());
 
         return bundle;
+    }
+
+    /**
+     * Search for custom FHIR resources and return raw JSON Bundle.
+     * This is used when the resource type is not known to HAPI FHIR.
+     *
+     * @param resourceType the FHIR resource type
+     * @param params search parameters
+     * @param version the FHIR version
+     * @param count maximum number of results
+     * @param requestUrl the full request URL for building pagination links
+     * @return JSON string of the search result bundle
+     */
+    @Transactional(readOnly = true)
+    public String searchCustomResourceAsJson(String resourceType, Map<String, String> params,
+                                              FhirVersion version, int count, String requestUrl) {
+        // Validate search parameters if validation is enabled
+        if (validationConfig.isEnabled() && validationConfig.isValidateSearchParameters()) {
+            validateSearchParametersOrThrow(resourceType, params, version);
+        }
+
+        // Handle pagination parameters
+        int offset = 0;
+        if (params.containsKey("_offset")) {
+            try {
+                offset = Integer.parseInt(params.get("_offset"));
+            } catch (NumberFormatException e) {
+                // Use default
+            }
+        }
+
+        Pageable pageable = PageRequest.of(offset / Math.max(count, 1), Math.min(count, 1000));
+
+        // Use the custom search method with parameters
+        Page<FhirResourceEntity> page = repository.searchWithParams(
+                DEFAULT_TENANT, resourceType, params, pageable);
+
+        // Build JSON manually
+        StringBuilder json = new StringBuilder();
+        json.append("{\"resourceType\":\"Bundle\",\"type\":\"searchset\",\"total\":");
+        json.append(page.getTotalElements());
+
+        // Add links
+        json.append(",\"link\":[");
+        json.append(buildPaginationLinksJson(requestUrl, params, count, offset, page));
+        json.append("]");
+
+        // Add entries
+        json.append(",\"entry\":[");
+        boolean first = true;
+        for (FhirResourceEntity entity : page.getContent()) {
+            if (!first) {
+                json.append(",");
+            }
+            first = false;
+            json.append("{\"fullUrl\":\"");
+            json.append(buildFullUrl(resourceType, entity.getResourceId()));
+            json.append("\",\"resource\":");
+            json.append(entity.getContent());
+            json.append("}");
+        }
+        json.append("]}");
+
+        log.debug("Search custom resource {} with params {} returned {} results (total: {})",
+                resourceType, params.keySet(), page.getNumberOfElements(), page.getTotalElements());
+
+        return json.toString();
+    }
+
+    /**
+     * Build pagination links as JSON array content.
+     */
+    private String buildPaginationLinksJson(String requestUrl, Map<String, String> params,
+                                             int count, int offset, Page<FhirResourceEntity> page) {
+        Map<String, String> baseParams = new HashMap<>(params);
+        baseParams.remove("_count");
+        baseParams.remove("_offset");
+
+        String baseUrl = requestUrl;
+        int queryIndex = requestUrl.indexOf('?');
+        if (queryIndex > 0) {
+            baseUrl = requestUrl.substring(0, queryIndex);
+        }
+
+        StringBuilder links = new StringBuilder();
+
+        // Self link
+        links.append("{\"relation\":\"self\",\"url\":\"").append(escapeJson(buildSearchUrl(baseUrl, baseParams, count, offset))).append("\"}");
+
+        // First link
+        links.append(",{\"relation\":\"first\",\"url\":\"").append(escapeJson(buildSearchUrl(baseUrl, baseParams, count, 0))).append("\"}");
+
+        // Previous link
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - count);
+            links.append(",{\"relation\":\"previous\",\"url\":\"").append(escapeJson(buildSearchUrl(baseUrl, baseParams, count, prevOffset))).append("\"}");
+        }
+
+        // Next link
+        if (page.hasNext()) {
+            int nextOffset = offset + count;
+            links.append(",{\"relation\":\"next\",\"url\":\"").append(escapeJson(buildSearchUrl(baseUrl, baseParams, count, nextOffset))).append("\"}");
+        }
+
+        // Last link
+        long totalElements = page.getTotalElements();
+        if (totalElements > 0) {
+            int lastOffset = (int) ((totalElements - 1) / count) * count;
+            links.append(",{\"relation\":\"last\",\"url\":\"").append(escapeJson(buildSearchUrl(baseUrl, baseParams, count, lastOffset))).append("\"}");
+        }
+
+        return links.toString();
+    }
+
+    /**
+     * Escape a string for JSON.
+     */
+    private String escapeJson(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
+    }
+
+    /**
+     * Create a Basic resource wrapper for a custom resource.
+     * The actual resource content is stored in an extension.
+     */
+    private org.hl7.fhir.r5.model.Basic createBasicWrapperForCustomResource(String content,
+                                                                              String resourceType,
+                                                                              String resourceId) {
+        org.hl7.fhir.r5.model.Basic basic = new org.hl7.fhir.r5.model.Basic();
+        basic.setId(resourceId);
+
+        // Set code to indicate this is a custom resource wrapper
+        org.hl7.fhir.r5.model.CodeableConcept code = new org.hl7.fhir.r5.model.CodeableConcept();
+        code.addCoding()
+            .setSystem("http://fhir4java.org/fhir/CodeSystem/custom-resource-types")
+            .setCode(resourceType)
+            .setDisplay("Custom Resource: " + resourceType);
+        basic.setCode(code);
+
+        // Store the actual resource content in an extension
+        org.hl7.fhir.r5.model.Extension ext = new org.hl7.fhir.r5.model.Extension();
+        ext.setUrl("http://fhir4java.org/fhir/StructureDefinition/custom-resource-content");
+        ext.setValue(new org.hl7.fhir.r5.model.StringType(content));
+        basic.addExtension(ext);
+
+        return basic;
+    }
+
+    /**
+     * Check if a resource type is a custom resource.
+     */
+    public boolean isCustomResource(String resourceType, FhirVersion version) {
+        return customResourceHelper.isCustomResource(resourceType, version);
     }
 
     /**
@@ -366,6 +660,9 @@ public class FhirResourceService {
         bundle.setType(Bundle.BundleType.HISTORY);
         bundle.setTotal(versions.size());
 
+        // Check if this is a custom resource type
+        boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
+
         for (FhirResourceEntity entity : versions) {
             Bundle.BundleEntryComponent entry = bundle.addEntry();
             entry.setFullUrl(buildFullUrl(resourceType, entity.getResourceId()));
@@ -388,14 +685,88 @@ public class FhirResourceService {
             entry.setResponse(response);
 
             if (!entity.getIsDeleted()) {
-                IBaseResource resource = parser.parseResource(entity.getContent());
-                entry.setResource((org.hl7.fhir.r5.model.Resource) resource);
+                if (isCustomResource) {
+                    // For custom resources: parse as Basic with raw JSON stored in extension
+                    org.hl7.fhir.r5.model.Basic basic = createBasicWrapperForCustomResource(
+                            entity.getContent(), resourceType, entity.getResourceId());
+                    entry.setResource(basic);
+                } else {
+                    // Standard FHIR resources: parse normally
+                    IBaseResource resource = parser.parseResource(entity.getContent());
+                    entry.setResource((org.hl7.fhir.r5.model.Resource) resource);
+                }
             }
         }
 
         log.debug("History {}/{} returned {} versions", resourceType, resourceId, versions.size());
 
         return bundle;
+    }
+
+    /**
+     * Get history for a custom resource and return raw JSON Bundle.
+     *
+     * @param resourceType the FHIR resource type
+     * @param resourceId the resource ID
+     * @param version the FHIR version
+     * @return JSON string of the history bundle
+     */
+    @Transactional(readOnly = true)
+    public String historyCustomResourceAsJson(String resourceType, String resourceId, FhirVersion version) {
+        List<FhirResourceEntity> versions = repository
+                .findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
+                        DEFAULT_TENANT, resourceType, resourceId);
+
+        if (versions.isEmpty()) {
+            throw new ResourceNotFoundException(resourceType, resourceId);
+        }
+
+        // Build JSON manually
+        StringBuilder json = new StringBuilder();
+        json.append("{\"resourceType\":\"Bundle\",\"type\":\"history\",\"total\":");
+        json.append(versions.size());
+
+        // Add entries
+        json.append(",\"entry\":[");
+        boolean first = true;
+        for (FhirResourceEntity entity : versions) {
+            if (!first) {
+                json.append(",");
+            }
+            first = false;
+
+            json.append("{\"fullUrl\":\"").append(buildFullUrl(resourceType, entity.getResourceId())).append("\"");
+
+            // Request
+            String method;
+            if (entity.getIsDeleted()) {
+                method = "DELETE";
+            } else if (entity.getVersionId() == 1) {
+                method = "POST";
+            } else {
+                method = "PUT";
+            }
+            json.append(",\"request\":{\"method\":\"").append(method).append("\",\"url\":\"")
+                .append(resourceType).append("/").append(resourceId).append("\"}");
+
+            // Response
+            json.append(",\"response\":{\"status\":\"200\",\"etag\":\"W/\\\"")
+                .append(entity.getVersionId()).append("\\\"\",\"lastModified\":\"")
+                .append(entity.getLastUpdated().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT))
+                .append("\"}");
+
+            // Resource (if not deleted)
+            if (!entity.getIsDeleted()) {
+                json.append(",\"resource\":").append(entity.getContent());
+            }
+
+            json.append("}");
+        }
+        json.append("]}");
+
+        log.debug("History custom resource {}/{} returned {} versions", resourceType, resourceId, versions.size());
+
+        return json.toString();
     }
 
     /**
@@ -445,6 +816,26 @@ public class FhirResourceService {
             }
             // In lenient mode, log warnings but continue
             log.warn("Resource validation issues (lenient mode): {}", result);
+        }
+    }
+
+    /**
+     * Validate a custom resource JSON string and throw FhirException if validation fails.
+     */
+    private void validateCustomResourceOrThrow(String resourceJson, FhirVersion version) {
+        ValidationResult result = profileValidator.validateJsonString(resourceJson, version);
+
+        if (result.hasErrors()) {
+            // In strict mode, throw on any errors
+            if (validationConfig.isStrictProfileValidation()) {
+                String errors = result.getErrors().stream()
+                        .map(issue -> issue.message())
+                        .reduce((a, b) -> a + "; " + b)
+                        .orElse("Validation failed");
+                throw new FhirException("Custom resource validation failed: " + errors, "invalid");
+            }
+            // In lenient mode, log warnings but continue
+            log.warn("Custom resource validation issues (lenient mode): {}", result);
         }
     }
 

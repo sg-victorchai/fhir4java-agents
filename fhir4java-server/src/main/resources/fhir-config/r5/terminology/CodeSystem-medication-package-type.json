@@ -1,0 +1,59 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "medication-package-type",
+  "url": "http://fhir4java.org/CodeSystem/medication-package-type",
+  "version": "1.0.0",
+  "name": "MedicationPackageType",
+  "title": "Medication Package Type",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Types of medication packaging for inventory tracking",
+  "caseSensitive": true,
+  "valueSet": "http://fhir4java.org/ValueSet/medication-package-type",
+  "content": "complete",
+  "count": 8,
+  "concept": [
+    {
+      "code": "box",
+      "display": "Box",
+      "definition": "A cardboard or paper box containing medication units (e.g., blister packs)."
+    },
+    {
+      "code": "bottle",
+      "display": "Bottle",
+      "definition": "A bottle containing medication (tablets, capsules, or liquid)."
+    },
+    {
+      "code": "vial",
+      "display": "Vial",
+      "definition": "A small glass or plastic container for injectable medications."
+    },
+    {
+      "code": "ampoule",
+      "display": "Ampoule",
+      "definition": "A sealed glass container for single-dose injectable medications."
+    },
+    {
+      "code": "blister",
+      "display": "Blister Pack",
+      "definition": "A blister pack containing individual medication doses."
+    },
+    {
+      "code": "tube",
+      "display": "Tube",
+      "definition": "A tube containing cream, ointment, or gel medication."
+    },
+    {
+      "code": "sachet",
+      "display": "Sachet",
+      "definition": "A small sealed packet containing powder or granules."
+    },
+    {
+      "code": "cartridge",
+      "display": "Cartridge",
+      "definition": "A cartridge for use with injection pens or inhalers."
+    }
+  ]
+}

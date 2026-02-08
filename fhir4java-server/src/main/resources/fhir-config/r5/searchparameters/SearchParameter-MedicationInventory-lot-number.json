@@ -1,0 +1,17 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "MedicationInventory-lot-number",
+  "url": "http://fhir4java.org/SearchParameter/MedicationInventory-lot-number",
+  "version": "1.0.0",
+  "name": "lot-number",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Search by lot/batch number",
+  "code": "lot-number",
+  "base": ["MedicationInventory"],
+  "type": "string",
+  "expression": "MedicationInventory.lotNumber",
+  "processingMode": "normal"
+}

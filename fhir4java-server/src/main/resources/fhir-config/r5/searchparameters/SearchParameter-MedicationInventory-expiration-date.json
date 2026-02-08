@@ -1,0 +1,17 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "MedicationInventory-expiration-date",
+  "url": "http://fhir4java.org/SearchParameter/MedicationInventory-expiration-date",
+  "version": "1.0.0",
+  "name": "expiration-date",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Search by expiration date",
+  "code": "expiration-date",
+  "base": ["MedicationInventory"],
+  "type": "date",
+  "expression": "MedicationInventory.expirationDate",
+  "processingMode": "normal"
+}

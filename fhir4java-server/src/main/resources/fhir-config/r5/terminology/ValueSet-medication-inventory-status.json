@@ -1,0 +1,20 @@
+{
+  "resourceType": "ValueSet",
+  "id": "medication-inventory-status",
+  "url": "http://fhir4java.org/ValueSet/medication-inventory-status",
+  "version": "1.0.0",
+  "name": "MedicationInventoryStatusValueSet",
+  "title": "Medication Inventory Status Value Set",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-07",
+  "publisher": "FHIR4Java",
+  "description": "Allowed status values for medication inventory items",
+  "compose": {
+    "include": [
+      {
+        "system": "http://fhir4java.org/CodeSystem/medication-inventory-status"
+      }
+    ]
+  }
+}
