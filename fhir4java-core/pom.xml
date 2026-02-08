@@ -94,4 +94,27 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- FHIR Resource Code Generation Plugin -->
+            <plugin>
+                <groupId>org.fhirframework</groupId>
+                <artifactId>fhir4java-codegen</artifactId>
+                <version>${project.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <structureDefinitionDir>${project.basedir}/../fhir4java-server/src/main/resources/fhir-config/r5/profiles</structureDefinitionDir>
+                            <outputDirectory>${project.build.directory}/generated-sources/fhir</outputDirectory>
+                            <packageName>org.fhirframework.generated.resources</packageName>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
