@@ -10,6 +10,8 @@ import javax.lang.model.element.Modifier;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Builds Java class files from StructureDefinition metadata using JavaPoet.
@@ -111,8 +113,18 @@ public class JavaClassBuilder {
             }
         }
 
+        // Track generated field names to avoid duplicates (e.g., from slices)
+        Set<String> generatedFields = new HashSet<>();
+
         // Generate fields and methods for root elements
         for (StructureDefinitionParser.ElementDefinition element : rootElements) {
+            String fieldName = element.getElementName();
+            // Skip if field already generated (handles sliced elements)
+            if (generatedFields.contains(fieldName)) {
+                log.debug("Skipping duplicate field '{}' in {}", fieldName, metadata.getName());
+                continue;
+            }
+            generatedFields.add(fieldName);
             addFieldForElement(classBuilder, element, metadata.getName());
         }
 
@@ -124,6 +136,35 @@ public class JavaClassBuilder {
                 .addStatement("return $S", metadata.getName())
                 .build();
         classBuilder.addMethod(fhirTypeMethod);
+
+        // Add getResourceType() method (required by Resource)
+        // For custom resources, return null since they don't have an entry in ResourceType enum
+        MethodSpec getResourceTypeMethod = MethodSpec.methodBuilder("getResourceType")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ClassName.get("org.hl7.fhir.r5.model", "ResourceType"))
+                .addStatement("return null") // Custom resources don't have a ResourceType enum entry
+                .build();
+        classBuilder.addMethod(getResourceTypeMethod);
+
+        // Add copy() method (required by DomainResource)
+        ClassName resourceClassName = ClassName.get(packageName, metadata.getName());
+        MethodSpec.Builder copyMethodBuilder = MethodSpec.methodBuilder("copy")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(resourceClassName)
+                .addStatement("$T dst = new $T()", resourceClassName, resourceClassName);
+
+        // Copy all fields
+        for (String fieldName : generatedFields) {
+            copyMethodBuilder.addStatement("dst.$N = this.$N", fieldName, fieldName);
+        }
+
+        // Call parent copy method to copy base fields
+        copyMethodBuilder.addStatement("copyValues(dst)");
+        copyMethodBuilder.addStatement("return dst");
+
+        classBuilder.addMethod(copyMethodBuilder.build());
 
         // Build and write the file
         JavaFile javaFile = JavaFile.builder(packageName, classBuilder.build())

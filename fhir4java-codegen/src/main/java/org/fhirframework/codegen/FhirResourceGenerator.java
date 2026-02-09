@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Main orchestrator for generating Java classes from FHIR StructureDefinitions.
@@ -63,6 +64,19 @@ public class FhirResourceGenerator {
                 // Parse the StructureDefinition
                 StructureDefinitionParser.StructureDefinitionMetadata metadata = parser.parse(file);
 
+                // Only generate classes for custom resources (specializations, not constraints/profiles)
+                if (!metadata.isCustomResource()) {
+                    log.debug("Skipping {} - not a custom resource (derivation={}, kind={}, abstract={})",
+                            metadata.getName(), metadata.getDerivation(), metadata.getKind(), metadata.isAbstractResource());
+                    continue;
+                }
+
+                // Skip standard FHIR resources that already exist in HAPI library
+                if (isStandardFhirResource(metadata.getName())) {
+                    log.debug("Skipping {} - standard FHIR resource already in HAPI", metadata.getName());
+                    continue;
+                }
+
                 // Generate Java class
                 classBuilder.build(metadata, packageName, outputDirectory);
 
@@ -106,4 +120,52 @@ public class FhirResourceGenerator {
 
         return generatedClassName;
     }
+
+    /**
+     * Check if a resource name is a standard FHIR resource that already exists in the HAPI library.
+     * These should not be regenerated as they're already provided by HAPI FHIR.
+     */
+    private boolean isStandardFhirResource(String resourceName) {
+        return STANDARD_FHIR_RESOURCES.contains(resourceName);
+    }
+
+    /**
+     * Set of standard FHIR R5 resources that exist in HAPI FHIR library.
+     * Custom resources should NOT be in this list.
+     */
+    private static final Set<String> STANDARD_FHIR_RESOURCES = Set.of(
+            "Account", "ActivityDefinition", "ActorDefinition", "AdministrableProductDefinition",
+            "AdverseEvent", "AllergyIntolerance", "Appointment", "AppointmentResponse",
+            "ArtifactAssessment", "AuditEvent", "Basic", "Binary", "BiologicallyDerivedProduct",
+            "BiologicallyDerivedProductDispense", "BodyStructure", "Bundle", "CapabilityStatement",
+            "CarePlan", "CareTeam", "ChargeItem", "ChargeItemDefinition", "Citation", "Claim",
+            "ClaimResponse", "ClinicalImpression", "ClinicalUseDefinition", "CodeSystem",
+            "Communication", "CommunicationRequest", "CompartmentDefinition", "Composition",
+            "ConceptMap", "Condition", "ConditionDefinition", "Consent", "Contract", "Coverage",
+            "CoverageEligibilityRequest", "CoverageEligibilityResponse", "DetectedIssue", "Device",
+            "DeviceAssociation", "DeviceDefinition", "DeviceDispense", "DeviceMetric", "DeviceRequest",
+            "DeviceUsage", "DiagnosticReport", "DocumentReference", "Encounter", "EncounterHistory",
+            "Endpoint", "EnrollmentRequest", "EnrollmentResponse", "EpisodeOfCare", "EventDefinition",
+            "Evidence", "EvidenceReport", "EvidenceVariable", "ExampleScenario", "ExplanationOfBenefit",
+            "FamilyMemberHistory", "Flag", "FormularyItem", "GenomicStudy", "Goal", "GraphDefinition",
+            "Group", "GuidanceResponse", "HealthcareService", "ImagingSelection", "ImagingStudy",
+            "Immunization", "ImmunizationEvaluation", "ImmunizationRecommendation", "ImplementationGuide",
+            "Ingredient", "InsurancePlan", "InventoryItem", "InventoryReport", "Invoice", "Library",
+            "Linkage", "List", "Location", "ManufacturedItemDefinition", "Measure", "MeasureReport",
+            "Medication", "MedicationAdministration", "MedicationDispense", "MedicationKnowledge",
+            "MedicationRequest", "MedicationStatement", "MedicinalProductDefinition", "MessageDefinition",
+            "MessageHeader", "MolecularSequence", "NamingSystem", "NutritionIntake", "NutritionOrder",
+            "NutritionProduct", "Observation", "ObservationDefinition", "OperationDefinition",
+            "OperationOutcome", "Organization", "OrganizationAffiliation", "PackagedProductDefinition",
+            "Parameters", "Patient", "PaymentNotice", "PaymentReconciliation", "Permission", "Person",
+            "PlanDefinition", "Practitioner", "PractitionerRole", "Procedure", "Provenance",
+            "Questionnaire", "QuestionnaireResponse", "RegulatedAuthorization", "RelatedPerson",
+            "RequestOrchestration", "Requirements", "ResearchStudy", "ResearchSubject", "RiskAssessment",
+            "Schedule", "SearchParameter", "ServiceRequest", "Slot", "Specimen", "SpecimenDefinition",
+            "StructureDefinition", "StructureMap", "Subscription", "SubscriptionStatus", "SubscriptionTopic",
+            "Substance", "SubstanceDefinition", "SubstanceNucleicAcid", "SubstancePolymer", "SubstanceProtein",
+            "SubstanceReferenceInformation", "SubstanceSourceMaterial", "SupplyDelivery", "SupplyRequest",
+            "Task", "TerminologyCapabilities", "TestPlan", "TestReport", "TestScript", "Transport",
+            "ValueSet", "VerificationResult", "VisionPrescription"
+    );
 }

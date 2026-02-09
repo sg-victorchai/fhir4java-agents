@@ -9,6 +9,7 @@ WORKDIR /app
 # Copy Maven wrapper and POM files first for better caching
 COPY mvnw pom.xml ./
 COPY .mvn .mvn
+COPY fhir4java-codegen/pom.xml fhir4java-codegen/
 COPY fhir4java-core/pom.xml fhir4java-core/
 COPY fhir4java-persistence/pom.xml fhir4java-persistence/
 COPY fhir4java-plugin/pom.xml fhir4java-plugin/
@@ -25,6 +26,7 @@ RUN chmod +x mvnw && \
 RUN ./mvnw dependency:go-offline -B
 
 # Copy source code
+COPY fhir4java-codegen/src fhir4java-codegen/src
 COPY fhir4java-core/src fhir4java-core/src
 COPY fhir4java-persistence/src fhir4java-persistence/src
 COPY fhir4java-plugin/src fhir4java-plugin/src

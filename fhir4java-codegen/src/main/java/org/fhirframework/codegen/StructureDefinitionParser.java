@@ -39,6 +39,9 @@ public class StructureDefinitionParser {
         String baseDefinition = getTextValue(root, "baseDefinition");
         String description = getTextValue(root, "description");
         String fhirVersion = getTextValue(root, "fhirVersion");
+        String derivation = getTextValue(root, "derivation");
+        String kind = getTextValue(root, "kind");
+        boolean isAbstract = getBooleanValue(root, "abstract", false);
         
         // Parse elements from differential
         List<ElementDefinition> elements = new ArrayList<>();
@@ -61,6 +64,9 @@ public class StructureDefinitionParser {
         metadata.setBaseDefinition(baseDefinition);
         metadata.setDescription(description);
         metadata.setFhirVersion(fhirVersion);
+        metadata.setDerivation(derivation);
+        metadata.setKind(kind);
+        metadata.setAbstractResource(isAbstract);
         metadata.setElements(elements);
         metadata.setFileName(file.getName());
         
@@ -151,8 +157,19 @@ public class StructureDefinitionParser {
         private String baseDefinition;
         private String description;
         private String fhirVersion;
+        private String derivation;
+        private String kind;
+        private boolean abstractResource;
         private List<ElementDefinition> elements;
         private String fileName;
+
+        /**
+         * Check if this is a custom resource (specialization of DomainResource/Resource).
+         * Custom resources have derivation="specialization", are resource kinds, and are not abstract.
+         */
+        public boolean isCustomResource() {
+            return "specialization".equals(derivation) && "resource".equals(kind) && !abstractResource;
+        }
     }
 
     /**

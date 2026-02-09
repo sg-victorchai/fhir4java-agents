@@ -3,6 +3,7 @@ package org.fhirframework.core.resource;
 import ca.uhn.fhir.context.FhirContext;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.version.FhirVersion;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -71,8 +72,18 @@ public class CustomResourceRegistry {
                 String className = GENERATED_RESOURCES_PACKAGE + "." + resourceName;
                 Class<?> resourceClass = Class.forName(className);
 
+                // Verify it's a valid FHIR resource class
+                if (!IBaseResource.class.isAssignableFrom(resourceClass)) {
+                    log.warn("Class {} does not implement IBaseResource, skipping", className);
+                    continue;
+                }
+
+                @SuppressWarnings("unchecked")
+                Class<? extends IBaseResource> typedResourceClass =
+                        (Class<? extends IBaseResource>) resourceClass;
+
                 // Register the custom resource class with HAPI
-                ctx.getResourceDefinition(resourceClass);
+                ctx.getResourceDefinition(typedResourceClass);
 
                 String fullName = resourceName + " (" + version.getCode() + ")";
                 if (!registeredResources.contains(fullName)) {

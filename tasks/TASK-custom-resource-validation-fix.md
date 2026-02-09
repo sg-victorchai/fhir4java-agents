@@ -3,137 +3,216 @@
 ## Status: In Progress (Blocked)
 
 ## Date Created: 2026-02-08
+## Last Updated: 2026-02-09
+
+---
 
 ## Problem Summary
 
-The custom resource validation implementation has two critical issues:
+The custom resource validation implementation has two critical issues discovered after code generation is working:
 
-### Issue 1: HAPI Validator Rejects Unknown Resource Types
+### Issue 1: Backbone Elements Ignored (Validation Disabled)
 
-When profile validation is enabled, even valid JSON payloads conforming to the StructureDefinition are rejected with:
+When profile validation is disabled, the FHIR server ignores backbone elements and persists only root-level elements. Nested elements under backbone elements like `packaging.type`, `packaging.unitsPerPackage` are not recognized.
 
+**Error Log:**
 ```
-Custom resource validation failed: This content cannot be parsed (unknown or unrecognized resource name 'MedicationInventory')
+fhir4java-server    | 2026-02-09T13:53:51.848Z DEBUG 7 --- [nio-8080-exec-8] o.f.a.controller.FhirResourceController  : CREATE MedicationInventory (version=R5)
+fhir4java-server    | 2026-02-09T13:53:51.849Z  WARN 7 --- [nio-8080-exec-8] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'type' found while parsing
+fhir4java-server    | 2026-02-09T13:53:51.849Z  WARN 7 --- [nio-8080-exec-8] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'unitsPerPackage' found while parsing
+fhir4java-server    | 2026-02-09T13:53:51.849Z  WARN 7 --- [nio-8080-exec-8] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'packageCount' found while parsing
+fhir4java-server    | 2026-02-09T13:53:51.849Z  WARN 7 --- [nio-8080-exec-8] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'expiration2Date' found while parsing
+fhir4java-server    | 2026-02-09T13:53:51.860Z  WARN 7 --- [nio-8080-exec-8] o.f.core.validation.ProfileValidator     : Profile validation is disabled - returning success without validation
 ```
 
-**Root Cause**: HAPI's `FhirValidator.validateWithResult(String jsonString)` internally tries to parse the JSON into an `IBaseResource` before validation. Since HAPI doesn't know about `MedicationInventory`, parsing fails before validation even starts.
+**Root Cause**: The `JavaClassBuilder` in `fhir4java-codegen` only generates fields for direct children of the resource (path depth = 2). It does NOT generate:
+- Backbone element inner classes (e.g., `MedicationInventory.Packaging`)
+- Fields for nested elements under backbone elements (e.g., `packaging.type`, `packaging.unitsPerPackage`)
 
-### Issue 2: Invalid Elements Are Accepted When Validation Disabled
+**Current Generated Code Issue**:
+```java
+// Current: packaging is just List<StringType> - wrong!
+@Child(name = "packaging", min = 0, max = Child.MAX_UNLIMITED)
+private List<StringType> packaging;
 
-When profile validation is disabled, the system accepts and persists resources with invalid element names that don't exist in the StructureDefinition.
+// Should be: packaging is a backbone element with its own class
+@Child(name = "packaging", min = 0, max = Child.MAX_UNLIMITED)
+private List<PackagingComponent> packaging;
 
-**Root Cause**: `CustomResourceHelper.validateBasicStructure()` only validates:
-- JSON is valid
-- `resourceType` field matches
+@Block
+public static class PackagingComponent extends BackboneElement {
+    @Child(name = "type")
+    private CodeableConcept type;
 
-It does NOT validate:
-- Element names against StructureDefinition
-- Cardinality constraints
-- Data types
-- Terminology bindings
+    @Child(name = "unitsPerPackage")
+    private IntegerType unitsPerPackage;
 
-## Files Modified (Partial Implementation)
+    @Child(name = "packageCount")
+    private IntegerType packageCount;
+    // ...
+}
+```
 
-| File | Changes Made |
-|------|--------------|
-| `ProfileValidator.java` | Added `validateJsonString()` method (not working for custom resources) |
-| `FhirResourceService.java` | Added `createCustomResource()`, `updateCustomResource()`, custom resource helper injection |
-| `FhirResourceController.java` | Added `CustomResourceHelper` injection, custom resource handling in create/search/history |
+### Issue 2: Profile Validation Fails (Validation Enabled)
 
-## Required Solution
+When profile validation is enabled, the HAPI validator cannot process the custom resource because it doesn't recognize the resource type.
 
-### Approach: Use HAPI's SchemaValidator Directly
+**Error Log:**
+```
+fhir4java-server    | 2026-02-09T14:05:49.220Z  WARN 7 --- [nio-8080-exec-7] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'type' found while parsing
+fhir4java-server    | 2026-02-09T14:05:49.220Z  WARN 7 --- [nio-8080-exec-7] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'unitsPerPackage' found while parsing
+fhir4java-server    | 2026-02-09T14:05:49.220Z  WARN 7 --- [nio-8080-exec-7] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'packageCount' found while parsing
+fhir4java-server    | 2026-02-09T14:05:49.220Z  WARN 7 --- [nio-8080-exec-7] ca.uhn.fhir.parser.LenientErrorHandler   : Unknown element 'expiration2Date' found while parsing
+fhir4java-server    | 2026-02-09T14:05:49.433Z DEBUG 7 --- [nio-8080-exec-7] o.f.core.validation.ProfileValidator     : Recorded metric: fhir.validation.attempts [version=r5, result=failure, resourceType=MedicationInventory]
+fhir4java-server    | 2026-02-09T14:05:49.443Z DEBUG 7 --- [nio-8080-exec-7] .m.m.a.ExceptionHandlerExceptionResolver : Using @ExceptionHandler org.fhirframework.api.exception.FhirExceptionHandler#handleFhirException(FhirException, HttpServletRequest)
+fhir4java-server    | 2026-02-09T14:05:49.444Z  WARN 7 --- [nio-8080-exec-7] o.f.api.exception.FhirExceptionHandler   : FHIR exception: Resource validation failed: This content cannot be parsed (unknown or unrecognized resource name 'MedicationInventory'); This content cannot be parsed (unknown or unrecognized resource name 'MedicationInventory')
+fhir4java-server    | 2026-02-09T14:05:49.467Z DEBUG 7 --- [nio-8080-exec-7] .m.m.a.ExceptionHandlerExceptionResolver : Resolved [org.fhirframework.core.exception.FhirException: Resource validation failed: This content cannot be parsed (unknown or unrecognized resource name 'MedicationInventory'); This content cannot be parsed (unknown or unrecognized resource name 'MedicationInventory')]
+```
 
-Instead of using `FhirValidator.validateWithResult(jsonString)` which requires parsing, we need to:
+**Root Cause**: HAPI's `FhirValidator.validateWithResult()` internally tries to parse the JSON into an `IBaseResource` before validation. The validator's parsing chain does not recognize the custom `MedicationInventory` resource type even though:
+1. The generated class exists and is compiled
+2. `CustomResourceRegistry` registers it with the FhirContext
+3. `CustomResourceValidationSupport` provides the StructureDefinition
 
-1. **Load StructureDefinition as JSON Schema** - Extract validation rules from the StructureDefinition
-2. **Use JSON Schema Validation** - Validate the JSON against the extracted rules without HAPI parsing
-3. **Or Use HAPI's Internal Validator Differently** - Access the underlying `FhirInstanceValidator` with a pre-registered custom resource definition
+The issue is that the HAPI validator uses a separate context/parsing mechanism that isn't aware of the registered custom resources.
 
-### Option A: Register Custom Resource with HAPI (Preferred)
+---
 
-Create a dynamic resource registration that tells HAPI about custom resources:
+## Required Solutions
+
+### TODO 1: Generate Backbone Element Classes
+
+**Location**: `fhir4java-codegen/src/main/java/org/fhirframework/codegen/JavaClassBuilder.java`
+
+**Changes Required**:
+
+1. Identify backbone elements in the StructureDefinition (elements with path depth > 2 and `type[0].code == "BackboneElement"`)
+
+2. Generate inner `@Block` classes for each backbone element:
+   ```java
+   @Block
+   public static class PackagingComponent extends BackboneElement {
+       // fields for nested elements
+
+       @Override
+       public PackagingComponent copy() {
+           // copy implementation
+       }
+   }
+   ```
+
+3. Use the backbone component type for the parent field instead of `StringType`:
+   ```java
+   @Child(name = "packaging", min = 0, max = Child.MAX_UNLIMITED)
+   private List<PackagingComponent> packaging;
+   ```
+
+4. Process nested elements (path depth > 2) and add them to the correct backbone class
+
+**Reference Implementation**: Look at how HAPI generates classes like `Patient.ContactComponent` or `Observation.ComponentComponent`
+
+### TODO 2: Fix Profile Validation for Custom Resources
+
+**Location**: `fhir4java-core/src/main/java/org/fhirframework/core/validation/ProfileValidator.java`
+
+**Possible Approaches**:
+
+#### Option A: Pre-register Custom Resources with Validator Context
+
+Ensure the HAPI validator's internal context knows about custom resources before validation:
 
 ```java
-// In CustomResourceValidationSupport.java
-@Override
-public StructureDefinition fetchStructureDefinition(String url) {
-    // Return StructureDefinition for custom resources
-    // This tells HAPI how to validate them
-}
-
-@Override
-public boolean isCodeSystemSupported(ValidationSupportContext ctx, String system) {
-    // Support custom code systems
-}
+// In ProfileValidator or CustomResourceValidationSupport
+FhirInstanceValidator validator = new FhirInstanceValidator(validationSupport);
+// Ensure validationSupport chain includes CustomResourceValidationSupport
+// with proper fetchStructureDefinition() implementation
 ```
 
-The key is ensuring `CustomResourceValidationSupport` is properly integrated into the validation chain AND that HAPI can use the StructureDefinition to validate without needing a Java class.
+#### Option B: Use Pre-parsed Resource for Validation
 
-### Option B: JSON Schema Validation Library
+Instead of validating JSON string, parse it first with the custom-resource-aware context, then validate:
 
-Use a JSON Schema validation library (e.g., `everit-org/json-schema` or `networknt/json-schema-validator`):
+```java
+// Parse with context that knows about MedicationInventory
+IBaseResource resource = fhirContext.newJsonParser().parseResource(jsonString);
+// Then validate the parsed resource
+ValidationResult result = validator.validateWithResult(resource);
+```
+
+#### Option C: Bypass HAPI Validation for Custom Resources
+
+Implement custom JSON Schema validation that doesn't rely on HAPI parsing:
 
 1. Convert StructureDefinition to JSON Schema
-2. Validate incoming JSON against the schema
-3. Bypass HAPI entirely for validation
+2. Use a JSON Schema validation library (e.g., `networknt/json-schema-validator`)
+3. Validate JSON directly without HAPI parsing
 
-### Option C: Manual Element Validation
-
-Implement custom validation in `CustomResourceHelper`:
-
-1. Load StructureDefinition for the resource type
-2. Parse incoming JSON as a tree
-3. Walk the tree and validate each element against StructureDefinition
-4. Check cardinality, types, bindings
+---
 
 ## Implementation Tasks
 
-### Phase 1: Investigate HAPI Validation Chain
-- [ ] Debug why `CustomResourceValidationSupport.fetchStructureDefinition()` isn't being called during validation
-- [ ] Check if StructureDefinition is properly loaded by `CustomResourceLoader`
-- [ ] Verify validation support chain order in `ProfileValidator.initializeValidatorForVersion()`
+### Phase 1: Backbone Element Generation
+- [ ] Identify backbone elements in StructureDefinitionParser
+- [ ] Add `isBackboneElement()` check based on element type
+- [ ] Generate inner `@Block` static classes for backbone elements
+- [ ] Generate fields within backbone classes for nested elements
+- [ ] Update parent field types to use backbone component classes
+- [ ] Add `copy()` method to backbone classes
+- [ ] Test parsing with backbone elements
 
-### Phase 2: Fix StructureDefinition Registration
-- [ ] Ensure StructureDefinition is returned with correct URL format
-- [ ] Add logging to `CustomResourceValidationSupport` to trace calls
-- [ ] Test with `generateSnapshot: true` on the StructureDefinition
+### Phase 2: Profile Validation Fix
+- [ ] Debug why `CustomResourceValidationSupport` isn't recognized during validation
+- [ ] Ensure validation support chain properly includes custom resource support
+- [ ] Test with `generateSnapshot: true` on StructureDefinition
+- [ ] Consider pre-parsing approach if direct validation fails
+- [ ] Implement fallback JSON Schema validation if needed
 
-### Phase 3: Alternative Validation Path
-- [ ] If HAPI cannot validate unknown resource types, implement JSON Schema validation
-- [ ] Create `JsonSchemaValidator` utility class
-- [ ] Generate/maintain JSON Schema for each custom resource StructureDefinition
-
-### Phase 4: Testing
-- [ ] Test valid MedicationInventory is accepted
+### Phase 3: Testing
+- [ ] Test valid MedicationInventory with backbone elements is accepted
+- [ ] Test backbone element nested fields are persisted correctly
 - [ ] Test invalid element names are rejected
 - [ ] Test cardinality violations are caught
 - [ ] Test terminology binding validation
 
-## Error Logs
+---
 
-```
-fhir4java-server    | 2026-02-08T04:33:53.147Z DEBUG 7 --- [fhir4java-server] [nio-8080-exec-8] o.f.core.validation.ProfileValidator     : Recorded metric: fhir.validation.attempts [version=r5, result=failure, resourceType=MedicationInventory]
-fhir4java-server    | 2026-02-08T04:33:53.150Z  WARN 7 --- [fhir4java-server] [nio-8080-exec-8] o.f.api.exception.FhirExceptionHandler   : FHIR exception: Custom resource validation failed: This content cannot be parsed (unknown or unrecognized resource name 'MedicationInventory')
-```
+## Files to Modify
+
+| File | Changes Needed |
+|------|----------------|
+| `JavaClassBuilder.java` | Add backbone element class generation |
+| `StructureDefinitionParser.java` | Add backbone element detection |
+| `ProfileValidator.java` | Fix validation chain for custom resources |
+| `CustomResourceValidationSupport.java` | Ensure proper StructureDefinition delivery |
+
+---
 
 ## Related Files
 
+- `fhir4java-codegen/src/main/java/org/fhirframework/codegen/JavaClassBuilder.java`
+- `fhir4java-codegen/src/main/java/org/fhirframework/codegen/StructureDefinitionParser.java`
 - `fhir4java-core/src/main/java/org/fhirframework/core/validation/ProfileValidator.java`
 - `fhir4java-core/src/main/java/org/fhirframework/core/validation/CustomResourceValidationSupport.java`
 - `fhir4java-core/src/main/java/org/fhirframework/core/validation/CustomResourceLoader.java`
-- `fhir4java-core/src/main/java/org/fhirframework/core/resource/CustomResourceHelper.java`
-- `fhir4java-persistence/src/main/java/org/fhirframework/persistence/service/FhirResourceService.java`
+- `fhir4java-core/src/main/java/org/fhirframework/core/resource/CustomResourceRegistry.java`
 - `fhir4java-server/src/main/resources/fhir-config/r5/profiles/StructureDefinition-MedicationInventory.json`
+
+---
 
 ## References
 
-- HAPI FHIR Custom Resources: https://hapifhir.io/hapi-fhir/docs/model/custom_structures.html
+- HAPI FHIR Custom Structures: https://hapifhir.io/hapi-fhir/docs/model/custom_structures.html
+- HAPI FHIR BackboneElement: https://hapifhir.io/hapi-fhir/apidocs/hapi-fhir-structures-r5/org/hl7/fhir/r5/model/BackboneElement.html
 - FHIR Validation: https://www.hl7.org/fhir/validation.html
-- JSON Schema for FHIR: https://www.hl7.org/fhir/json-schema/
+- FHIR BackboneElement: https://www.hl7.org/fhir/backboneelement.html
+
+---
 
 ## Notes
 
-- Current workaround: Disable profile validation (`fhir4java.validation.profile-validation-enabled: false`)
-- This allows CRUD operations but does NOT validate custom resources against their StructureDefinition
-- Invalid elements will be accepted and persisted
+- **Current workaround**: Disable profile validation (`fhir4java.validation.profile-validation-enabled: false`)
+- This allows CRUD operations but:
+  - Does NOT validate custom resources against their StructureDefinition
+  - Backbone element fields are IGNORED (data loss!)
+  - Invalid elements will be accepted
+- Backbone element support is critical for proper MedicationInventory handling since `packaging` contains multiple nested fields
