@@ -93,39 +93,75 @@ public class JavaClassBuilder {
             classBuilder.addJavadoc(metadata.getDescription() + "\n");
         }
 
-        // Group elements by parent path for backbone elements
-        Map<String, List<StructureDefinitionParser.ElementDefinition>> elementsByParent = new HashMap<>();
+        // Step 1: Identify backbone elements and group nested children
+        Map<String, StructureDefinitionParser.ElementDefinition> backboneElements = new HashMap<>();
+        Map<String, List<StructureDefinitionParser.ElementDefinition>> backboneChildren = new HashMap<>();
         List<StructureDefinitionParser.ElementDefinition> rootElements = new ArrayList<>();
 
         for (StructureDefinitionParser.ElementDefinition element : metadata.getElements()) {
             if (element.isRootElement()) {
-                continue; // Skip the root element itself
+                continue; // Skip the resource root itself
             }
 
-            String[] pathParts = element.getPath().split("\\.");
-            if (pathParts.length == 2) {
-                // Direct child of resource
-                rootElements.add(element);
-            } else if (pathParts.length > 2) {
-                // Nested element (backbone element child)
-                String parentPath = String.join(".", Arrays.copyOf(pathParts, pathParts.length - 1));
-                elementsByParent.computeIfAbsent(parentPath, k -> new ArrayList<>()).add(element);
+            int depth = element.getPathDepth();
+
+            if (depth == 2) {
+                // Root-level field
+                if (element.isBackboneElement()) {
+                    backboneElements.put(element.getPath(), element);
+                } else {
+                    rootElements.add(element);
+                }
+            } else if (depth > 2) {
+                // Nested element - belongs to a backbone
+                String parentPath = element.getParentPath();
+                backboneChildren.computeIfAbsent(parentPath, k -> new ArrayList<>()).add(element);
             }
+        }
+
+        // Step 2: Generate inner classes for backbone elements
+        List<TypeSpec> backboneClasses = new ArrayList<>();
+        for (Map.Entry<String, StructureDefinitionParser.ElementDefinition> entry : backboneElements.entrySet()) {
+            String backbonePath = entry.getKey();
+            StructureDefinitionParser.ElementDefinition backboneElement = entry.getValue();
+            List<StructureDefinitionParser.ElementDefinition> children = backboneChildren.getOrDefault(backbonePath, new ArrayList<>());
+
+            TypeSpec backboneClass = generateBackboneClass(
+                backboneElement.getElementName(),
+                children,
+                metadata.getName()
+            );
+            backboneClasses.add(backboneClass);
+        }
+
+        // Add all backbone classes to the main resource class
+        for (TypeSpec backboneClass : backboneClasses) {
+            classBuilder.addType(backboneClass);
         }
 
         // Track generated field names to avoid duplicates (e.g., from slices)
         Set<String> generatedFields = new HashSet<>();
 
-        // Generate fields and methods for root elements
+        // Step 3: Generate root-level fields (non-backbone elements)
         for (StructureDefinitionParser.ElementDefinition element : rootElements) {
             String fieldName = element.getElementName();
-            // Skip if field already generated (handles sliced elements)
             if (generatedFields.contains(fieldName)) {
                 log.debug("Skipping duplicate field '{}' in {}", fieldName, metadata.getName());
                 continue;
             }
             generatedFields.add(fieldName);
-            addFieldForElement(classBuilder, element, metadata.getName());
+            addFieldForElement(classBuilder, element, metadata.getName(), packageName);
+        }
+
+        // Step 4: Generate fields for backbone elements (using component types)
+        for (Map.Entry<String, StructureDefinitionParser.ElementDefinition> entry : backboneElements.entrySet()) {
+            StructureDefinitionParser.ElementDefinition backboneElement = entry.getValue();
+            String fieldName = backboneElement.getElementName();
+            if (generatedFields.contains(fieldName)) continue;
+            generatedFields.add(fieldName);
+
+            // Use the inner component class type instead of StringType
+            addBackboneFieldForElement(classBuilder, backboneElement, metadata.getName(), packageName);
         }
 
         // Add fhirType() method
@@ -180,7 +216,8 @@ public class JavaClassBuilder {
      */
     private void addFieldForElement(TypeSpec.Builder classBuilder,
                                     StructureDefinitionParser.ElementDefinition element,
-                                    String resourceName) {
+                                    String resourceName,
+                                    String packageName) {
         String fieldName = element.getElementName();
         TypeName fieldType = getFieldType(element);
 
@@ -222,7 +259,7 @@ public class JavaClassBuilder {
         // Add setter
         MethodSpec setter = MethodSpec.methodBuilder("set" + capitalize(fieldName))
                 .addModifiers(Modifier.PUBLIC)
-                .returns(ClassName.get("", resourceName))
+                .returns(ClassName.get(packageName, resourceName))
                 .addParameter(fieldType, fieldName)
                 .addStatement("this.$N = $N", fieldName, fieldName)
                 .addStatement("return this")
@@ -234,6 +271,17 @@ public class JavaClassBuilder {
      * Determine the Java field type for an element.
      */
     private TypeName getFieldType(StructureDefinitionParser.ElementDefinition element) {
+        // Check if this is a backbone element - should use inner component class
+        if (element.isBackboneElement()) {
+            String componentClassName = capitalize(element.getElementName()) + "Component";
+            ClassName componentType = ClassName.get("", componentClassName);
+
+            boolean isList = element.getMaxCardinality() != 1;
+            return isList
+                ? ParameterizedTypeName.get(ClassName.get(List.class), componentType)
+                : componentType;
+        }
+
         // Check if this is a list (max > 1 or max = *)
         boolean isList = element.getMaxCardinality() != 1;
 
@@ -266,5 +314,168 @@ public class JavaClassBuilder {
             return str;
         }
         return str.substring(0, 1).toUpperCase() + str.substring(1);
+    }
+
+    /**
+     * Generate an inner @Block class for a backbone element.
+     *
+     * @param componentName The name of the component (e.g., "packaging" -> "PackagingComponent")
+     * @param children The child elements of this backbone
+     * @param resourceName The parent resource name (for fluent setters)
+     * @return TypeSpec for the backbone component class
+     */
+    private TypeSpec generateBackboneClass(String componentName,
+                                           List<StructureDefinitionParser.ElementDefinition> children,
+                                           String resourceName) {
+        String className = capitalize(componentName) + "Component";
+
+        TypeSpec.Builder classBuilder = TypeSpec.classBuilder(className)
+                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+                .superclass(ClassName.get("org.hl7.fhir.r5.model", "BackboneElement"))
+                .addAnnotation(ClassName.get("ca.uhn.fhir.model.api.annotation", "Block"));
+
+        // Track field names
+        Set<String> generatedFields = new HashSet<>();
+
+        // Generate fields for all child elements
+        for (StructureDefinitionParser.ElementDefinition child : children) {
+            String fieldName = child.getElementName();
+            if (generatedFields.contains(fieldName)) {
+                continue; // Skip duplicates from slices
+            }
+            generatedFields.add(fieldName);
+
+            TypeName fieldType = getFieldType(child);
+
+            // Add field
+            FieldSpec.Builder fieldBuilder = FieldSpec.builder(fieldType, fieldName)
+                    .addModifiers(Modifier.PRIVATE);
+
+            // Add @Child annotation
+            AnnotationSpec.Builder childAnnotation = AnnotationSpec.builder(
+                    ClassName.get("ca.uhn.fhir.model.api.annotation", "Child"))
+                    .addMember("name", "$S", fieldName)
+                    .addMember("min", "$L", child.getMin());
+
+            if (child.getMaxCardinality() == -1) {
+                childAnnotation.addMember("max", "Child.MAX_UNLIMITED");
+            } else {
+                childAnnotation.addMember("max", "$L", child.getMaxCardinality());
+            }
+            fieldBuilder.addAnnotation(childAnnotation.build());
+
+            // Add @Description annotation
+            if (child.getShortDescription() != null) {
+                AnnotationSpec descAnnotation = AnnotationSpec.builder(
+                        ClassName.get("ca.uhn.fhir.model.api.annotation", "Description"))
+                        .addMember("shortDefinition", "$S", child.getShortDescription())
+                        .build();
+                fieldBuilder.addAnnotation(descAnnotation);
+            }
+
+            classBuilder.addField(fieldBuilder.build());
+
+            // Add getter
+            MethodSpec getter = MethodSpec.methodBuilder("get" + capitalize(fieldName))
+                    .addModifiers(Modifier.PUBLIC)
+                    .returns(fieldType)
+                    .addStatement("return this.$N", fieldName)
+                    .build();
+            classBuilder.addMethod(getter);
+
+            // Add setter (fluent API)
+            MethodSpec setter = MethodSpec.methodBuilder("set" + capitalize(fieldName))
+                    .addModifiers(Modifier.PUBLIC)
+                    .returns(ClassName.get("", className))
+                    .addParameter(fieldType, fieldName)
+                    .addStatement("this.$N = $N", fieldName, fieldName)
+                    .addStatement("return this")
+                    .build();
+            classBuilder.addMethod(setter);
+        }
+
+        // Add copy() method (required by BackboneElement)
+        MethodSpec.Builder copyMethodBuilder = MethodSpec.methodBuilder("copy")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ClassName.get("", className))
+                .addStatement("$T dst = new $T()", ClassName.get("", className), ClassName.get("", className));
+
+        // Copy all fields
+        for (String fieldName : generatedFields) {
+            copyMethodBuilder.addStatement("dst.$N = this.$N", fieldName, fieldName);
+        }
+
+        // Call parent copy method
+        copyMethodBuilder.addStatement("copyValues(dst)");
+        copyMethodBuilder.addStatement("return dst");
+
+        classBuilder.addMethod(copyMethodBuilder.build());
+
+        return classBuilder.build();
+    }
+
+    /**
+     * Add a field for a backbone element (uses inner component class type).
+     */
+    private void addBackboneFieldForElement(TypeSpec.Builder classBuilder,
+                                            StructureDefinitionParser.ElementDefinition element,
+                                            String resourceName,
+                                            String packageName) {
+        String fieldName = element.getElementName();
+        String componentClassName = capitalize(fieldName) + "Component";
+
+        // Check if this is a list
+        boolean isList = element.getMaxCardinality() != 1;
+
+        // Build type name: either "PackagingComponent" or "List<PackagingComponent>"
+        ClassName componentType = ClassName.get("", componentClassName);
+        TypeName fieldType = isList
+            ? ParameterizedTypeName.get(ClassName.get(List.class), componentType)
+            : componentType;
+
+        // Build the field
+        FieldSpec.Builder fieldBuilder = FieldSpec.builder(fieldType, fieldName)
+                .addModifiers(Modifier.PRIVATE);
+
+        // Add @Child annotation
+        AnnotationSpec.Builder childAnnotation = AnnotationSpec.builder(Child.class)
+                .addMember("name", "$S", fieldName)
+                .addMember("min", "$L", element.getMin());
+
+        if (element.getMaxCardinality() == -1) {
+            childAnnotation.addMember("max", "Child.MAX_UNLIMITED");
+        } else {
+            childAnnotation.addMember("max", "$L", element.getMaxCardinality());
+        }
+        fieldBuilder.addAnnotation(childAnnotation.build());
+
+        // Add @Description annotation
+        if (element.getShortDescription() != null) {
+            AnnotationSpec descAnnotation = AnnotationSpec.builder(Description.class)
+                    .addMember("shortDefinition", "$S", element.getShortDescription())
+                    .build();
+            fieldBuilder.addAnnotation(descAnnotation);
+        }
+
+        classBuilder.addField(fieldBuilder.build());
+
+        // Add getter
+        MethodSpec getter = MethodSpec.methodBuilder("get" + capitalize(fieldName))
+                .addModifiers(Modifier.PUBLIC)
+                .returns(fieldType)
+                .addStatement("return this.$N", fieldName)
+                .build();
+        classBuilder.addMethod(getter);
+
+        // Add setter
+        MethodSpec setter = MethodSpec.methodBuilder("set" + capitalize(fieldName))
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ClassName.get(packageName, resourceName))
+                .addParameter(fieldType, fieldName)
+                .addStatement("this.$N = $N", fieldName, fieldName)
+                .addStatement("return this")
+                .build();
+        classBuilder.addMethod(setter);
     }
 }

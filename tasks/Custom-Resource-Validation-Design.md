@@ -124,6 +124,7 @@ public IBaseResource fetchValueSet(String url) {
 **Purpose**: Loads custom conformance resources from `fhir-config/r5/profiles/`, `fhir-config/r5/terminology/`.
 
 **Loaded Resources**:
+
 - `StructureDefinition-MedicationInventory.json`
 - Custom CodeSystems and ValueSets
 
@@ -165,6 +166,7 @@ public ValidationResult validateJsonString(String jsonString, FhirVersion versio
 **Changes**:
 
 1. **Constructor Injection**:
+
 ```java
 private final CustomResourceHelper customResourceHelper;
 
@@ -174,6 +176,7 @@ public FhirResourceService(..., CustomResourceHelper customResourceHelper) {
 ```
 
 2. **Create Method Branching**:
+
 ```java
 @Transactional
 public ResourceResult create(String resourceType, String resourceJson, FhirVersion version) {
@@ -186,6 +189,7 @@ public ResourceResult create(String resourceType, String resourceJson, FhirVersi
 ```
 
 3. **Custom Resource Create**:
+
 ```java
 private ResourceResult createCustomResource(String resourceType, String resourceJson, FhirVersion version) {
     // Validate basic structure
@@ -222,6 +226,7 @@ private ResourceResult createCustomResource(String resourceType, String resource
 ```
 
 4. **Search for Custom Resources**:
+
 ```java
 public String searchCustomResourceAsJson(String resourceType, Map<String, String> params,
                                           FhirVersion version, int count, String requestUrl) {
@@ -247,6 +252,7 @@ public String searchCustomResourceAsJson(String resourceType, Map<String, String
 ```
 
 5. **History for Custom Resources**:
+
 ```java
 public String historyCustomResourceAsJson(String resourceType, String resourceId, FhirVersion version) {
     // Similar pattern - build JSON Bundle manually with raw resource content
@@ -260,11 +266,13 @@ public String historyCustomResourceAsJson(String resourceType, String resourceId
 **Changes**:
 
 1. **Constructor Injection**:
+
 ```java
 private final CustomResourceHelper customResourceHelper;
 ```
 
 2. **Create Method**:
+
 ```java
 private ResponseEntity<String> create(String resourceType, String body, HttpServletRequest request) {
     FhirVersion version = FhirVersionFilter.getVersion(request);
@@ -295,6 +303,7 @@ private ResponseEntity<String> create(String resourceType, String body, HttpServ
 ```
 
 3. **Search Method**:
+
 ```java
 private ResponseEntity<String> search(String resourceType, Map<String, String> params, HttpServletRequest request) {
     boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
@@ -389,31 +398,55 @@ fhir-config/r5/profiles/StructureDefinition-MedicationInventory.json
 fhir4java:
   validation:
     enabled: true
-    profile-validation-enabled: false  # Must be false until validation is fixed
-    strict-profile-validation: true
+    profile-validation: off # Must be off until Issue 2 (profile validation) is fixed
+    # Parser error handler mode (controls how unknown/invalid elements are handled)
+    # - strict: Throws exceptions for unknown elements (recommended for production)
+    # - lenient: Logs warnings for unknown elements but allows parsing to continue
+    parser-error-handler: strict
 ```
+
+## Implementation Status Summary
+
+### Issue 1: Invalid Elements Handling
+
+**Status**: Partially Fixed
+
+| Aspect | Status | Details |
+| ------ | ------ | ------- |
+| Invalid element rejection | **Fixed** | With `parser-error-handler: strict`, unknown elements like `expiration2Date` throw exceptions |
+| Backbone element persistence | **Not Fixed** | Backbone elements (e.g., `packaging.type`, `packaging.unitsPerPackage`) are not recognized by HAPI parser and are silently dropped |
+
+**Root Cause for Backbone Elements**: HAPI's `ModelScanner` doesn't automatically discover inner `@Block` classes in generated custom resources. See `TASK-custom-resource-validation-fix.md` Phase 4 Follow-up for investigation tasks.
+
+### Issue 2: Profile Validation
+
+**Status**: Not Fixed
+
+HAPI's `FhirValidator.validateWithResult()` internally parses JSON before validation, which fails for custom resource types not natively known to HAPI.
 
 ## What Works
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| CREATE custom resource | Partial | Works when validation disabled |
-| READ custom resource | Works | Returns raw JSON |
-| UPDATE custom resource | Partial | Works when validation disabled |
-| DELETE custom resource | Works | Standard soft delete |
-| SEARCH custom resource | Works | Returns JSON Bundle with raw entries |
-| HISTORY custom resource | Works | Returns JSON Bundle with raw entries |
-| Basic structure validation | Works | Checks resourceType matches |
-| Profile validation | Broken | HAPI can't validate unknown types |
+| Feature                     | Status  | Notes                                                      |
+| --------------------------- | ------- | ---------------------------------------------------------- |
+| CREATE custom resource      | Partial | Works when profile validation disabled                     |
+| READ custom resource        | Works   | Returns raw JSON                                           |
+| UPDATE custom resource      | Partial | Works when profile validation disabled                     |
+| DELETE custom resource      | Works   | Standard soft delete                                       |
+| SEARCH custom resource      | Works   | Returns JSON Bundle with raw entries                       |
+| HISTORY custom resource     | Works   | Returns JSON Bundle with raw entries                       |
+| Basic structure validation  | Works   | Checks resourceType matches                                |
+| Invalid element rejection   | Works   | With `parser-error-handler: strict`, unknown elements fail |
+| Profile validation          | Broken  | HAPI can't validate unknown types                          |
 
 ## What Doesn't Work
 
-| Feature | Issue | Root Cause |
-|---------|-------|------------|
-| Profile validation | Fails with "unknown resource name" | HAPI parses JSON before validating |
-| Element validation | Not implemented | No validation against StructureDefinition |
-| Cardinality checking | Not implemented | Only basic structure is checked |
-| Terminology validation | Not working | Depends on profile validation |
+| Feature                     | Issue                                 | Root Cause                                            |
+| --------------------------- | ------------------------------------- | ----------------------------------------------------- |
+| Backbone element parsing    | Elements silently dropped             | ModelScanner doesn't discover inner @Block classes    |
+| Backbone element persistence| Data loss for nested elements         | Parser ignores unknown fields                         |
+| Profile validation          | Fails with "unknown resource name"    | HAPI parses JSON before validating                    |
+| Cardinality checking        | Not implemented                       | Only basic structure is checked                       |
+| Terminology validation      | Not working                           | Depends on profile validation                         |
 
 ## Key Files Modified
 
@@ -438,3 +471,29 @@ fhir4java-api/
 ## Next Steps
 
 See `TASK-custom-resource-validation-fix.md` for the validation fix implementation plan.
+
+### Related Files
+
+**Code Generator**:
+
+- `fhir4java-codegen/src/main/java/org/fhirframework/codegen/JavaClassBuilder.java`
+- `fhir4java-codegen/src/main/java/org/fhirframework/codegen/StructureDefinitionParser.java`
+
+**Registration**:
+
+- `fhir4java-core/src/main/java/org/fhirframework/core/resource/CustomResourceRegistry.java`
+- `fhir4java-core/src/main/java/org/fhirframework/core/context/FhirContextFactoryImpl.java`
+
+**Generated Output**:
+
+- `fhir4java-core/target/generated-sources/fhir/org/fhirframework/generated/resources/MedicationInventory.java`
+
+**Test Files**:
+
+- `/Users/victorchai/app-dev/eclipse-workspace/fhir4java-agents/test-valid-packaging.json`
+
+### Resources
+
+- [HAPI FHIR Custom Structures Documentation](https://hapifhir.io/hapi-fhir/docs/model/custom_structures.html)
+- [HAPI FHIR ModelScanner Source Code](https://github.com/hapifhir/hapi-fhir/blob/master/hapi-fhir-base/src/main/java/ca/uhn/fhir/context/ModelScanner.java)
+- [FHIR Backbone Elements Specification](https://www.hl7.org/fhir/backboneelement.html)

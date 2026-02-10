@@ -205,10 +205,31 @@ public class StructureDefinitionParser {
         }
         
         /**
-         * Check if this is a backbone element (nested complex type).
+         * Check if this is a backbone element (has type = "BackboneElement").
          */
         public boolean isBackboneElement() {
-            return path != null && path.split("\\.").length == 2;
+            if (types == null || types.isEmpty()) return false;
+            return types.stream().anyMatch(t -> "BackboneElement".equals(t.getCode()));
+        }
+
+        /**
+         * Get the parent path for nested elements.
+         * E.g., "MedicationInventory.packaging.type" -> "MedicationInventory.packaging"
+         */
+        public String getParentPath() {
+            if (path == null) return null;
+            int lastDot = path.lastIndexOf('.');
+            return lastDot >= 0 ? path.substring(0, lastDot) : null;
+        }
+
+        /**
+         * Get the depth of the element path.
+         * E.g., "MedicationInventory" -> 1, "MedicationInventory.status" -> 2,
+         *       "MedicationInventory.packaging.type" -> 3
+         */
+        public int getPathDepth() {
+            if (path == null) return 0;
+            return path.split("\\.").length;
         }
         
         /**

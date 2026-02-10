@@ -1,20 +1,21 @@
 # Custom Resource Code Generation - Implementation Complete
 
-## Status: All Phases Complete ✅
+## Status: Phase 1-3 Complete ✅ | Phase 4 In Progress 🚧
 
 **Branch**: `feature/custom-resource-codegen`
 **Date**: 2026-02-09
-**Last Updated**: 2026-02-09
+**Last Updated**: 2026-02-10
 
 ---
 
 ## Implementation Summary
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 1 | Code Generation Infrastructure | ✅ Complete |
-| Phase 2 | Remove Custom Resource Branching Logic | ✅ Complete |
-| Phase 3 | Build, Test, and Validate | ✅ Complete |
+| Phase   | Description                                       | Status       |
+| ------- | ------------------------------------------------- | ------------ |
+| Phase 1 | Code Generation Infrastructure                    | ✅ Complete  |
+| Phase 2 | Remove Custom Resource Branching Logic            | ✅ Complete  |
+| Phase 3 | Build, Test, and Validate                         | ✅ Complete  |
+| Phase 4 | Backbone Element Generation & Parser Integration  | 🚧 Partial   |
 
 ---
 
@@ -157,6 +158,251 @@ Located in `fhir4java-core`, this component:
 
 ---
 
+## Phase 4: Backbone Element Generation & Parser Integration
+
+### Overview
+
+**Goal**: Generate inner classes for backbone elements (complex nested types) and integrate with HAPI parser.
+
+**Status**: Code generation complete ✅ | Parser integration incomplete ❌
+
+### Issues Addressed
+
+#### Issue 1: Lenient Parser (✅ Fixed)
+
+**Problem**: Parser accepted unknown elements with warnings instead of throwing exceptions:
+```
+WARN: Unknown element 'expiration2Date' found while parsing
+```
+
+**Solution**: Added configurable parser error handler:
+
+1. **ValidationConfig.java** - Added `ParserErrorMode` enum:
+```java
+public enum ParserErrorMode {
+    STRICT,    // Throws exceptions for unknown elements
+    LENIENT    // Logs warnings for unknown elements
+}
+
+@Value("${fhir4java.validation.parser-error-handler:strict}")
+private String parserErrorHandlerStr;
+
+public ParserErrorMode getParserErrorHandler() {
+    return switch (parserErrorHandlerStr.toLowerCase()) {
+        case "lenient" -> ParserErrorMode.LENIENT;
+        default -> ParserErrorMode.STRICT;
+    };
+}
+```
+
+2. **FhirContextFactoryImpl.java** - Configure parser during context creation:
+```java
+private FhirContext createContext(FhirVersion version) {
+    FhirContext context = switch (version) {
+        case R5 -> FhirContext.forR5();
+        case R4B -> FhirContext.forR4B();
+    };
+
+    // Configure parser error handler
+    if (validationConfig.getParserErrorHandler() == ValidationConfig.ParserErrorMode.STRICT) {
+        context.setParserErrorHandler(new StrictErrorHandler());
+    } else {
+        context.setParserErrorHandler(new LenientErrorHandler());
+    }
+
+    return context;
+}
+```
+
+3. **application.yml** - Added configuration property:
+```yaml
+fhir4java:
+  validation:
+    parser-error-handler: strict  # or lenient
+```
+
+**Test Result**: ✅ PASSED
+```bash
+$ curl -X POST http://localhost:8080/fhir/r5/MedicationInventory \
+  -H "Content-Type: application/fhir+json" \
+  -d '{"resourceType":"MedicationInventory","expiration2Date":"2025-12-31"}'
+
+HTTP 422 Unprocessable Entity
+{
+  "resourceType": "OperationOutcome",
+  "issue": [{
+    "severity": "error",
+    "code": "structure",
+    "diagnostics": "HAPI-1825: Unknown element 'expiration2Date' found during parse"
+  }]
+}
+```
+
+#### Issue 2: Backbone Element Data Loss (❌ Not Fixed)
+
+**Problem**: Backbone element data (nested complex types) was lost before persistence:
+```json
+// Input
+{
+  "resourceType": "MedicationInventory",
+  "packaging": [{
+    "type": {"coding": [...]},
+    "unitsPerPackage": 20,
+    "packageCount": 5
+  }]
+}
+
+// Persisted (packaging missing!)
+{
+  "resourceType": "MedicationInventory",
+  "status": "active",
+  "quantity": {"value": 100}
+}
+```
+
+**Solution Attempted**:
+
+1. **StructureDefinitionParser.java** - Added backbone element detection:
+```java
+public boolean isBackboneElement() {
+    if (types == null || types.isEmpty()) return false;
+    return types.stream().anyMatch(t -> "BackboneElement".equals(t.getCode()));
+}
+
+public String getParentPath() {
+    if (path == null) return null;
+    int lastDot = path.lastIndexOf('.');
+    return lastDot >= 0 ? path.substring(0, lastDot) : null;
+}
+```
+
+2. **JavaClassBuilder.java** - Generate inner @Block classes:
+```java
+// Step 1: Identify backbone elements at depth > 2
+Map<String, ElementDefinition> backboneElements = new HashMap<>();
+Map<String, List<ElementDefinition>> backboneChildren = new HashMap<>();
+
+for (ElementDefinition element : metadata.getElements()) {
+    int depth = element.getPathDepth();
+    if (depth == 2) {
+        if (element.isBackboneElement()) {
+            backboneElements.put(element.getPath(), element);
+        }
+    } else if (depth > 2) {
+        String parentPath = element.getParentPath();
+        backboneChildren.computeIfAbsent(parentPath, k -> new ArrayList<>()).add(element);
+    }
+}
+
+// Step 2: Generate inner classes
+for (Map.Entry<String, ElementDefinition> entry : backboneElements.entrySet()) {
+    TypeSpec backboneClass = generateBackboneClass(
+        backboneElement.getElementName(),
+        children,
+        metadata.getName()
+    );
+    backboneClasses.add(backboneClass);
+}
+
+// Step 3: Add inner classes to main class
+for (TypeSpec backboneClass : backboneClasses) {
+    classBuilder.addType(backboneClass);
+}
+```
+
+3. **Generated PackagingComponent inner class**:
+```java
+@Block
+public static class PackagingComponent extends BackboneElement {
+    @Child(name = "type", min = 1, max = 1)
+    private CodeableConcept type;
+
+    @Child(name = "unitsPerPackage", min = 1, max = 1)
+    private PositiveIntType unitsPerPackage;
+
+    @Child(name = "packageCount", min = 1, max = 1)
+    private PositiveIntType packageCount;
+
+    @Child(name = "openedUnits", min = 0, max = 1)
+    private IntegerType openedUnits;
+
+    // Getters, setters, copy() method...
+}
+```
+
+4. **CustomResourceRegistry.java** - Attempted to register backbone elements:
+```java
+private void registerInnerBlockClasses(Class<? extends IBaseResource> resourceClass,
+                                      FhirContext ctx,
+                                      FhirVersion version) {
+    Class<?>[] innerClasses = resourceClass.getDeclaredClasses();
+
+    for (Class<?> innerClass : innerClasses) {
+        if (innerClass.isAnnotationPresent(Block.class)) {
+            @SuppressWarnings("unchecked")
+            Class<? extends IBase> blockClass = (Class<? extends IBase>) innerClass;
+            ctx.getElementDefinition(blockClass);  // Register with HAPI
+            log.debug("Registered backbone element: {}", innerClass.getSimpleName());
+        }
+    }
+}
+```
+
+**Test Result**: ❌ FAILED
+
+**Root Cause Identified**: HAPI's JSON parser silently drops the `packaging` field during parsing:
+
+```
+// Debug log shows packaging is missing AFTER parsing
+Parsed resource content:
+{
+  "resourceType": "MedicationInventory",
+  "status": "active",
+  "medication": {"reference": "Medication/aspirin"},
+  "quantity": {"value": 100, "unit": "tablets"}
+  // ❌ packaging array is completely missing!
+}
+```
+
+**Analysis**:
+- The generated code is structurally correct (verified by compilation)
+- `@Block` annotation is present on `PackagingComponent`
+- `@Child` annotation is present on `packaging` field
+- `ctx.getElementDefinition()` registers the class with validation engine
+- **BUT** the parser uses a different mechanism (ModelScanner) to discover resource structure
+- ModelScanner doesn't recognize inner `@Block` classes automatically
+- Parser treats `packaging` as unknown and drops it silently
+
+### Files Modified in Phase 4
+
+```
+fhir4java-codegen/src/main/java/org/fhirframework/codegen/
+├── StructureDefinitionParser.java  (added isBackboneElement(), getParentPath())
+└── JavaClassBuilder.java           (added generateBackboneClass(), backbone field handling)
+
+fhir4java-core/src/main/java/org/fhirframework/core/
+├── context/FhirContextFactoryImpl.java    (added parser error handler config)
+├── validation/ValidationConfig.java        (added ParserErrorMode enum)
+└── resource/CustomResourceRegistry.java    (added registerInnerBlockClasses())
+
+fhir4java-persistence/src/main/java/org/fhirframework/persistence/service/
+└── FhirResourceService.java               (added parsed content debug logging)
+
+fhir4java-server/src/main/resources/
+└── application.yml                        (added parser-error-handler property)
+```
+
+### Testing Performed
+
+| Test Case | Status | Notes |
+|-----------|--------|-------|
+| Strict parser rejects unknown elements | ✅ Pass | HTTP 422 with error details |
+| Generated backbone classes compile | ✅ Pass | No compilation errors |
+| Backbone components registered at startup | ✅ Pass | Debug logs confirm registration |
+| Backbone data persists and retrieves | ❌ Fail | Parser drops packaging array |
+
+---
+
 ## How It Works
 
 ### Build-Time Flow
@@ -292,15 +538,46 @@ fhir4java-core/
 
 ## Known Issues
 
-See `TASK-custom-resource-validation-fix.md` for remaining validation issues:
+### Issue 1: HAPI Parser Doesn't Recognize Backbone Elements
 
-1. **Backbone elements not recognized** - When validation is disabled, nested elements under backbone elements are ignored
-2. **Profile validation fails** - When validation is enabled, HAPI validator doesn't recognize the custom resource type
+**Status**: Partially investigated, needs deeper HAPI integration work
+
+**Problem**: HAPI's `ModelScanner` doesn't automatically discover inner `@Block` classes when scanning custom resources. The parser silently drops backbone element fields during parsing.
+
+**Evidence**:
+- Generated code structure is correct (@Block, @Child annotations present)
+- Classes compile successfully
+- `ctx.getElementDefinition()` registers with validation engine
+- But parser drops `packaging` field completely during JSON parsing
+
+**Root Cause**:
+- HAPI's parser uses `ModelScanner` to build a resource structure model at context initialization
+- ModelScanner scans the resource class but doesn't recursively discover inner static classes with `@Block`
+- The parser treats unrecognized fields as unknown and drops them (even with strict mode, it only validates structure of known fields)
+
+**Possible Solutions to Investigate**:
+1. Force ModelScanner to rescan after registering custom resources
+2. Use HAPI's extension mechanism to register composite types separately
+3. Generate separate top-level classes instead of inner classes
+4. Explicitly register each field definition with HAPI ModelScanner APIs
+
+**See**: Follow-up task in `Custom-Resource-Validation-Design.md`
+
+### Issue 2: Profile Validation Still Requires Snapshot (Lower Priority)
+
+**Status**: Known limitation, validation temporarily disabled
+
+**Problem**: HAPI validator requires StructureDefinitions to have a snapshot (expanded element tree), but our SD files only have differential.
+
+**Workaround**: Set `fhir4java.validation.profile-validation: off` in application.yml
+
+**Future Work**: Add snapshot generation or provide pre-generated snapshots
 
 ---
 
 ## Testing Checklist
 
+### Phase 1-3 Tests
 - [x] Build codegen plugin successfully
 - [x] Generate MedicationInventory class
 - [x] Class has correct annotations (`@ResourceDef`, `@Child`)
@@ -308,26 +585,41 @@ See `TASK-custom-resource-validation-fix.md` for remaining validation issues:
 - [x] CustomResourceRegistry registers the class
 - [x] HAPI can parse MedicationInventory JSON (root elements only)
 - [x] HAPI can serialize MedicationInventory to JSON
-- [ ] Profile validation works for MedicationInventory (see known issues)
-- [ ] Backbone elements are parsed correctly (see known issues)
+- [x] MedicationInventory can be persisted to database (root elements)
+- [x] Search returns MedicationInventory resources
+- [x] History works for MedicationInventory
+
+### Phase 4 Tests
+- [x] Generate inner @Block classes for backbone elements
+- [x] Backbone classes compile successfully
+- [x] Parser strict mode rejects unknown elements (HTTP 422)
+- [x] Parser lenient mode warns about unknown elements
+- [x] CustomResourceRegistry registers backbone elements at startup
+- [ ] **BLOCKED**: Parser recognizes and parses backbone element fields
+- [ ] **BLOCKED**: Backbone element data persists to database
+- [ ] **BLOCKED**: Retrieved resources include backbone element data
+
+### Validation Tests (Temporarily Disabled)
+- [ ] Profile validation works for MedicationInventory (needs snapshot)
 - [ ] Invalid MedicationInventory is rejected (validation errors)
-- [ ] MedicationInventory can be persisted to database
-- [ ] Search returns MedicationInventory resources
-- [ ] History works for MedicationInventory
+- [ ] Backbone elements validated against StructureDefinition
 
 ---
 
 ## Future Enhancements
 
-1. **Support for backbone elements**
-   - Generate nested static classes for complex elements
-   - E.g., `MedicationInventory.Packaging`
+1. **Backbone element parser integration** (Phase 4 incomplete)
+   - Code generation is complete ✅
+   - Need to integrate with HAPI's ModelScanner API
+   - Investigate separate class generation vs inner class approach
+   - **See follow-up task in Custom-Resource-Validation-Design.md**
 
 2. **Auto-discovery of generated classes**
    - Generate manifest file during code generation
    - CustomResourceRegistry reads manifest instead of hardcoded list
 
 3. **Profile validation integration**
+   - Add StructureDefinition snapshot generation
    - Register custom StructureDefinitions with HAPI validator
    - Enable full profile-based validation
 

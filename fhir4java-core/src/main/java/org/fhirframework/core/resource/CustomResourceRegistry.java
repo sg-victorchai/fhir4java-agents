@@ -1,6 +1,9 @@
 package org.fhirframework.core.resource;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
+import ca.uhn.fhir.model.api.annotation.Block;
+import ca.uhn.fhir.model.api.annotation.ResourceDef;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.version.FhirVersion;
 import org.hl7.fhir.instance.model.api.IBaseResource;
@@ -82,8 +85,21 @@ public class CustomResourceRegistry {
                 Class<? extends IBaseResource> typedResourceClass =
                         (Class<? extends IBaseResource>) resourceClass;
 
-                // Register the custom resource class with HAPI
-                ctx.getResourceDefinition(typedResourceClass);
+                // Check for @ResourceDef annotation
+                ResourceDef resourceDef = typedResourceClass.getAnnotation(ResourceDef.class);
+                if (resourceDef != null) {
+                    log.debug("Registering custom resource: {} (name: {}, profile: {}) for FHIR {}",
+                            resourceName, resourceDef.name(), resourceDef.profile(), version.getCode());
+                } else {
+                    log.debug("Registering custom resource: {} for FHIR {}", resourceName, version.getCode());
+                }
+
+                // IMPORTANT: Register inner @Block classes (backbone elements) BEFORE calling getResourceDefinition()
+                // This ensures HAPI knows about them when it creates the RuntimeResourceDefinition
+                registerInnerBlockClasses(typedResourceClass, ctx, version);
+
+                // Register the custom resource class with HAPI (this will now include the backbone elements)
+                RuntimeResourceDefinition def = ctx.getResourceDefinition(typedResourceClass);
 
                 String fullName = resourceName + " (" + version.getCode() + ")";
                 if (!registeredResources.contains(fullName)) {
@@ -97,6 +113,40 @@ public class CustomResourceRegistry {
             } catch (Exception e) {
                 log.warn("Failed to register custom resource {} for FHIR {}: {}",
                         resourceName, version.getCode(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Register inner @Block classes (backbone elements) with HAPI FhirContext.
+     * This ensures HAPI can properly serialize/deserialize nested backbone elements.
+     *
+     * @param resourceClass The resource class to scan for inner classes
+     * @param ctx The HAPI FhirContext to register with
+     * @param version The FHIR version
+     */
+    private void registerInnerBlockClasses(Class<? extends IBaseResource> resourceClass,
+                                          FhirContext ctx,
+                                          FhirVersion version) {
+        // Find all inner classes annotated with @Block
+        Class<?>[] innerClasses = resourceClass.getDeclaredClasses();
+
+        for (Class<?> innerClass : innerClasses) {
+            if (innerClass.isAnnotationPresent(Block.class)) {
+                try {
+                    // Force HAPI to recognize this as a valid backbone element type
+                    // Cast to IBase since @Block classes must extend BackboneElement (which extends IBase)
+                    @SuppressWarnings("unchecked")
+                    Class<? extends org.hl7.fhir.instance.model.api.IBase> blockClass =
+                        (Class<? extends org.hl7.fhir.instance.model.api.IBase>) innerClass;
+                    ctx.getElementDefinition(blockClass);
+                    log.debug("Registered backbone element: {} for {} (FHIR {})",
+                            innerClass.getSimpleName(), resourceClass.getSimpleName(), version.getCode());
+                } catch (Exception e) {
+                    log.warn("Failed to register backbone element {} for {} (FHIR {}): {}",
+                            innerClass.getSimpleName(), resourceClass.getSimpleName(),
+                            version.getCode(), e.getMessage());
+                }
             }
         }
     }

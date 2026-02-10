@@ -23,7 +23,8 @@ RUN chmod +x mvnw && \
     chmod +x /usr/bin/unzip
 
 # Download dependencies (for better layer caching)
-RUN ./mvnw dependency:go-offline -B
+# Retry up to 3 times to handle transient network errors
+RUN for i in 1 2 3; do ./mvnw dependency:go-offline -B && break || sleep 10; done
 
 # Copy source code
 COPY fhir4java-codegen/src fhir4java-codegen/src

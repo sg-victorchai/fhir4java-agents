@@ -1,0 +1,27 @@
+{
+  "resourceType": "MedicationInventory",
+  "status": "active",
+  "medication": {
+    "reference": "Medication/aspirin"
+  },
+  "quantity": {
+    "value": 100,
+    "unit": "tablets"
+  },
+  "packaging": [
+    {
+      "type": {
+        "coding": [
+          {
+            "system": "http://fhir4java.org/CodeSystem/package-type",
+            "code": "box",
+            "display": "Box"
+          }
+        ]
+      },
+      "unitsPerPackage": 20,
+      "packageCount": 5,
+      "openedUnits": 0
+    }
+  ]
+}

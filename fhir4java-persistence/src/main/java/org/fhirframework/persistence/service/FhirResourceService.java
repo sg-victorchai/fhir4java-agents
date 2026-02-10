@@ -85,6 +85,15 @@ public class FhirResourceService {
         // Parse the incoming resource (works for both standard and custom resources)
         IBaseResource resource = parser.parseResource(resourceJson);
 
+        if (log.isDebugEnabled()) {
+            log.debug("Parsed resource successfully: resourceType={}, class={}",
+                    resourceType, resource.getClass().getSimpleName());
+            // Log the actual parsed content to see if packaging is present
+            String parsedJson = parser.setPrettyPrint(true).encodeResourceToString(resource);
+            log.debug("Parsed resource content:\n{}", parsedJson);
+            parser.setPrettyPrint(false); // Reset to non-pretty print
+        }
+
         // Validate resource if validation is enabled
         if (validationConfig.isEnabled() && validationConfig.isProfileValidationEnabled()) {
             validateResourceOrThrow(resource, version);
@@ -103,6 +112,11 @@ public class FhirResourceService {
 
         // Serialize with updated fields
         String updatedJson = parser.encodeResourceToString(resource);
+
+        if (log.isDebugEnabled()) {
+            log.debug("Serialized resource for persistence: resourceType={}, resourceId={}, jsonLength={}",
+                    resourceType, resourceId, updatedJson.length());
+        }
 
         // Create entity and persist
         FhirResourceEntity entity = FhirResourceEntity.builder()
