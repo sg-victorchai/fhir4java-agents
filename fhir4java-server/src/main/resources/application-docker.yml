@@ -44,8 +44,8 @@ fhir4java:
     #   Option 3: Modify this file to change default:
     #             profile-validator-enabled: ${PROFILE_VALIDATOR_ENABLED:true}
     # ============================================================================
-    profile-validator-enabled: ${PROFILE_VALIDATOR_ENABLED:false}
-    
+    profile-validator-enabled: ${PROFILE_VALIDATOR_ENABLED:true}
+
     # Use warn mode in Docker to allow startup even if validation fails to initialize
     # This provides graceful degradation in containerized environments
     health-check-mode: ${HEALTH_CHECK_MODE:warn}

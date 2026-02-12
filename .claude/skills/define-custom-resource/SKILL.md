@@ -209,7 +209,29 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
 
 ## Templates
 
+### CRITICAL: Snapshot vs Differential
+
+**HAPI FHIR validators REQUIRE snapshot elements for proper validation.** Always generate both sections:
+
+| Section | Purpose | Contents |
+|---------|---------|----------|
+| `snapshot` | Complete expanded view | ALL elements including inherited base elements |
+| `differential` | Changes from base | ONLY custom/modified elements |
+
+**For new resources extending DomainResource, the snapshot MUST include:**
+1. Resource root element
+2. DomainResource base elements: `id`, `meta`, `implicitRules`, `language`, `text`, `contained`, `extension`, `modifierExtension`
+3. All custom elements
+4. For each BackboneElement: its base elements (`id`, `extension`, `modifierExtension`) plus custom children
+
+**Without proper snapshot, HAPI validation will fail with "unknown resource name" errors.**
+
 ### StructureDefinition Template (New Resource)
+
+**IMPORTANT**: Generate BOTH `snapshot` and `differential` sections. HAPI FHIR validators require snapshot elements for proper validation.
+
+- **snapshot**: Contains ALL elements including inherited DomainResource base elements
+- **differential**: Contains ONLY the custom elements being added
 
 ```json
 {
@@ -230,6 +252,113 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
   "type": "{ResourceName}",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
   "derivation": "specialization",
+  "snapshot": {
+    "element": [
+      {
+        "id": "{ResourceName}",
+        "path": "{ResourceName}",
+        "short": "{Short description}",
+        "definition": "{Full definition}",
+        "min": 0,
+        "max": "*"
+      },
+      // === DomainResource Base Elements (MUST INCLUDE IN SNAPSHOT) ===
+      {
+        "id": "{ResourceName}.id",
+        "path": "{ResourceName}.id",
+        "short": "Logical id of this artifact",
+        "definition": "The logical id of the resource, as used in the URL for the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "id" }] }],
+        "isSummary": true
+      },
+      {
+        "id": "{ResourceName}.meta",
+        "path": "{ResourceName}.meta",
+        "short": "Metadata about the resource",
+        "definition": "The metadata about the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "Meta" }],
+        "isSummary": true
+      },
+      {
+        "id": "{ResourceName}.implicitRules",
+        "path": "{ResourceName}.implicitRules",
+        "short": "A set of rules under which this content was created",
+        "definition": "A reference to a set of rules that were followed when the resource was constructed.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }],
+        "isModifier": true,
+        "isModifierReason": "This element is labeled as a modifier because the implicit rules may provide additional knowledge about the resource that modifies its meaning or interpretation",
+        "isSummary": true
+      },
+      {
+        "id": "{ResourceName}.language",
+        "path": "{ResourceName}.language",
+        "short": "Language of the resource content",
+        "definition": "The base language in which the resource is written.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": { "strength": "required", "description": "IETF language tag for a human language", "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0" }
+      },
+      {
+        "id": "{ResourceName}.text",
+        "path": "{ResourceName}.text",
+        "short": "Text summary of the resource",
+        "definition": "A human-readable narrative that contains a summary of the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "Narrative" }]
+      },
+      {
+        "id": "{ResourceName}.contained",
+        "path": "{ResourceName}.contained",
+        "short": "Contained, inline Resources",
+        "definition": "These resources do not have an independent existence apart from the resource that contains them.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "Resource" }]
+      },
+      {
+        "id": "{ResourceName}.extension",
+        "path": "{ResourceName}.extension",
+        "short": "Additional content defined by implementations",
+        "definition": "May be used to represent additional information that is not part of the basic definition of the resource.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "Extension" }]
+      },
+      {
+        "id": "{ResourceName}.modifierExtension",
+        "path": "{ResourceName}.modifierExtension",
+        "short": "Extensions that cannot be ignored",
+        "definition": "May be used to represent additional information that modifies the understanding of the element that contains it.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "Extension" }],
+        "isModifier": true,
+        "isModifierReason": "Modifier extensions are expected to modify the meaning or interpretation of the resource that contains them"
+      },
+      // === Custom Elements (add your elements here) ===
+      {
+        "id": "{ResourceName}.{elementName}",
+        "path": "{ResourceName}.{elementName}",
+        "short": "{Element short description}",
+        "definition": "{Element definition}",
+        "min": {min},
+        "max": "{max}",
+        "type": [{ "code": "{dataType}" }],
+        "isSummary": {true|false},
+        "isModifier": {true|false}
+      }
+      // For BackboneElement children, also include backbone base elements:
+      // {ResourceName}.{backbone}.id, {ResourceName}.{backbone}.extension, {ResourceName}.{backbone}.modifierExtension
+    ]
+  },
   "differential": {
     "element": [
       {
@@ -240,6 +369,7 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "min": 0,
         "max": "*"
       },
+      // === ONLY Custom Elements (no inherited base elements) ===
       {
         "id": "{ResourceName}.{elementName}",
         "path": "{ResourceName}.{elementName}",
@@ -247,11 +377,7 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "definition": "{Element definition}",
         "min": {min},
         "max": "{max}",
-        "type": [
-          {
-            "code": "{dataType}"
-          }
-        ],
+        "type": [{ "code": "{dataType}" }],
         "isSummary": {true|false},
         "isModifier": {true|false}
       }
@@ -261,6 +387,8 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
 ```
 
 ### StructureDefinition Template (Profile)
+
+**NOTE**: For profiles (constraints on existing resources), the snapshot is typically generated by FHIR tooling from the base resource. However, for HAPI FHIR validation to work correctly, include the snapshot if possible. For simpler profiles, the differential alone may suffice if the base resource snapshot is available.
 
 ```json
 {
@@ -542,7 +670,7 @@ CustomMedicalDevice
 └── patient (Reference(Patient), 0..1)
 ```
 
-**StructureDefinition elements for backbone:**
+**StructureDefinition elements for backbone (DIFFERENTIAL - custom elements only):**
 ```json
 {
   "id": "CustomMedicalDevice.contact",
@@ -579,6 +707,75 @@ CustomMedicalDevice
     "strength": "required",
     "valueSet": "http://example.org/ValueSet/contact-roles"
   }
+}
+```
+
+**StructureDefinition elements for backbone (SNAPSHOT - includes backbone base elements):**
+```json
+// The backbone element itself
+{
+  "id": "CustomMedicalDevice.contact",
+  "path": "CustomMedicalDevice.contact",
+  "short": "Device contacts",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "BackboneElement" }]
+},
+// BackboneElement base elements (REQUIRED in snapshot)
+{
+  "id": "CustomMedicalDevice.contact.id",
+  "path": "CustomMedicalDevice.contact.id",
+  "short": "Unique id for inter-element referencing",
+  "definition": "Unique id for the element within a resource.",
+  "min": 0,
+  "max": "1",
+  "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "string" }] }]
+},
+{
+  "id": "CustomMedicalDevice.contact.extension",
+  "path": "CustomMedicalDevice.contact.extension",
+  "short": "Additional content defined by implementations",
+  "definition": "May be used to represent additional information.",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "Extension" }]
+},
+{
+  "id": "CustomMedicalDevice.contact.modifierExtension",
+  "path": "CustomMedicalDevice.contact.modifierExtension",
+  "short": "Extensions that cannot be ignored even if unrecognized",
+  "definition": "May be used to represent additional information that modifies the understanding of the element.",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "Extension" }],
+  "isModifier": true,
+  "isModifierReason": "Modifier extensions are expected to modify the meaning or interpretation of the element that contains them"
+},
+// Custom backbone children
+{
+  "id": "CustomMedicalDevice.contact.name",
+  "path": "CustomMedicalDevice.contact.name",
+  "short": "Contact name",
+  "min": 1,
+  "max": "1",
+  "type": [{ "code": "string" }]
+},
+{
+  "id": "CustomMedicalDevice.contact.phone",
+  "path": "CustomMedicalDevice.contact.phone",
+  "short": "Contact phone numbers",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "ContactPoint" }]
+},
+{
+  "id": "CustomMedicalDevice.contact.role",
+  "path": "CustomMedicalDevice.contact.role",
+  "short": "Contact role",
+  "min": 0,
+  "max": "1",
+  "type": [{ "code": "code" }],
+  "binding": { "strength": "required", "valueSet": "http://example.org/ValueSet/contact-roles" }
 }
 ```
 
