@@ -2,6 +2,8 @@ package org.fhirframework.core.searchparam;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.resource.ResourceRegistry;
 import org.fhirframework.core.version.FhirVersion;
@@ -15,8 +17,10 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -100,9 +104,21 @@ public class SearchParameterRegistry {
     private void loadSearchParameterFile(FhirVersion version, Resource file, IParser parser) {
         String filename = file.getFilename();
         try (InputStream is = file.getInputStream()) {
-            SearchParameter sp = parser.parseResource(SearchParameter.class, is);
+            // Read raw JSON content to extract base field directly
+            // This is necessary because HAPI's SearchParameter.base uses an enum
+            // that doesn't support custom resource types like "MedicationInventory"
+            byte[] content = is.readAllBytes();
+            String jsonContent = new String(content, StandardCharsets.UTF_8);
 
-            if (sp.getBase() == null || sp.getBase().isEmpty()) {
+            // Parse using HAPI for other fields
+            SearchParameter sp = parser.parseResource(SearchParameter.class,
+                    new ByteArrayInputStream(content));
+
+            // Extract base types directly from JSON (bypasses enum limitation for custom resources)
+            List<String> baseTypes = extractBaseTypesFromJson(jsonContent);
+            log.debug("Extracted base types from {}: {}", filename, baseTypes);
+
+            if (baseTypes.isEmpty()) {
                 log.warn("Skipping search parameter {} - no base resource types", filename);
                 return;
             }
@@ -113,28 +129,53 @@ public class SearchParameterRegistry {
             } else if (filename != null && filename.startsWith("SearchParameter-DomainResource-")) {
                 domainResourceParams.get(version).add(sp);
             } else {
-                // Resource-specific parameter
-                for (var base : sp.getBase()) {
-                    String resourceType = base.getCode();
+                // Resource-specific parameter - use extracted base types
+                for (String resourceType : baseTypes) {
                     resourceSpecificParams.get(version)
                             .computeIfAbsent(resourceType, k -> new ArrayList<>())
                             .add(sp);
-                    
-                    log.trace ("Associating search parameter {} with resource type {}",
-							sp.getCode(), resourceType);
-                    
+
+                    log.info("Registered search parameter '{}' for custom resource type '{}'",
+                            sp.getCode(), resourceType);
+
                     // Add to lookup cache
                     String key = resourceType + ":" + sp.getCode();
                     parameterLookup.get(version).put(key, sp);
                 }
             }
 
-            log.trace("Loaded search parameter: {} for base types: {}",
-                    sp.getCode(), sp.getBase().stream().map(b -> b.getCode()).toList());
+            log.trace("Loaded search parameter: {} for base types: {}", sp.getCode(), baseTypes);
 
         } catch (Exception e) {
             log.error("Failed to parse search parameter file: {}", filename, e);
         }
+    }
+
+    /**
+     * Extracts base resource types directly from SearchParameter JSON.
+     * This bypasses HAPI's enum-based parsing which doesn't support custom resource types.
+     *
+     * @param jsonContent The raw JSON content of the SearchParameter
+     * @return List of base resource type names
+     */
+    private List<String> extractBaseTypesFromJson(String jsonContent) {
+        List<String> baseTypes = new ArrayList<>();
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(jsonContent);
+            JsonNode baseNode = root.get("base");
+            if (baseNode != null && baseNode.isArray()) {
+                for (JsonNode node : baseNode) {
+                    String resourceType = node.asText();
+                    if (resourceType != null && !resourceType.isBlank()) {
+                        baseTypes.add(resourceType);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract base types from JSON: {}", e.getMessage());
+        }
+        return baseTypes;
     }
 
     private void logSummary() {
@@ -146,6 +187,15 @@ public class SearchParameterRegistry {
 
             log.info("Search parameters loaded for {}: Resource={}, DomainResource={}, ResourceSpecific={}",
                     version, resourceCount, domainCount, specificCount);
+
+            // Log custom resource search parameters specifically
+            Map<String, SearchParameter> lookup = parameterLookup.get(version);
+            if (lookup != null) {
+                lookup.keySet().stream()
+                        .filter(key -> !key.startsWith("Patient:") && !key.startsWith("Observation:") &&
+                                !key.startsWith("Condition:") && !key.startsWith("Encounter:"))
+                        .forEach(key -> log.info("  Custom search param registered: {}", key));
+            }
         }
     }
 
@@ -180,7 +230,10 @@ public class SearchParameterRegistry {
         // Check resource-specific first
         String key = resourceType + ":" + paramName;
         Map<String, SearchParameter> lookup = parameterLookup.get(version);
+        log.debug("Looking up search parameter key '{}', lookup map has {} entries",
+                key, lookup != null ? lookup.size() : 0);
         if (lookup != null && lookup.containsKey(key)) {
+            log.debug("Found search parameter '{}' for resource '{}'", paramName, resourceType);
             return Optional.of(lookup.get(key));
         }
 
