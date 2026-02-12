@@ -202,6 +202,32 @@ public class JavaClassBuilder {
 
         classBuilder.addMethod(copyMethodBuilder.build());
 
+        // Add isEmpty() method for the main resource class
+        // This ensures proper serialization of all custom fields
+        ClassName elementUtilClass = ClassName.get("ca.uhn.fhir.util", "ElementUtil");
+        MethodSpec.Builder isEmptyMethodBuilder = MethodSpec.methodBuilder("isEmpty")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(boolean.class);
+
+        if (generatedFields.isEmpty()) {
+            isEmptyMethodBuilder.addStatement("return super.isEmpty()");
+        } else {
+            StringBuilder fieldList = new StringBuilder();
+            boolean first = true;
+            for (String fieldName : generatedFields) {
+                if (!first) {
+                    fieldList.append(", ");
+                }
+                fieldList.append(fieldName);
+                first = false;
+            }
+            isEmptyMethodBuilder.addStatement("return super.isEmpty() && $T.isEmpty($L)",
+                    elementUtilClass, fieldList.toString());
+        }
+
+        classBuilder.addMethod(isEmptyMethodBuilder.build());
+
         // Build and write the file
         JavaFile javaFile = JavaFile.builder(packageName, classBuilder.build())
                 .indent("    ")
@@ -411,6 +437,36 @@ public class JavaClassBuilder {
         copyMethodBuilder.addStatement("return dst");
 
         classBuilder.addMethod(copyMethodBuilder.build());
+
+        // Add isEmpty() method (critical for serialization!)
+        // HAPI's serializer checks isEmpty() before encoding elements.
+        // Without this override, the default BackboneElement.isEmpty() doesn't know
+        // about our custom fields, causing them to be skipped during serialization.
+        ClassName elementUtilClass = ClassName.get("ca.uhn.fhir.util", "ElementUtil");
+        MethodSpec.Builder isEmptyMethodBuilder = MethodSpec.methodBuilder("isEmpty")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(boolean.class);
+
+        if (generatedFields.isEmpty()) {
+            // No custom fields, just check parent
+            isEmptyMethodBuilder.addStatement("return super.isEmpty()");
+        } else {
+            // Build the ElementUtil.isEmpty() call with all field names
+            StringBuilder fieldList = new StringBuilder();
+            boolean first = true;
+            for (String fieldName : generatedFields) {
+                if (!first) {
+                    fieldList.append(", ");
+                }
+                fieldList.append(fieldName);
+                first = false;
+            }
+            isEmptyMethodBuilder.addStatement("return super.isEmpty() && $T.isEmpty($L)",
+                    elementUtilClass, fieldList.toString());
+        }
+
+        classBuilder.addMethod(isEmptyMethodBuilder.build());
 
         return classBuilder.build();
     }
