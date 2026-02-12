@@ -191,7 +191,8 @@ Implement custom JSON Schema validation that doesn't rely on HAPI parsing:
 
 **Created**: 2026-02-10
 **Priority**: High
-**Status**: Not Started
+**Status**: Root Cause Identified - Fix Required
+**Last Updated**: 2026-02-12
 
 ### Problem Statement
 
@@ -351,32 +352,89 @@ If internal APIs don't provide a solution:
 2. Post question on HAPI FHIR Google Group
 3. Consider contributing a patch to HAPI if ModelScanner needs enhancement
 
-### Implementation Plan (Once Solution Found)
+### Investigation Results (2026-02-12)
 
-1. **Update CustomResourceRegistry** with working backbone registration approach
-2. **Update documentation** with how backbone elements are discovered
-3. **Add integration tests** verifying backbone element parsing
-4. **Update code generator** if alternative structure is needed
-5. **Re-enable profile validation** once parsing works
+#### Task 1: Study HAPI ModelScanner API - COMPLETED
+
+**Findings:**
+
+1. **ModelScanner Discovery**: HAPI's ModelScanner correctly discovers backbone elements through `populateScanAlso()` which scans `@Child` annotated fields and their types.
+
+2. **Registration Works**: Our `CustomResourceRegistry` successfully registers the `PackagingComponent` inner class. HAPI creates a proper `RuntimeResourceBlockDefinition` with all children:
+   ```
+   Child: type -> RuntimeChildCompositeDatatypeDefinition
+   Child: unitsPerPackage -> RuntimeChildPrimitiveDatatypeDefinition
+   Child: packageCount -> RuntimeChildPrimitiveDatatypeDefinition
+   Child: openedUnits -> RuntimeChildPrimitiveDatatypeDefinition
+   ```
+
+3. **Parsing Works**: JSON data IS parsed into `PackagingComponent` objects correctly:
+   ```
+   getType() = [#box]
+   getUnitsPerPackage() = PositiveIntType[10]
+   getPackageCount() = PositiveIntType[10]
+   ```
+
+4. **Serialization Fails**: The parsed data is NOT serialized back to JSON because `BackboneElement.isEmpty()` returns `true`.
+
+#### Root Cause Identified
+
+**The `isEmpty()` method is not overridden in generated backbone elements.**
+
+HAPI's serializer checks `isEmpty()` before encoding elements. Standard HAPI resources override this method:
+
+```java
+// Patient.ContactComponent
+public boolean isEmpty() {
+  return super.isEmpty() && ca.uhn.fhir.util.ElementUtil.isEmpty(relationship, name, telecom
+    , address, gender, organization, period);
+}
+```
+
+Our generated `PackagingComponent` doesn't override `isEmpty()`, so it inherits the default from `BackboneElement` which only checks base fields (id, extension, modifierExtension). Since our custom fields (type, unitsPerPackage, etc.) aren't checked, `isEmpty()` returns `true` even when fields have values.
+
+#### Required Fix
+
+**Update `JavaClassBuilder.java` to generate an `isEmpty()` method for backbone element classes:**
+
+```java
+@Override
+public boolean isEmpty() {
+    return super.isEmpty() && ca.uhn.fhir.util.ElementUtil.isEmpty(
+        type, unitsPerPackage, packageCount, openedUnits);
+}
+```
+
+### Implementation Plan
+
+1. **Update `JavaClassBuilder.java`** to generate `isEmpty()` method for backbone elements
+   - Import `ca.uhn.fhir.util.ElementUtil`
+   - Generate method that checks all custom fields using `ElementUtil.isEmpty()`
+
+2. **Regenerate custom resources** to include the new `isEmpty()` method
+
+3. **Update tests** to verify serialization round-trip works
+
+4. **Re-enable profile validation** once serialization works
 
 ### Acceptance Criteria
 
-- [ ] Backbone element fields are recognized by HAPI parser
-- [ ] JSON with backbone elements parses correctly (e.g., `packaging` array)
-- [ ] Parsed backbone elements are accessible via getters
-- [ ] Serialization round-trip preserves backbone element data
+- [x] Backbone element fields are recognized by HAPI parser
+- [x] JSON with backbone elements parses correctly (e.g., `packaging` array)
+- [x] Parsed backbone elements are accessible via getters
+- [ ] Serialization round-trip preserves backbone element data (requires `isEmpty()` fix)
 - [ ] Integration test: Create → Read → Verify backbone data present
 
 ---
 
 ## Files to Modify
 
-| File                                   | Changes Needed                             |
-| -------------------------------------- | ------------------------------------------ |
-| `JavaClassBuilder.java`                | Add backbone element class generation      |
-| `StructureDefinitionParser.java`       | Add backbone element detection             |
-| `ProfileValidator.java`                | Fix validation chain for custom resources  |
-| `CustomResourceValidationSupport.java` | Ensure proper StructureDefinition delivery |
+| File                                   | Changes Needed                                              | Status      |
+| -------------------------------------- | ----------------------------------------------------------- | ----------- |
+| `JavaClassBuilder.java`                | Add `isEmpty()` method generation for backbone elements     | **Required**|
+| `StructureDefinitionParser.java`       | Already working - backbone element detection complete       | Done        |
+| `ProfileValidator.java`                | Fix validation chain for custom resources (Issue 2)         | Pending     |
+| `CustomResourceValidationSupport.java` | Ensure proper StructureDefinition delivery (Issue 2)        | Pending     |
 
 ---
 
