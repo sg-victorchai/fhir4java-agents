@@ -33,6 +33,9 @@ public class ValidationConfig {
     @Value("${fhir4java.validation.fail-on-unknown-search-parameters:false}")
     private boolean failOnUnknownSearchParameters;
 
+    @Value("${fhir4java.validation.parser-error-handler:strict}")
+    private String parserErrorHandlerStr;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -91,6 +94,34 @@ public class ValidationConfig {
      */
     public boolean isStrictProfileValidation() {
         return getProfileValidation() == ProfileValidationMode.STRICT;
+    }
+
+    /**
+     * Get the parser error handler mode.
+     */
+    public ParserErrorMode getParserErrorHandler() {
+        if (parserErrorHandlerStr == null) {
+            return ParserErrorMode.STRICT;
+        }
+        return switch (parserErrorHandlerStr.toLowerCase()) {
+            case "lenient" -> ParserErrorMode.LENIENT;
+            default -> ParserErrorMode.STRICT;
+        };
+    }
+
+    /**
+     * Parser error handler modes.
+     */
+    public enum ParserErrorMode {
+        /**
+         * Throws exceptions for unknown elements.
+         */
+        STRICT,
+
+        /**
+         * Logs warnings for unknown elements but allows parsing to continue.
+         */
+        LENIENT
     }
 
     /**

@@ -7,7 +7,6 @@ import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.guard.InteractionGuard;
 import org.fhirframework.core.interaction.InteractionType;
-import org.fhirframework.core.resource.CustomResourceHelper;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.FhirResourceService;
 import org.fhirframework.persistence.service.FhirResourceService.ResourceResult;
@@ -60,20 +59,17 @@ public class FhirResourceController {
     private final FhirResourceService resourceService;
     private final PluginOrchestrator pluginOrchestrator;
     private final JsonPatchService jsonPatchService;
-    private final CustomResourceHelper customResourceHelper;
 
     public FhirResourceController(FhirContextFactory contextFactory,
                                   InteractionGuard interactionGuard,
                                   FhirResourceService resourceService,
                                   PluginOrchestrator pluginOrchestrator,
-                                  JsonPatchService jsonPatchService,
-                                  CustomResourceHelper customResourceHelper) {
+                                  JsonPatchService jsonPatchService) {
         this.contextFactory = contextFactory;
         this.interactionGuard = interactionGuard;
         this.resourceService = resourceService;
         this.pluginOrchestrator = pluginOrchestrator;
         this.jsonPatchService = jsonPatchService;
-        this.customResourceHelper = customResourceHelper;
     }
 
     // ========== READ Operations ==========
@@ -224,14 +220,8 @@ public class FhirResourceController {
 
         FhirContext ctx = contextFactory.getContext(version);
 
-        // Check if this is a custom resource type
-        boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
-
-        // Build plugin context - parsedResource will be null for custom resources
-        IBaseResource parsedResource = null;
-        if (!isCustomResource) {
-            parsedResource = ctx.newJsonParser().parseResource(body);
-        }
+        // Parse resource (works for both standard and custom resources)
+        IBaseResource parsedResource = ctx.newJsonParser().parseResource(body);
 
         PluginContext pluginContext = PluginContext.builder()
                 .operationType(OperationType.CREATE)
@@ -240,9 +230,8 @@ public class FhirResourceController {
                 .inputResource(parsedResource)
                 .build();
 
-        // Always provide raw JSON for plugins that need it
+        // Provide raw JSON for plugins that need it
         pluginContext.setAttribute("rawJson", body);
-        pluginContext.setAttribute("isCustomResource", isCustomResource);
 
         // Execute BEFORE plugins (validation, enrichment)
         PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
@@ -250,28 +239,16 @@ public class FhirResourceController {
             return buildAbortResponse(beforeResult, ctx);
         }
 
-        // Determine effective body after plugins
-        String effectiveBody;
-        if (isCustomResource) {
-            // For custom resources, use raw JSON (plugins may have modified it via rawJson attribute)
-            effectiveBody = pluginContext.getAttribute("rawJson", String.class).orElse(body);
-        } else {
-            // Re-encode the resource after plugins (plugins may modify in-place)
-            IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
-            effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
-        }
+        // Re-encode the resource after plugins (plugins may modify in-place)
+        IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
+        String effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
 
         // Execute core operation
         ResourceResult result = resourceService.create(resourceType, effectiveBody, version);
 
         // Set output resource on context for AFTER plugins
-        if (!isCustomResource) {
-            IBaseResource outputResource = ctx.newJsonParser().parseResource(result.content());
-            pluginContext.setOutputResource(outputResource);
-        } else {
-            // For custom resources, store raw JSON output in context
-            pluginContext.setAttribute("rawJsonOutput", result.content());
-        }
+        IBaseResource outputResource = ctx.newJsonParser().parseResource(result.content());
+        pluginContext.setOutputResource(outputResource);
 
         // Execute AFTER plugins (notifications, enrichment)
         pluginOrchestrator.executeAfter(pluginContext);
@@ -329,9 +306,6 @@ public class FhirResourceController {
         log.debug("UPDATE {}/{} (version={})", resourceType, id, version);
 
         interactionGuard.validateInteraction(resourceType, version, InteractionType.UPDATE);
-
-        // Check if this is a custom resource type
-        boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
 
         // Check if this is a create or update
         boolean exists = resourceService.exists(resourceType, id);
@@ -545,19 +519,7 @@ public class FhirResourceController {
         // Build the full request URL for pagination links
         String requestUrl = buildRequestUrl(request);
 
-        // Check if this is a custom resource type
-        boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
-
-        if (isCustomResource) {
-            // For custom resources, return raw JSON Bundle directly
-            String jsonBundle = resourceService.searchCustomResourceAsJson(resourceType, params, version, count, requestUrl);
-            return ResponseEntity
-                    .ok()
-                    .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
-                    .body(jsonBundle);
-        }
-
-        // Standard resources: use HAPI Bundle
+        // Execute search (works for both standard and custom resources)
         Bundle bundle = resourceService.search(resourceType, params, version, count, requestUrl);
 
         FhirContext context = contextFactory.getContext(version);
@@ -620,19 +582,7 @@ public class FhirResourceController {
 
         interactionGuard.validateInteraction(resourceType, version, InteractionType.HISTORY);
 
-        // Check if this is a custom resource type
-        boolean isCustomResource = customResourceHelper.isCustomResource(resourceType, version);
-
-        if (isCustomResource) {
-            // For custom resources, return raw JSON Bundle directly
-            String jsonBundle = resourceService.historyCustomResourceAsJson(resourceType, id, version);
-            return ResponseEntity
-                    .ok()
-                    .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
-                    .body(jsonBundle);
-        }
-
-        // Standard resources: use HAPI Bundle
+        // Execute history operation (works for both standard and custom resources)
         Bundle bundle = resourceService.history(resourceType, id, version);
 
         FhirContext context = contextFactory.getContext(version);

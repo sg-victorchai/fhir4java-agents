@@ -16,6 +16,395 @@
   "type": "MedicationInventory",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
   "derivation": "specialization",
+  "snapshot": {
+    "element": [
+      {
+        "id": "MedicationInventory",
+        "path": "MedicationInventory",
+        "short": "Medication inventory tracking",
+        "definition": "A resource for tracking medication supplies and consumption, with support for package-level inventory management.",
+        "min": 0,
+        "max": "*"
+      },
+      {
+        "id": "MedicationInventory.id",
+        "path": "MedicationInventory.id",
+        "short": "Logical id of this artifact",
+        "definition": "The logical id of the resource, as used in the URL for the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "http://hl7.org/fhirpath/System.String",
+            "extension": [
+              {
+                "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type",
+                "valueUrl": "id"
+              }
+            ]
+          }
+        ],
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.meta",
+        "path": "MedicationInventory.meta",
+        "short": "Metadata about the resource",
+        "definition": "The metadata about the resource. This is content that is maintained by the infrastructure.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Meta"
+          }
+        ],
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.implicitRules",
+        "path": "MedicationInventory.implicitRules",
+        "short": "A set of rules under which this content was created",
+        "definition": "A reference to a set of rules that were followed when the resource was constructed.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "uri"
+          }
+        ],
+        "isModifier": true,
+        "isModifierReason": "This element is labeled as a modifier because the implicit rules may provide additional knowledge about the resource that modifies its meaning or interpretation",
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.language",
+        "path": "MedicationInventory.language",
+        "short": "Language of the resource content",
+        "definition": "The base language in which the resource is written.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "code"
+          }
+        ],
+        "binding": {
+          "strength": "required",
+          "description": "IETF language tag for a human language",
+          "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0"
+        }
+      },
+      {
+        "id": "MedicationInventory.text",
+        "path": "MedicationInventory.text",
+        "short": "Text summary of the resource",
+        "definition": "A human-readable narrative that contains a summary of the resource and can be used to represent the content of the resource to a human.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Narrative"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.contained",
+        "path": "MedicationInventory.contained",
+        "short": "Contained, inline Resources",
+        "definition": "These resources do not have an independent existence apart from the resource that contains them.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Resource"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.extension",
+        "path": "MedicationInventory.extension",
+        "short": "Additional content defined by implementations",
+        "definition": "May be used to represent additional information that is not part of the basic definition of the resource.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Extension"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.modifierExtension",
+        "path": "MedicationInventory.modifierExtension",
+        "short": "Extensions that cannot be ignored",
+        "definition": "May be used to represent additional information that is not part of the basic definition of the resource and that modifies the understanding of the element that contains it.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Extension"
+          }
+        ],
+        "isModifier": true,
+        "isModifierReason": "Modifier extensions are expected to modify the meaning or interpretation of the resource that contains them"
+      },
+      {
+        "id": "MedicationInventory.identifier",
+        "path": "MedicationInventory.identifier",
+        "short": "Business identifiers for the inventory item",
+        "definition": "Business identifiers such as SKU, barcode, or internal inventory ID.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Identifier"
+          }
+        ],
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.status",
+        "path": "MedicationInventory.status",
+        "short": "active | inactive | depleted",
+        "definition": "The current status of the inventory item.",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "code"
+          }
+        ],
+        "isModifier": true,
+        "isModifierReason": "This element changes the interpretation of all other elements when status is not active",
+        "isSummary": true,
+        "binding": {
+          "strength": "required",
+          "description": "The status of the medication inventory item",
+          "valueSet": "http://fhir4java.org/ValueSet/medication-inventory-status"
+        }
+      },
+      {
+        "id": "MedicationInventory.medication",
+        "path": "MedicationInventory.medication",
+        "short": "The medication being tracked",
+        "definition": "Reference to the Medication resource that this inventory tracks.",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": [
+              "http://hl7.org/fhir/StructureDefinition/Medication"
+            ]
+          }
+        ],
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.quantity",
+        "path": "MedicationInventory.quantity",
+        "short": "Total quantity in stock",
+        "definition": "The total quantity of medication units currently in stock (e.g., 100 tablets). This should equal the sum of (packaging.unitsPerPackage * packaging.packageCount) + packaging.openedUnits for all packaging entries.",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "Quantity"
+          }
+        ],
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.packaging",
+        "path": "MedicationInventory.packaging",
+        "short": "Package-level inventory tracking",
+        "definition": "Tracks inventory at the package level, allowing for partial package dispensing. For example: 5 boxes of 20 tablets each, plus 10 loose tablets from an opened box.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.packaging.id",
+        "path": "MedicationInventory.packaging.id",
+        "short": "Unique id for inter-element referencing",
+        "definition": "Unique id for the element within a resource.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "http://hl7.org/fhirpath/System.String",
+            "extension": [
+              {
+                "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type",
+                "valueUrl": "string"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.packaging.extension",
+        "path": "MedicationInventory.packaging.extension",
+        "short": "Additional content defined by implementations",
+        "definition": "May be used to represent additional information that is not part of the basic definition of the element.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Extension"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.packaging.modifierExtension",
+        "path": "MedicationInventory.packaging.modifierExtension",
+        "short": "Extensions that cannot be ignored even if unrecognized",
+        "definition": "May be used to represent additional information that is not part of the basic definition of the element and that modifies the understanding of the element in which it is contained.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Extension"
+          }
+        ],
+        "isModifier": true,
+        "isModifierReason": "Modifier extensions are expected to modify the meaning or interpretation of the element that contains them"
+      },
+      {
+        "id": "MedicationInventory.packaging.type",
+        "path": "MedicationInventory.packaging.type",
+        "short": "Package type (box, bottle, vial, blister)",
+        "definition": "The type of packaging for this inventory entry.",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "CodeableConcept"
+          }
+        ],
+        "binding": {
+          "strength": "extensible",
+          "description": "Types of medication packaging",
+          "valueSet": "http://fhir4java.org/ValueSet/medication-package-type"
+        }
+      },
+      {
+        "id": "MedicationInventory.packaging.unitsPerPackage",
+        "path": "MedicationInventory.packaging.unitsPerPackage",
+        "short": "Units per package",
+        "definition": "The number of medication units in each complete package (e.g., 20 tablets per box).",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "positiveInt"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.packaging.packageCount",
+        "path": "MedicationInventory.packaging.packageCount",
+        "short": "Number of complete packages",
+        "definition": "The number of complete (unopened) packages in stock (e.g., 5 boxes).",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "positiveInt"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.packaging.openedUnits",
+        "path": "MedicationInventory.packaging.openedUnits",
+        "short": "Units from opened packages",
+        "definition": "The number of loose units from opened packages (e.g., 10 tablets remaining from a partially dispensed box). Default is 0 if not specified.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "integer"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.location",
+        "path": "MedicationInventory.location",
+        "short": "Storage location",
+        "definition": "Reference to the Location where this inventory is stored.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": [
+              "http://hl7.org/fhir/StructureDefinition/Location"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.expirationDate",
+        "path": "MedicationInventory.expirationDate",
+        "short": "Expiration date",
+        "definition": "The expiration date of the medication inventory.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "date"
+          }
+        ],
+        "isSummary": true
+      },
+      {
+        "id": "MedicationInventory.lotNumber",
+        "path": "MedicationInventory.lotNumber",
+        "short": "Lot/batch number",
+        "definition": "The lot or batch number for traceability.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.supplier",
+        "path": "MedicationInventory.supplier",
+        "short": "Supplier organization",
+        "definition": "Reference to the Organization that supplies this inventory.",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": [
+              "http://hl7.org/fhir/StructureDefinition/Organization"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "MedicationInventory.lastUpdated",
+        "path": "MedicationInventory.lastUpdated",
+        "short": "Last inventory update timestamp",
+        "definition": "The date and time when the inventory was last updated (e.g., after a dispense or restock).",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "dateTime"
+          }
+        ]
+      }
+    ]
+  },
   "differential": {
     "element": [
       {

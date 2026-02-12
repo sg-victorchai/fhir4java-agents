@@ -20,6 +20,7 @@
     </parent>
 
     <modules>
+        <module>fhir4java-codegen</module>
         <module>fhir4java-core</module>
         <module>fhir4java-persistence</module>
         <module>fhir4java-plugin</module>

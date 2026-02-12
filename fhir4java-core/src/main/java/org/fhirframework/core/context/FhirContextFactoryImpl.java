@@ -2,6 +2,9 @@ package org.fhirframework.core.context;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.FhirVersionEnum;
+import ca.uhn.fhir.parser.LenientErrorHandler;
+import ca.uhn.fhir.parser.StrictErrorHandler;
+import org.fhirframework.core.validation.ValidationConfig;
 import org.fhirframework.core.version.FhirVersion;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -24,6 +27,11 @@ public class FhirContextFactoryImpl implements FhirContextFactory {
     private static final Logger log = LoggerFactory.getLogger(FhirContextFactoryImpl.class);
 
     private final Map<FhirVersion, FhirContext> contexts = new EnumMap<>(FhirVersion.class);
+    private final ValidationConfig validationConfig;
+
+    public FhirContextFactoryImpl(ValidationConfig validationConfig) {
+        this.validationConfig = validationConfig;
+    }
 
     @PostConstruct
     public void init() {
@@ -45,6 +53,15 @@ public class FhirContextFactoryImpl implements FhirContextFactory {
             case R5 -> FhirContext.forR5();
             case R4B -> FhirContext.forR4B();
         };
+
+        // Configure parser error handler
+        if (validationConfig.getParserErrorHandler() == ValidationConfig.ParserErrorMode.STRICT) {
+            context.setParserErrorHandler(new StrictErrorHandler());
+            log.info("FhirContext configured with STRICT error handling for version: {}", version.getCode());
+        } else {
+            context.setParserErrorHandler(new LenientErrorHandler());
+            log.info("FhirContext configured with LENIENT error handling for version: {}", version.getCode());
+        }
 
         // Configure context settings
         context.setPerformanceOptions(ca.uhn.fhir.context.PerformanceOptionsEnum.DEFERRED_MODEL_SCANNING);

@@ -2,6 +2,8 @@ package org.fhirframework.core.searchparam;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.resource.ResourceRegistry;
 import org.fhirframework.core.version.FhirVersion;
@@ -15,8 +17,10 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -100,11 +104,36 @@ public class SearchParameterRegistry {
     private void loadSearchParameterFile(FhirVersion version, Resource file, IParser parser) {
         String filename = file.getFilename();
         try (InputStream is = file.getInputStream()) {
-            SearchParameter sp = parser.parseResource(SearchParameter.class, is);
+            // Read raw JSON content
+            byte[] content = is.readAllBytes();
+            String jsonContent = new String(content, StandardCharsets.UTF_8);
 
-            if (sp.getBase() == null || sp.getBase().isEmpty()) {
+            // Extract base types directly from JSON first
+            // This is necessary because HAPI's SearchParameter.base uses an enum
+            // that doesn't support custom resource types like "MedicationInventory"
+            List<String> baseTypes = extractBaseTypesFromJson(jsonContent);
+            log.debug("Extracted base types from {}: {}", filename, baseTypes);
+
+            if (baseTypes.isEmpty()) {
                 log.warn("Skipping search parameter {} - no base resource types", filename);
                 return;
+            }
+
+            // Check if any base type is a custom resource (not a standard FHIR resource)
+            boolean hasCustomResourceBase = baseTypes.stream().anyMatch(this::isCustomResourceType);
+
+            SearchParameter sp;
+            if (hasCustomResourceBase) {
+                // For custom resources, parse directly from JSON to avoid HAPI enum validation errors
+                sp = parseSearchParameterFromJson(jsonContent);
+                if (sp == null) {
+                    log.warn("Failed to parse search parameter from JSON: {}", filename);
+                    return;
+                }
+                log.debug("Parsed custom resource search parameter '{}' from JSON", sp.getCode());
+            } else {
+                // For standard resources, use HAPI parser
+                sp = parser.parseResource(SearchParameter.class, new ByteArrayInputStream(content));
             }
 
             // Determine category based on filename
@@ -113,28 +142,122 @@ public class SearchParameterRegistry {
             } else if (filename != null && filename.startsWith("SearchParameter-DomainResource-")) {
                 domainResourceParams.get(version).add(sp);
             } else {
-                // Resource-specific parameter
-                for (var base : sp.getBase()) {
-                    String resourceType = base.getCode();
+                // Resource-specific parameter - use extracted base types
+                for (String resourceType : baseTypes) {
                     resourceSpecificParams.get(version)
                             .computeIfAbsent(resourceType, k -> new ArrayList<>())
                             .add(sp);
-                    
-                    log.trace ("Associating search parameter {} with resource type {}",
-							sp.getCode(), resourceType);
-                    
+
+                    log.info("Registered search parameter '{}' for resource type '{}'",
+                            sp.getCode(), resourceType);
+
                     // Add to lookup cache
                     String key = resourceType + ":" + sp.getCode();
                     parameterLookup.get(version).put(key, sp);
                 }
             }
 
-            log.trace("Loaded search parameter: {} for base types: {}",
-                    sp.getCode(), sp.getBase().stream().map(b -> b.getCode()).toList());
+            log.trace("Loaded search parameter: {} for base types: {}", sp.getCode(), baseTypes);
 
         } catch (Exception e) {
             log.error("Failed to parse search parameter file: {}", filename, e);
         }
+    }
+
+    /**
+     * Checks if a resource type is a custom resource (not a standard FHIR resource).
+     */
+    private boolean isCustomResourceType(String resourceType) {
+        try {
+            Enumerations.VersionIndependentResourceTypesAll.fromCode(resourceType);
+            return false; // It's a standard resource
+        } catch (Exception e) {
+            return true; // Unknown to HAPI = custom resource
+        }
+    }
+
+    /**
+     * Parses a SearchParameter directly from JSON without using HAPI's parser.
+     * This avoids enum validation errors for custom resource types in the base field.
+     */
+    private SearchParameter parseSearchParameterFromJson(String jsonContent) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(jsonContent);
+
+            SearchParameter sp = new SearchParameter();
+
+            // Set essential fields
+            if (root.has("id")) {
+                sp.setId(root.get("id").asText());
+            }
+            if (root.has("url")) {
+                sp.setUrl(root.get("url").asText());
+            }
+            if (root.has("name")) {
+                sp.setName(root.get("name").asText());
+            }
+            if (root.has("code")) {
+                sp.setCode(root.get("code").asText());
+            }
+            if (root.has("description")) {
+                sp.setDescription(root.get("description").asText());
+            }
+            if (root.has("expression")) {
+                sp.setExpression(root.get("expression").asText());
+            }
+            if (root.has("type")) {
+                String typeCode = root.get("type").asText();
+                try {
+                    sp.setType(Enumerations.SearchParamType.fromCode(typeCode));
+                } catch (Exception e) {
+                    log.warn("Unknown search parameter type: {}", typeCode);
+                }
+            }
+            if (root.has("status")) {
+                String statusCode = root.get("status").asText();
+                try {
+                    sp.setStatus(Enumerations.PublicationStatus.fromCode(statusCode));
+                } catch (Exception e) {
+                    sp.setStatus(Enumerations.PublicationStatus.DRAFT);
+                }
+            }
+
+            // Note: We intentionally skip parsing 'base' as it causes enum errors
+            // The base types are extracted separately via extractBaseTypesFromJson()
+
+            return sp;
+        } catch (Exception e) {
+            log.error("Failed to parse SearchParameter from JSON", e);
+            return null;
+        }
+    }
+
+    /**
+     * Extracts base resource types directly from SearchParameter JSON.
+     * This bypasses HAPI's enum-based parsing which doesn't support custom resource types.
+     *
+     * @param jsonContent The raw JSON content of the SearchParameter
+     * @return List of base resource type names
+     */
+    private List<String> extractBaseTypesFromJson(String jsonContent) {
+        List<String> baseTypes = new ArrayList<>();
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(jsonContent);
+            JsonNode baseNode = root.get("base");
+            if (baseNode != null && baseNode.isArray()) {
+                for (JsonNode node : baseNode) {
+                    String resourceType = node.asText();
+                    if (resourceType != null && !resourceType.isBlank()) {
+                        baseTypes.add(resourceType);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract base types from JSON: {}", e.getMessage());
+        }
+        return baseTypes;
     }
 
     private void logSummary() {
@@ -146,6 +269,15 @@ public class SearchParameterRegistry {
 
             log.info("Search parameters loaded for {}: Resource={}, DomainResource={}, ResourceSpecific={}",
                     version, resourceCount, domainCount, specificCount);
+
+            // Log custom resource search parameters specifically
+            Map<String, SearchParameter> lookup = parameterLookup.get(version);
+            if (lookup != null) {
+                lookup.keySet().stream()
+                        .filter(key -> !key.startsWith("Patient:") && !key.startsWith("Observation:") &&
+                                !key.startsWith("Condition:") && !key.startsWith("Encounter:"))
+                        .forEach(key -> log.info("  Custom search param registered: {}", key));
+            }
         }
     }
 
@@ -180,7 +312,10 @@ public class SearchParameterRegistry {
         // Check resource-specific first
         String key = resourceType + ":" + paramName;
         Map<String, SearchParameter> lookup = parameterLookup.get(version);
+        log.debug("Looking up search parameter key '{}', lookup map has {} entries",
+                key, lookup != null ? lookup.size() : 0);
         if (lookup != null && lookup.containsKey(key)) {
+            log.debug("Found search parameter '{}' for resource '{}'", paramName, resourceType);
             return Optional.of(lookup.get(key));
         }
 

@@ -1,0 +1,12 @@
+{
+  "resourceType": "MedicationInventory",
+  "status": "active",
+  "medication": {
+    "reference": "Medication/aspirin"
+  },
+  "quantity": {
+    "value": 100,
+    "unit": "tablets"
+  },
+  "expiration2Date": "2025-12-31"
+}
