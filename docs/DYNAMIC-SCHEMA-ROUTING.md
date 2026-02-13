@@ -539,38 +539,449 @@ SELECT create_dedicated_fhir_schema('medication');
 private static final String[] DEDICATED_SCHEMAS = {"careplan", "medication"};
 ```
 
-### Enabling Supporting Tables (Future)
+### Activating Supporting Tables
 
-If extracted search indexes become needed:
+The supporting tables are created in dedicated schemas but not currently used by the application. Here's how to activate each one when needed.
 
-1. **Create migration:**
-```sql
--- V5__add_dedicated_schema_search_index.sql
-CREATE TABLE careplan.fhir_search_index (
-    -- Same structure as fhir.fhir_search_index
-);
-```
+#### Current Status
 
-2. **Extend DedicatedSchemaRepository:**
+| Table | Database | Application | Activation Required |
+|-------|----------|-------------|---------------------|
+| `fhir_resource` | Created | **Active** | None - already working |
+| `fhir_search_index` | Created | **Inactive** | Entity + Repository + Service |
+| `fhir_resource_history` | Created | **Inactive** | Entity + Repository + Service |
+| `fhir_resource_tag` | Created | **Inactive** | Entity + Repository + Service |
+| `fhir_compartment` | Created | **Inactive** | Entity + Repository + Service |
+
+---
+
+#### Implementing Extracted Search Indexes
+
+**When to implement:** When JSONB search becomes a performance bottleneck and pre-computed indexes are needed.
+
+**Step 1: Create Entity Class**
 ```java
-public void saveSearchIndex(String schemaName, SearchIndexEntity entity) {
-    validateSchemaName(schemaName);
-    // Native SQL insert
+// fhir4java-persistence/src/main/java/.../entity/SearchIndexEntity.java
+@Entity
+@Table(name = "fhir_search_index")
+public class SearchIndexEntity {
+    @Id
+    private UUID id;
+
+    @Column(name = "resource_id", nullable = false)
+    private UUID resourceId;
+
+    @Column(name = "resource_type", nullable = false)
+    private String resourceType;
+
+    @Column(name = "tenant_id", nullable = false)
+    private String tenantId;
+
+    @Column(name = "param_name", nullable = false)
+    private String paramName;
+
+    @Column(name = "param_type", nullable = false)
+    private String paramType;
+
+    // Value columns for different param types
+    @Column(name = "value_string")
+    private String valueString;
+
+    @Column(name = "value_token_system")
+    private String valueTokenSystem;
+
+    @Column(name = "value_token_code")
+    private String valueTokenCode;
+
+    @Column(name = "value_reference_type")
+    private String valueReferenceType;
+
+    @Column(name = "value_reference_id")
+    private String valueReferenceId;
+
+    @Column(name = "value_date_start")
+    private Instant valueDateStart;
+
+    @Column(name = "value_date_end")
+    private Instant valueDateEnd;
+
+    @Column(name = "value_number")
+    private BigDecimal valueNumber;
+
+    // ... getters, setters, builder
 }
 ```
 
-3. **Update routing logic:**
+**Step 2: Add to DedicatedSchemaRepository**
 ```java
-// Add method to SchemaRoutingRepository
-public void saveSearchIndex(String resourceType, SearchIndexEntity entity) {
+// In DedicatedSchemaRepository.java
+
+public void saveSearchIndexes(String schemaName, UUID resourceId,
+                               List<SearchIndexEntity> indexes) {
+    validateSchemaName(schemaName);
+
+    // Delete existing indexes for this resource
+    String deleteSql = String.format(
+        "DELETE FROM %s.fhir_search_index WHERE resource_id = ?", schemaName);
+    jdbcTemplate.update(deleteSql, resourceId);
+
+    // Insert new indexes
+    String insertSql = String.format("""
+        INSERT INTO %s.fhir_search_index (
+            id, resource_id, resource_type, tenant_id, param_name, param_type,
+            value_string, value_token_system, value_token_code,
+            value_reference_type, value_reference_id,
+            value_date_start, value_date_end, value_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, schemaName);
+
+    for (SearchIndexEntity index : indexes) {
+        jdbcTemplate.update(insertSql,
+            UUID.randomUUID(), resourceId, index.getResourceType(),
+            index.getTenantId(), index.getParamName(), index.getParamType(),
+            index.getValueString(), index.getValueTokenSystem(),
+            index.getValueTokenCode(), index.getValueReferenceType(),
+            index.getValueReferenceId(),
+            index.getValueDateStart() != null ? Timestamp.from(index.getValueDateStart()) : null,
+            index.getValueDateEnd() != null ? Timestamp.from(index.getValueDateEnd()) : null,
+            index.getValueNumber()
+        );
+    }
+}
+
+public void deleteSearchIndexes(String schemaName, UUID resourceId) {
+    validateSchemaName(schemaName);
+    String sql = String.format(
+        "DELETE FROM %s.fhir_search_index WHERE resource_id = ?", schemaName);
+    jdbcTemplate.update(sql, resourceId);
+}
+```
+
+**Step 3: Add to SchemaRoutingRepository**
+```java
+// In SchemaRoutingRepository.java
+
+public void saveSearchIndexes(String resourceType, UUID resourceId,
+                               List<SearchIndexEntity> indexes) {
     if (schemaResolver.isDedicatedSchema(resourceType)) {
-        dedicatedRepository.saveSearchIndex(
-            schemaResolver.resolveSchema(resourceType), entity);
+        String schemaName = schemaResolver.resolveSchema(resourceType);
+        dedicatedRepository.saveSearchIndexes(schemaName, resourceId, indexes);
     } else {
-        searchIndexRepository.save(entity);
+        // Use shared schema repository (JPA)
+        searchIndexRepository.deleteByResourceId(resourceId);
+        searchIndexRepository.saveAll(indexes);
     }
 }
 ```
+
+**Step 4: Create Search Index Extractor Service**
+```java
+@Service
+public class SearchIndexExtractor {
+
+    public List<SearchIndexEntity> extractIndexes(IBaseResource resource,
+                                                   String resourceType,
+                                                   String tenantId) {
+        List<SearchIndexEntity> indexes = new ArrayList<>();
+
+        // Extract search parameters based on SearchParameterRegistry
+        // This involves parsing the resource and creating index entries
+        // for each configured search parameter
+
+        return indexes;
+    }
+}
+```
+
+**Step 5: Update FhirResourceService**
+```java
+// In FhirResourceService.java - modify create() and update() methods
+
+@Transactional
+public ResourceResult create(String resourceType, String resourceJson, FhirVersion version) {
+    // ... existing create logic ...
+
+    schemaRoutingRepository.save(resourceType, entity);
+
+    // Extract and save search indexes
+    if (searchIndexingEnabled) {
+        IBaseResource resource = parser.parseResource(resourceJson);
+        List<SearchIndexEntity> indexes = searchIndexExtractor.extractIndexes(
+            resource, resourceType, DEFAULT_TENANT);
+        schemaRoutingRepository.saveSearchIndexes(resourceType, entity.getId(), indexes);
+    }
+
+    return new ResourceResult(...);
+}
+```
+
+---
+
+#### Implementing Explicit History Tracking
+
+**When to implement:** When audit requirements need detailed change tracking beyond the current version-in-main-table approach.
+
+**Step 1: Create Entity Class**
+```java
+// fhir4java-persistence/src/main/java/.../entity/ResourceHistoryEntity.java
+@Entity
+@Table(name = "fhir_resource_history")
+public class ResourceHistoryEntity {
+    @Id
+    private UUID id;
+
+    @Column(name = "resource_id", nullable = false)
+    private UUID resourceId;
+
+    @Column(name = "version_id", nullable = false)
+    private Integer versionId;
+
+    @Column(name = "content", nullable = false)
+    private String content;
+
+    @Column(name = "operation", nullable = false)
+    private String operation;  // CREATE, UPDATE, DELETE
+
+    @Column(name = "changed_at", nullable = false)
+    private Instant changedAt;
+
+    @Column(name = "changed_by")
+    private String changedBy;
+
+    // ... getters, setters, builder
+}
+```
+
+**Step 2: Add to DedicatedSchemaRepository**
+```java
+public void saveHistory(String schemaName, ResourceHistoryEntity history) {
+    validateSchemaName(schemaName);
+
+    String sql = String.format("""
+        INSERT INTO %s.fhir_resource_history (
+            id, resource_id, version_id, content, operation, changed_at, changed_by
+        ) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?)
+        """, schemaName);
+
+    jdbcTemplate.update(sql,
+        UUID.randomUUID(),
+        history.getResourceId(),
+        history.getVersionId(),
+        history.getContent(),
+        history.getOperation(),
+        Timestamp.from(history.getChangedAt()),
+        history.getChangedBy()
+    );
+}
+
+public List<ResourceHistoryEntity> getHistory(String schemaName, UUID resourceId) {
+    validateSchemaName(schemaName);
+
+    String sql = String.format("""
+        SELECT * FROM %s.fhir_resource_history
+        WHERE resource_id = ?
+        ORDER BY version_id DESC
+        """, schemaName);
+
+    return jdbcTemplate.query(sql, new ResourceHistoryRowMapper(), resourceId);
+}
+```
+
+**Step 3: Update FhirResourceService**
+```java
+@Transactional
+public ResourceResult update(String resourceType, String resourceId,
+                              String resourceJson, FhirVersion version) {
+    // ... existing update logic ...
+
+    schemaRoutingRepository.save(resourceType, entity);
+
+    // Record history
+    if (historyTrackingEnabled) {
+        ResourceHistoryEntity history = ResourceHistoryEntity.builder()
+            .resourceId(entity.getId())
+            .versionId(entity.getVersionId())
+            .content(entity.getContent())
+            .operation(isCreate ? "CREATE" : "UPDATE")
+            .changedAt(Instant.now())
+            .changedBy(getCurrentUser())
+            .build();
+        schemaRoutingRepository.saveHistory(resourceType, history);
+    }
+
+    return new ResourceResult(...);
+}
+```
+
+---
+
+#### Implementing Tag/Security/Profile Storage
+
+**When to implement:** When you need efficient queries by tag, security label, or profile without JSONB parsing.
+
+**Step 1: Create Entity Class**
+```java
+@Entity
+@Table(name = "fhir_resource_tag")
+public class ResourceTagEntity {
+    @Id
+    private UUID id;
+
+    @Column(name = "resource_id", nullable = false)
+    private UUID resourceId;
+
+    @Column(name = "tag_type", nullable = false)
+    private String tagType;  // tag, security, profile
+
+    @Column(name = "system_uri")
+    private String systemUri;
+
+    @Column(name = "code")
+    private String code;
+
+    @Column(name = "display")
+    private String display;
+
+    // ... getters, setters, builder
+}
+```
+
+**Step 2: Add to DedicatedSchemaRepository**
+```java
+public void saveTags(String schemaName, UUID resourceId, List<ResourceTagEntity> tags) {
+    validateSchemaName(schemaName);
+
+    // Delete existing tags
+    String deleteSql = String.format(
+        "DELETE FROM %s.fhir_resource_tag WHERE resource_id = ?", schemaName);
+    jdbcTemplate.update(deleteSql, resourceId);
+
+    // Insert new tags
+    String insertSql = String.format("""
+        INSERT INTO %s.fhir_resource_tag (
+            id, resource_id, tag_type, system_uri, code, display
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """, schemaName);
+
+    for (ResourceTagEntity tag : tags) {
+        jdbcTemplate.update(insertSql,
+            UUID.randomUUID(), resourceId, tag.getTagType(),
+            tag.getSystemUri(), tag.getCode(), tag.getDisplay()
+        );
+    }
+}
+
+public List<ResourceTagEntity> findResourcesByTag(String schemaName,
+                                                    String tagType,
+                                                    String system,
+                                                    String code) {
+    validateSchemaName(schemaName);
+
+    String sql = String.format("""
+        SELECT r.* FROM %s.fhir_resource r
+        JOIN %s.fhir_resource_tag t ON r.id = t.resource_id
+        WHERE t.tag_type = ? AND t.system_uri = ? AND t.code = ?
+        AND r.is_current = TRUE AND r.is_deleted = FALSE
+        """, schemaName, schemaName);
+
+    return jdbcTemplate.query(sql, new FhirResourceEntityRowMapper(),
+        tagType, system, code);
+}
+```
+
+---
+
+#### Implementing Compartment Membership
+
+**When to implement:** When `$everything` operations need pre-computed compartment membership for performance.
+
+**Step 1: Create Entity Class**
+```java
+@Entity
+@Table(name = "fhir_compartment")
+public class CompartmentEntity {
+    @Id
+    private UUID id;
+
+    @Column(name = "resource_id", nullable = false)
+    private UUID resourceId;
+
+    @Column(name = "compartment_type", nullable = false)
+    private String compartmentType;  // Patient, Encounter, Practitioner, etc.
+
+    @Column(name = "compartment_id", nullable = false)
+    private String compartmentId;
+
+    // ... getters, setters, builder
+}
+```
+
+**Step 2: Add to DedicatedSchemaRepository**
+```java
+public void saveCompartmentMembership(String schemaName, UUID resourceId,
+                                       List<CompartmentEntity> memberships) {
+    validateSchemaName(schemaName);
+
+    // Delete existing memberships
+    String deleteSql = String.format(
+        "DELETE FROM %s.fhir_compartment WHERE resource_id = ?", schemaName);
+    jdbcTemplate.update(deleteSql, resourceId);
+
+    // Insert new memberships
+    String insertSql = String.format("""
+        INSERT INTO %s.fhir_compartment (
+            id, resource_id, compartment_type, compartment_id
+        ) VALUES (?, ?, ?, ?)
+        """, schemaName);
+
+    for (CompartmentEntity membership : memberships) {
+        jdbcTemplate.update(insertSql,
+            UUID.randomUUID(), resourceId,
+            membership.getCompartmentType(), membership.getCompartmentId()
+        );
+    }
+}
+
+public List<FhirResourceEntity> findByCompartment(String schemaName,
+                                                    String compartmentType,
+                                                    String compartmentId) {
+    validateSchemaName(schemaName);
+
+    String sql = String.format("""
+        SELECT r.* FROM %s.fhir_resource r
+        JOIN %s.fhir_compartment c ON r.id = c.resource_id
+        WHERE c.compartment_type = ? AND c.compartment_id = ?
+        AND r.is_current = TRUE AND r.is_deleted = FALSE
+        """, schemaName, schemaName);
+
+    return jdbcTemplate.query(sql, new FhirResourceEntityRowMapper(),
+        compartmentType, compartmentId);
+}
+```
+
+**Step 3: Create Compartment Calculator**
+```java
+@Service
+public class CompartmentCalculator {
+
+    public List<CompartmentEntity> calculateMemberships(IBaseResource resource,
+                                                         String resourceType) {
+        List<CompartmentEntity> memberships = new ArrayList<>();
+
+        // Based on FHIR compartment definitions, calculate which compartments
+        // this resource belongs to (e.g., Patient compartment via subject reference)
+
+        // Example for CarePlan:
+        // - Check subject reference -> Patient compartment
+        // - Check encounter reference -> Encounter compartment
+        // - Check author reference -> Practitioner compartment
+
+        return memberships;
+    }
+}
+```
+
+---
 
 ### Cross-Schema Queries
 
