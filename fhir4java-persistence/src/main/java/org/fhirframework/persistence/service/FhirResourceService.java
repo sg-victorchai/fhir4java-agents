@@ -11,7 +11,7 @@ import org.fhirframework.core.validation.ValidationConfig;
 import org.fhirframework.core.validation.ValidationResult;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.entity.FhirResourceEntity;
-import org.fhirframework.persistence.repository.FhirResourceRepository;
+import org.fhirframework.persistence.repository.SchemaRoutingRepository;
 import org.hl7.fhir.instance.model.api.IBaseMetaType;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
@@ -51,18 +51,18 @@ public class FhirResourceService {
     private static final Logger log = LoggerFactory.getLogger(FhirResourceService.class);
     private static final String DEFAULT_TENANT = "default";
 
-    private final FhirResourceRepository repository;
+    private final SchemaRoutingRepository schemaRoutingRepository;
     private final FhirContextFactory contextFactory;
     private final SearchParameterValidator searchParameterValidator;
     private final ProfileValidator profileValidator;
     private final ValidationConfig validationConfig;
 
-    public FhirResourceService(FhirResourceRepository repository,
+    public FhirResourceService(SchemaRoutingRepository schemaRoutingRepository,
                                FhirContextFactory contextFactory,
                                SearchParameterValidator searchParameterValidator,
                                ProfileValidator profileValidator,
                                ValidationConfig validationConfig) {
-        this.repository = repository;
+        this.schemaRoutingRepository = schemaRoutingRepository;
         this.contextFactory = contextFactory;
         this.searchParameterValidator = searchParameterValidator;
         this.profileValidator = profileValidator;
@@ -132,7 +132,7 @@ public class FhirResourceService {
                 .tenantId(DEFAULT_TENANT)
                 .build();
 
-        repository.save(entity);
+        schemaRoutingRepository.save(resourceType, entity);
 
         log.info("Created {}/{} version {}", resourceType, resourceId, versionId);
 
@@ -149,7 +149,7 @@ public class FhirResourceService {
      */
     @Transactional(readOnly = true)
     public ResourceResult read(String resourceType, String resourceId, FhirVersion version) {
-        FhirResourceEntity entity = repository
+        FhirResourceEntity entity = schemaRoutingRepository
                 .findByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
                         DEFAULT_TENANT, resourceType, resourceId)
                 .orElseThrow(() -> new ResourceNotFoundException(resourceType, resourceId));
@@ -178,7 +178,7 @@ public class FhirResourceService {
      */
     @Transactional(readOnly = true)
     public ResourceResult vread(String resourceType, String resourceId, int versionId, FhirVersion version) {
-        FhirResourceEntity entity = repository
+        FhirResourceEntity entity = schemaRoutingRepository
                 .findByTenantIdAndResourceTypeAndResourceIdAndVersionId(
                         DEFAULT_TENANT, resourceType, resourceId, versionId)
                 .orElseThrow(() -> new ResourceNotFoundException(resourceType, resourceId));
@@ -207,7 +207,7 @@ public class FhirResourceService {
         IParser parser = context.newJsonParser();
 
         // Get current version to determine new version number
-        Integer maxVersion = repository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
+        Integer maxVersion = schemaRoutingRepository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
         int newVersionId = (maxVersion != null ? maxVersion : 0) + 1;
         boolean isCreate = (maxVersion == null || maxVersion == 0);
 
@@ -232,7 +232,7 @@ public class FhirResourceService {
 
         // Mark all existing versions as not current
         if (!isCreate) {
-            repository.markAllVersionsNotCurrent(DEFAULT_TENANT, resourceType, resourceId);
+            schemaRoutingRepository.markAllVersionsNotCurrent(DEFAULT_TENANT, resourceType, resourceId);
         }
 
         // Create new version entity
@@ -249,7 +249,7 @@ public class FhirResourceService {
                 .tenantId(DEFAULT_TENANT)
                 .build();
 
-        repository.save(entity);
+        schemaRoutingRepository.save(resourceType, entity);
 
         log.info("Updated {}/{} to version {}", resourceType, resourceId, newVersionId);
 
@@ -267,7 +267,7 @@ public class FhirResourceService {
     @Transactional
     public ResourceResult delete(String resourceType, String resourceId, FhirVersion version) {
         // Check if resource exists
-        boolean exists = repository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
+        boolean exists = schemaRoutingRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
                 DEFAULT_TENANT, resourceType, resourceId);
 
         if (!exists) {
@@ -275,10 +275,10 @@ public class FhirResourceService {
         }
 
         // Get current version
-        Integer maxVersion = repository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
+        Integer maxVersion = schemaRoutingRepository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
 
         // Soft delete
-        repository.softDelete(DEFAULT_TENANT, resourceType, resourceId, Instant.now());
+        schemaRoutingRepository.softDelete(DEFAULT_TENANT, resourceType, resourceId, Instant.now());
 
         log.info("Deleted {}/{}", resourceType, resourceId);
 
@@ -334,7 +334,7 @@ public class FhirResourceService {
         Pageable pageable = PageRequest.of(offset / Math.max(count, 1), Math.min(count, 1000));
 
         // Use the custom search method with parameters
-        Page<FhirResourceEntity> page = repository.searchWithParams(
+        Page<FhirResourceEntity> page = schemaRoutingRepository.searchWithParams(
                 DEFAULT_TENANT, resourceType, params, pageable);
 
         Bundle bundle = new Bundle();
@@ -379,7 +379,7 @@ public class FhirResourceService {
         FhirContext context = contextFactory.getContext(version);
         IParser parser = context.newJsonParser();
 
-        List<FhirResourceEntity> versions = repository
+        List<FhirResourceEntity> versions = schemaRoutingRepository
                 .findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
                         DEFAULT_TENANT, resourceType, resourceId);
 
@@ -429,7 +429,7 @@ public class FhirResourceService {
      */
     @Transactional(readOnly = true)
     public boolean exists(String resourceType, String resourceId) {
-        return repository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
+        return schemaRoutingRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
                 DEFAULT_TENANT, resourceType, resourceId);
     }
 

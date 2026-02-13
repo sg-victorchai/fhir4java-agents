@@ -237,7 +237,7 @@ spring:
       on-profile: test
 
   datasource:
-    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE ALIAS IF NOT EXISTS jsonb_extract_path_text FOR "org.fhirframework.persistence.h2.H2JsonFunctions.jsonb_extract_path_text"\;CREATE ALIAS IF NOT EXISTS to_number FOR "org.fhirframework.persistence.h2.H2JsonFunctions.to_number"
+    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE SCHEMA IF NOT EXISTS CAREPLAN\;CREATE ALIAS IF NOT EXISTS jsonb_extract_path_text FOR "org.fhirframework.persistence.h2.H2JsonFunctions.jsonb_extract_path_text"\;CREATE ALIAS IF NOT EXISTS to_number FOR "org.fhirframework.persistence.h2.H2JsonFunctions.to_number"
     driver-class-name: org.h2.Driver
     username: fhir4java
     password: fhir4java

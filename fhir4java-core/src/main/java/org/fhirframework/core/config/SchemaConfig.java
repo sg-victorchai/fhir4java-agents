@@ -46,6 +46,19 @@ public class SchemaConfig {
         return "dedicated".equalsIgnoreCase(type);
     }
 
+    /**
+     * Returns the effective schema name to use for database operations.
+     * <p>
+     * For dedicated schemas, returns the configured schema name if set,
+     * otherwise returns the default "fhir" schema.
+     * </p>
+     *
+     * @return the effective schema name
+     */
+    public String getEffectiveSchemaName() {
+        return isDedicated() && name != null && !name.isBlank() ? name : "fhir";
+    }
+
     @Override
     public String toString() {
         return "SchemaConfig{type='" + type + "', name='" + name + "'}";
