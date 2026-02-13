@@ -1,209 +1,448 @@
-# Define Custom FHIR Resource or Profile
+# Define Custom FHIR Resource
 
-Guide the user through defining a completely custom FHIR resource type OR creating a profile of an existing FHIR resource, generating all required configuration files (StructureDefinition, SearchParameters, OperationDefinitions, and resource configuration YAML).
+Guide the user through defining a completely custom FHIR resource type, generating all required configuration files (StructureDefinition, SearchParameters, OperationDefinitions, and resource configuration YAML).
 
-## Key Differences from `/add-resource`
+## Scope
 
-| Aspect | `/add-resource` | `/define-custom-resource` |
-|--------|-----------------|---------------------------|
-| Purpose | Configure existing FHIR resource | Define **new** custom resource OR profile |
-| StructureDefinition | Not created (uses HL7 standard) | **Creates custom StructureDefinition** |
-| SearchParameters | Assumes exist, just selects | **Creates custom SearchParameter files** |
-| Data Elements | N/A | **Defines elements, types, cardinality** |
-| Backbone Elements | N/A | **Supports nested structures** |
-| Operations | N/A | **Optionally creates OperationDefinitions** |
+This skill is for creating **new custom resource types** that extend DomainResource or Resource.
+
+| Use This Skill For | Use `/define-fhir-profile` Instead |
+|--------------------|-------------------------------------|
+| New resource types (e.g., `CustomMedicalDevice`) | Profiles of existing resources |
+| Concepts not in FHIR spec | Constraining Patient, Observation, etc. |
+| `derivation: specialization` | `derivation: constraint` |
+| Requires code generation | No code generation needed |
 
 ## Instructions
 
 When the user invokes this skill, walk them through the following steps interactively:
 
-### Step 1: Definition Type Selection
+---
 
-Ask the user what they want to create:
+### Step 1: Resource Identity
 
-1. **New Resource Type**: A completely custom resource that extends DomainResource or Resource
-   - Example: `CustomMedicalDevice`, `ClinicalTrial`, `ResearchSubject`
-   - Use when: The concept doesn't map to any existing FHIR resource
+Gather basic information about the custom resource:
 
-2. **Profile of Existing Resource**: A constrained/extended version of an existing FHIR resource
-   - Example: `USCorePatient` (profile of Patient), `VitalSignsObservation` (profile of Observation)
-   - Use when: You need to add constraints, extensions, or specific value set bindings to an existing resource
+| Field | Description | Example |
+|-------|-------------|---------|
+| Name | PascalCase resource name | `CustomMedicalDevice` |
+| URL Namespace | Organization's FHIR URL | `http://example.org/fhir/StructureDefinition/` |
+| Description | Purpose of the resource | "Tracks custom medical devices assigned to patients" |
+| Base Type | `DomainResource` (recommended) or `Resource` | `DomainResource` |
 
-### Step 2: Resource/Profile Identity
-
-Gather the following information:
-
-| Field | Description | Example (New Resource) | Example (Profile) |
-|-------|-------------|------------------------|-------------------|
-| Name | PascalCase name | `CustomMedicalDevice` | `USCorePatient` |
-| URL Namespace | Organization's FHIR URL | `http://example.org/fhir/StructureDefinition/` | `http://hl7.org/fhir/us/core/StructureDefinition/` |
-| Description | Purpose of the resource/profile | "Tracks custom medical devices" | "US Core Patient profile" |
-| Base Type | What it extends | `DomainResource` or `Resource` | `Patient`, `Observation`, etc. |
-
-For **new resources**, also ask:
-- Should it extend `DomainResource` (supports text, contained, extensions) or `Resource` (minimal)?
-
-For **profiles**, also ask:
-- Which existing FHIR resource type to constrain? (Patient, Observation, Condition, etc.)
-
-### Step 3: Data Elements Definition
-
-Walk through defining each element interactively. For each element, gather:
-
-| Property | Description | Required |
-|----------|-------------|----------|
-| Path | Element path (e.g., `deviceId`, `contact.name`) | Yes |
-| Type | FHIR data type | Yes |
-| Cardinality | `0..1`, `1..1`, `0..*`, `1..*` | Yes |
-| Description | Short description | Yes |
-| Is Modifier? | Changes meaning of resource if present | No (default: false) |
-| Is Summary? | Include in summary view | No (default: false) |
-| Value Set Binding | For coded elements (code, Coding, CodeableConcept) | No |
-
-**For BackboneElement (nested structures):**
-
+**Ask the user:**
 ```
-Example backbone element 'contact':
-  contact (BackboneElement, 0..*, "Device contacts")
-    contact.name (string, 1..1, "Contact name")
-    contact.phone (ContactPoint, 0..*, "Contact phone numbers")
-    contact.role (code, 0..1, "Contact role", binding: http://example.org/ValueSet/contact-roles)
+What is the name of your custom resource? (PascalCase, e.g., CustomMedicalDevice)
+
+What is your organization's FHIR namespace URL?
+(e.g., http://example.org/fhir/StructureDefinition/)
+
+Briefly describe what this resource represents:
 ```
 
-**For profiles (constraining existing elements):**
-- Ask: "Constrain existing element or add extension?"
-- For constraints: narrow cardinality, add must-support, bind to value set
-- For extensions: define extension URL and type
+---
 
-Keep looping until user indicates they're done adding elements. Display a summary:
+### Step 2: Simple Data Entry Form
+
+Collect business requirements in plain language. Users do NOT need to know FHIR data types.
+
+**Present this form to the user:**
 
 ```
-Elements defined for CustomMedicalDevice:
-1. deviceIdentifier (Identifier, 1..*, "Unique device identifiers") [Summary]
-2. manufacturer (string, 0..1, "Device manufacturer name")
-3. status (code, 1..1, "active | inactive | entered-in-error") [Modifier]
-4. patient (Reference(Patient), 0..1, "Patient using the device")
-5. contact (BackboneElement, 0..*)
-   5.1. contact.name (string, 1..1, "Contact name")
-   5.2. contact.phone (ContactPoint, 0..*, "Contact phone numbers")
-   5.3. contact.role (code, 0..1, "Contact role")
+═══════════════════════════════════════════════════════════════════════════════
+ STEP 2: Define Your Data Elements (Plain Language)
+═══════════════════════════════════════════════════════════════════════════════
+
+Describe the data elements this resource needs to capture. Use plain business
+language - I'll figure out the appropriate FHIR types!
+
+FORMAT: element name - description (notes about required/multiple/allowed values)
+
+EXAMPLE:
+  1. Device identifier - unique ID for the device (required, can have multiple)
+  2. Manufacturer - company that made the device
+  3. Status - active, inactive, or entered-in-error (required)
+  4. Patient - which patient is using this device
+  5. Contact person - name, phone, email, and role (can have multiple contacts)
+
+───────────────────────────────────────────────────────────────────────────────
+YOUR ELEMENTS:
+(List your data elements below, one per line)
+
+
+
+───────────────────────────────────────────────────────────────────────────────
+ADDITIONAL INSTRUCTIONS (optional):
+(Any special requirements, allowed values for codes, business rules, etc.)
+
+
+
+═══════════════════════════════════════════════════════════════════════════════
 ```
 
-### Step 4: Search Parameters Selection
+**Encourage the user to describe elements naturally:**
+- "Device serial number (required, can have multiple)"
+- "Status - active, inactive, or error (required)"
+- "Contact info including name, phone, and role"
+- "When the device was assigned"
+- "Notes about the device"
 
-For each searchable element, define:
+---
 
-| Property | Description |
-|----------|-------------|
-| Name | Search parameter name (lowercase, hyphenated) |
-| Type | token, string, date, reference, quantity, uri, number |
-| Expression | FHIRPath expression (auto-suggest based on element path) |
-| Modifiers | Supported modifiers (e.g., :exact, :contains, :missing) |
+### Step 3: AI Analysis and Structure Generation
 
-**Auto-suggest search parameter type based on element type:**
+After receiving the user's input, analyze it to infer FHIR types, cardinality, and bindings.
 
-| Element Type | Suggested Search Type |
-|--------------|----------------------|
-| string | string |
-| code, Coding, CodeableConcept, Identifier | token |
-| boolean | token |
-| date, dateTime, instant, Period | date |
-| Reference | reference |
-| Quantity | quantity |
-| uri, url, canonical | uri |
-| integer, decimal | number |
+#### Data Type Inference Rules
 
-Display summary:
+| Pattern in Description | Inferred FHIR Type |
+|------------------------|-------------------|
+| "identifier", "ID", "serial number", "UDI" | `Identifier` |
+| "name" (of a person) | `HumanName` |
+| "name" (of a thing/organization) | `string` |
+| "date" (date only, no time) | `date` |
+| "date and time", "timestamp", "when" | `dateTime` |
+| "status", "state" + specific values listed | `code` + binding |
+| "type", "category", "kind" + values | `CodeableConcept` or `code` |
+| "patient", "subject" | `Reference(Patient)` |
+| "practitioner", "provider", "doctor", "clinician" | `Reference(Practitioner)` |
+| "organization", "facility", "hospital" | `Reference(Organization)` |
+| "encounter", "visit" | `Reference(Encounter)` |
+| "phone", "telephone", "mobile", "fax" | `ContactPoint` |
+| "email" | `ContactPoint` |
+| "address", "location" (postal) | `Address` |
+| "notes", "comments", "description" (long text) | `string` or `markdown` |
+| "amount", "cost", "price", "charge" | `Money` |
+| "quantity", "measurement" + unit | `Quantity` |
+| "count", "number of" (integer) | `integer` |
+| "percentage", "percent" | `integer` (0-100) or `decimal` |
+| "yes/no", "true/false", "flag", "is..." | `boolean` |
+| "URL", "link", "website" | `url` |
+| "file", "document", "image", "attachment" | `Attachment` |
+| "period", "from/to", "start/end dates" | `Period` |
+| "range", "min/max", "low/high" | `Range` |
+| nested elements with sub-items | `BackboneElement` |
+| reference to other resource | `Reference(ResourceType)` |
+
+#### Cardinality Inference Rules
+
+| Pattern in Description | Inferred Cardinality |
+|------------------------|---------------------|
+| "required", "must have", "mandatory" | `1..1` or `1..*` |
+| "can have multiple", "list of", "multiple" | `0..*` or `1..*` |
+| "one or more" | `1..*` |
+| "optional" or no qualifier | `0..1` |
+| "at least one" | `1..*` |
+| "exactly one" | `1..1` |
+| "zero or more" | `0..*` |
+
+#### Value Set Binding Detection
+
+| Pattern | Binding Strength |
+|---------|------------------|
+| "only allow:", "must be:", "restricted to:" | `required` |
+| "should be:", "preferred:" | `preferred` |
+| "examples:", "such as:" | `example` |
+| Specific values listed (e.g., "active, inactive, error") | `required` |
+
+#### Modifier Element Detection
+
+| Pattern | Mark as Modifier |
+|---------|------------------|
+| "status" with values affecting interpretation | Yes |
+| "entered-in-error", "cancelled", "deleted" in values | Yes |
+| "negation", "refuted", "not" semantics | Yes |
+
+#### Summary Element Detection
+
+| Pattern | Mark as Summary |
+|---------|-----------------|
+| "identifier", "ID" | Yes |
+| "status" | Yes |
+| Primary reference (e.g., "patient", "subject") | Yes |
+| "name" (primary name) | Yes |
+
+---
+
+### Step 4: Visual Layout Display
+
+After analysis, display the inferred structure in a visual table:
+
 ```
-Search Parameters for CustomMedicalDevice:
-1. identifier (token) -> CustomMedicalDevice.deviceIdentifier
-2. manufacturer (string) -> CustomMedicalDevice.manufacturer
-3. status (token) -> CustomMedicalDevice.status
-4. patient (reference) -> CustomMedicalDevice.patient
-5. contact-name (string) -> CustomMedicalDevice.contact.name
+═══════════════════════════════════════════════════════════════════════════════════════════
+ {ResourceName} - Data Elements ({count} defined)
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+┌─────┬────────────────────────┬──────────────────┬────────┬──────────────────────────────┐
+│  #  │ Element                │ Type             │ Card   │ Binding / Notes              │
+├─────┼────────────────────────┼──────────────────┼────────┼──────────────────────────────┤
+│  1  │ deviceIdentifier       │ Identifier       │ 1..*   │ [S]                          │
+│  2  │ manufacturer           │ string           │ 0..1   │                              │
+│  3  │ status                 │ code             │ 1..1   │ device-status [R][M]         │
+│     │                        │                  │        │ → active|inactive|error      │
+│  4  │ modelNumber            │ string           │ 0..1   │                              │
+│  5  │ patient                │ Reference(Pat)   │ 0..1   │ [S]                          │
+│  6  │ assignedDate           │ date             │ 0..1   │                              │
+│  7  │ expirationDate         │ date             │ 0..1   │                              │
+│  8  │ ├─ contact             │ BackboneElement  │ 0..*   │                              │
+│  9  │ │  ├─ name             │ string           │ 1..1   │                              │
+│ 10  │ │  ├─ phone            │ ContactPoint     │ 0..*   │                              │
+│ 11  │ │  ├─ email            │ ContactPoint     │ 0..1   │                              │
+│ 12  │ │  └─ role             │ code             │ 0..1   │ contact-role [R]             │
+│     │                        │                  │        │ → manufacturer|tech|support  │
+│ 13  │ notes                  │ string           │ 0..1   │                              │
+└─────┴────────────────────────┴──────────────────┴────────┴──────────────────────────────┘
+
+Legend: [S]=Summary  [M]=Modifier  [R]=Required binding  [E]=Extensible  [P]=Preferred
+
+───────────────────────────────────────────────────────────────────────────────────────────
+ REVIEW & REFINE
+───────────────────────────────────────────────────────────────────────────────────────────
+ Commands:
+   Edit <#> type <new-type>     │ Change data type      │ Edit 13 type markdown
+   Edit <#> card <new-card>     │ Change cardinality    │ Edit 2 card 0..*
+   Edit <#> binding <name>      │ Add/change binding    │ Edit 4 binding model-codes
+   Edit <#> summary             │ Toggle summary flag   │ Edit 6 summary
+   Edit <#> modifier            │ Toggle modifier flag  │ Edit 3 modifier
+   Add                          │ Add new element       │ Add
+   Add child to <#>             │ Add to backbone       │ Add child to 8
+   Remove <#>                   │ Remove element        │ Remove 4
+   Show <#>                     │ Show element details  │ Show 3
+   Done                         │ Proceed to next step  │ Done
+───────────────────────────────────────────────────────────────────────────────────────────
+
+What would you like to adjust? (or type "Done" to proceed)
 ```
 
-### Step 5: Custom Operations (Optional)
+#### Interactive Refinement
 
-Ask if the user wants to define custom operations for this resource.
+When user issues commands, update the visual display and confirm changes:
+
+**Edit type example:**
+```
+User: Edit 13 type markdown
+
+Updated element #13:
+  notes: string → markdown
+
+[Display updated table]
+```
+
+**Add element example:**
+```
+User: Add
+
+What is the element name? > warrantyExpiration
+Brief description? > When the device warranty expires
+Is it required? (y/n) > n
+Can there be multiple? (y/n) > n
+
+Inferred: warrantyExpiration (date, 0..1)
+
+[Display updated table with new element]
+```
+
+**Add child to backbone example:**
+```
+User: Add child to 8
+
+Adding child element to 'contact' backbone...
+What is the element name? > organization
+Brief description? > Contact's organization
+Is it required? (y/n) > n
+
+Inferred: contact.organization (string, 0..1)
+
+[Display updated table]
+```
+
+**Remove element example:**
+```
+User: Remove 4
+
+Remove element #4 (modelNumber)? This cannot be undone. (y/n) > y
+
+Removed: modelNumber
+
+[Display updated table with renumbered elements]
+```
+
+**Show element details:**
+```
+User: Show 3
+
+Element #3: status
+  Path: {ResourceName}.status
+  Type: code
+  Cardinality: 1..1
+  Summary: Yes
+  Modifier: Yes
+  Binding:
+    Strength: required
+    ValueSet: http://example.org/fhir/ValueSet/device-status
+    Values: active | inactive | entered-in-error
+  Description: Current status of the device
+```
+
+---
+
+### Step 5: Search Parameters
+
+After elements are finalized, determine which elements should be searchable.
+
+**Display searchable elements suggestion:**
+
+```
+═══════════════════════════════════════════════════════════════════════════════════════════
+ SEARCH PARAMETERS
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+Based on your elements, I recommend these search parameters:
+
+┌─────┬──────────────────┬────────────┬─────────────────────────────────────────────────┐
+│ [x] │ Parameter        │ Type       │ Expression                                      │
+├─────┼──────────────────┼────────────┼─────────────────────────────────────────────────┤
+│ [x] │ identifier       │ token      │ {Resource}.deviceIdentifier                     │
+│ [x] │ status           │ token      │ {Resource}.status                               │
+│ [x] │ patient          │ reference  │ {Resource}.patient                              │
+│ [ ] │ manufacturer     │ string     │ {Resource}.manufacturer                         │
+│ [ ] │ assigned-date    │ date       │ {Resource}.assignedDate                         │
+│ [ ] │ expiration-date  │ date       │ {Resource}.expirationDate                       │
+│ [ ] │ contact-name     │ string     │ {Resource}.contact.name                         │
+└─────┴──────────────────┴────────────┴─────────────────────────────────────────────────┘
+
+[x] = Recommended (commonly searched)  [ ] = Optional
+
+Commands:
+  Toggle <param>    │ Enable/disable parameter  │ Toggle manufacturer
+  Add <name>        │ Add custom parameter      │ Add contact-role
+  Done              │ Proceed to next step      │ Done
+
+Which search parameters do you want to enable?
+```
+
+#### Search Parameter Type Mapping
+
+| Element Type | Search Type |
+|--------------|-------------|
+| `Identifier` | `token` |
+| `code`, `Coding`, `CodeableConcept` | `token` |
+| `boolean` | `token` |
+| `string` | `string` |
+| `date`, `dateTime`, `instant` | `date` |
+| `Period` | `date` |
+| `Reference` | `reference` |
+| `Quantity` | `quantity` |
+| `integer`, `decimal` | `number` |
+| `uri`, `url`, `canonical` | `uri` |
+
+---
+
+### Step 6: Custom Operations (Optional)
+
+Ask if the user wants to define custom operations:
+
+```
+═══════════════════════════════════════════════════════════════════════════════════════════
+ CUSTOM OPERATIONS (Optional)
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+Do you want to define any custom operations for this resource?
+
+Examples:
+  - $calibrate (for devices)
+  - $assign (assign to patient)
+  - $retire (mark as retired)
+
+Options:
+  Add         │ Define a new operation
+  Skip        │ No custom operations needed
+
+Your choice:
+```
 
 For each operation, gather:
 
 | Property | Description | Example |
 |----------|-------------|---------|
 | Name | Operation name (without $) | `calibrate` |
-| Level | system, type, instance | `instance` |
-| Description | What the operation does | "Calibrate the device" |
+| Level | instance, type, or system | `instance` |
+| Description | What it does | "Calibrate the device" |
 | Affects State? | Does it modify data? | `true` |
+| Input Parameters | Name, type, cardinality | `calibrationDate: dateTime, 1..1` |
+| Output Parameters | Name, type, cardinality | `return: OperationOutcome, 1..1` |
 
-**Input Parameters:**
-| Name | Type | Cardinality | Description |
-|------|------|-------------|-------------|
-| calibrationDate | dateTime | 1..1 | Date of calibration |
-| technician | Reference(Practitioner) | 0..1 | Who performed calibration |
+---
 
-**Output Parameters:**
-| Name | Type | Cardinality | Description |
-|------|------|-------------|-------------|
-| return | OperationOutcome | 1..1 | Result of calibration |
+### Step 7: FHIR Version & Interactions
 
-### Step 6: FHIR Version Support
-
-Ask which FHIR versions to support:
-- **R5** (recommended, current default)
-- **R4B** (for backward compatibility)
-- **Both** (with one marked as default)
-
-### Step 7: Interactions Configuration
-
-Ask which FHIR interactions to enable:
-
-| Interaction | Description | Default |
-|-------------|-------------|---------|
-| `read` | GET /[resource]/[id] | true |
-| `vread` | GET /[resource]/[id]/_history/[vid] | true |
-| `create` | POST /[resource] | true |
-| `update` | PUT /[resource]/[id] | true |
-| `patch` | PATCH /[resource]/[id] | false |
-| `delete` | DELETE /[resource]/[id] | false |
-| `search` | GET /[resource]?params | true |
-| `history` | GET /[resource]/[id]/_history | true |
-
-### Step 8: Profile & Validation Rules
-
-Ask about:
-
-1. **Profile Enforcement**: Required or optional?
-2. **Custom Invariants**: FHIRPath constraints for business rules
-
-Example invariants:
 ```
-- key: cmd-1
-  severity: error
-  human: "If contact exists, contact.name must be provided"
-  expression: "contact.exists() implies contact.name.exists()"
+═══════════════════════════════════════════════════════════════════════════════════════════
+ FHIR VERSION & INTERACTIONS
+═══════════════════════════════════════════════════════════════════════════════════════════
 
-- key: cmd-2
-  severity: warning
-  human: "Active devices should have a patient reference"
-  expression: "status = 'active' implies patient.exists()"
+Which FHIR versions should this resource support?
+  [x] R5 (recommended, default)
+  [ ] R4B (backward compatibility)
+
+Which interactions should be enabled?
+  [x] read      GET /{Resource}/{id}
+  [x] vread     GET /{Resource}/{id}/_history/{vid}
+  [x] create    POST /{Resource}
+  [x] update    PUT /{Resource}/{id}
+  [ ] patch     PATCH /{Resource}/{id}
+  [ ] delete    DELETE /{Resource}/{id}
+  [x] search    GET /{Resource}?params
+  [x] history   GET /{Resource}/{id}/_history
+
+Toggle any to change, or type "Done" to proceed.
 ```
 
-### Step 9: Generate All Artifacts
+---
+
+### Step 8: Generate All Artifacts
 
 After gathering all information, generate these files:
 
-#### 1. StructureDefinition JSON
-Location: `fhir4java-server/src/main/resources/fhir-config/r5/profiles/StructureDefinition-{ResourceName}.json`
+#### Files to Generate
 
-#### 2. SearchParameter JSON files (one per searchable element)
-Location: `fhir4java-server/src/main/resources/fhir-config/r5/searchparameters/SearchParameter-{ResourceName}-{param-name}.json`
+| File | Location |
+|------|----------|
+| StructureDefinition | `fhir-config/r5/profiles/StructureDefinition-{ResourceName}.json` |
+| SearchParameter(s) | `fhir-config/r5/searchparameters/SearchParameter-{ResourceName}-{param}.json` |
+| OperationDefinition(s) | `fhir-config/r5/operations/OperationDefinition-{ResourceName}-{op}.json` |
+| Resource Config | `fhir-config/resources/{resourcename}.yml` |
+| ValueSet(s) | `fhir-config/r5/valuesets/ValueSet-{name}.json` (if bindings defined) |
 
-#### 3. OperationDefinition JSON (if custom operations defined)
-Location: `fhir4java-server/src/main/resources/fhir-config/r5/operations/OperationDefinition-{ResourceName}-{operation-name}.json`
+**Confirm before generating:**
 
-#### 4. Resource Configuration YAML
-Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcename}.yml`
+```
+═══════════════════════════════════════════════════════════════════════════════════════════
+ SUMMARY - Ready to Generate
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+Resource: CustomMedicalDevice
+Namespace: http://example.org/fhir/StructureDefinition/
+Elements: 13
+Search Parameters: 6
+Custom Operations: 1 ($calibrate)
+FHIR Versions: R5
+
+Files to create:
+  1. StructureDefinition-CustomMedicalDevice.json
+  2. SearchParameter-CustomMedicalDevice-identifier.json
+  3. SearchParameter-CustomMedicalDevice-status.json
+  4. SearchParameter-CustomMedicalDevice-patient.json
+  5. SearchParameter-CustomMedicalDevice-manufacturer.json
+  6. SearchParameter-CustomMedicalDevice-assigned-date.json
+  7. SearchParameter-CustomMedicalDevice-contact-name.json
+  8. OperationDefinition-CustomMedicalDevice-calibrate.json
+  9. ValueSet-device-status.json
+  10. ValueSet-contact-role.json
+  11. custommedicaldevice.yml
+
+Proceed with generation? (y/n)
+```
 
 ---
 
@@ -224,14 +463,7 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
 3. All custom elements
 4. For each BackboneElement: its base elements (`id`, `extension`, `modifierExtension`) plus custom children
 
-**Without proper snapshot, HAPI validation will fail with "unknown resource name" errors.**
-
-### StructureDefinition Template (New Resource)
-
-**IMPORTANT**: Generate BOTH `snapshot` and `differential` sections. HAPI FHIR validators require snapshot elements for proper validation.
-
-- **snapshot**: Contains ALL elements including inherited DomainResource base elements
-- **differential**: Contains ONLY the custom elements being added
+### StructureDefinition Template
 
 ```json
 {
@@ -262,12 +494,12 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "min": 0,
         "max": "*"
       },
-      // === DomainResource Base Elements (MUST INCLUDE IN SNAPSHOT) ===
+      // === DomainResource Base Elements (REQUIRED) ===
       {
         "id": "{ResourceName}.id",
         "path": "{ResourceName}.id",
         "short": "Logical id of this artifact",
-        "definition": "The logical id of the resource, as used in the URL for the resource.",
+        "definition": "The logical id of the resource.",
         "min": 0,
         "max": "1",
         "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "id" }] }],
@@ -277,7 +509,6 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "id": "{ResourceName}.meta",
         "path": "{ResourceName}.meta",
         "short": "Metadata about the resource",
-        "definition": "The metadata about the resource.",
         "min": 0,
         "max": "1",
         "type": [{ "code": "Meta" }],
@@ -287,29 +518,25 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "id": "{ResourceName}.implicitRules",
         "path": "{ResourceName}.implicitRules",
         "short": "A set of rules under which this content was created",
-        "definition": "A reference to a set of rules that were followed when the resource was constructed.",
         "min": 0,
         "max": "1",
         "type": [{ "code": "uri" }],
         "isModifier": true,
-        "isModifierReason": "This element is labeled as a modifier because the implicit rules may provide additional knowledge about the resource that modifies its meaning or interpretation",
         "isSummary": true
       },
       {
         "id": "{ResourceName}.language",
         "path": "{ResourceName}.language",
         "short": "Language of the resource content",
-        "definition": "The base language in which the resource is written.",
         "min": 0,
         "max": "1",
         "type": [{ "code": "code" }],
-        "binding": { "strength": "required", "description": "IETF language tag for a human language", "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0" }
+        "binding": { "strength": "required", "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0" }
       },
       {
         "id": "{ResourceName}.text",
         "path": "{ResourceName}.text",
         "short": "Text summary of the resource",
-        "definition": "A human-readable narrative that contains a summary of the resource.",
         "min": 0,
         "max": "1",
         "type": [{ "code": "Narrative" }]
@@ -318,7 +545,6 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "id": "{ResourceName}.contained",
         "path": "{ResourceName}.contained",
         "short": "Contained, inline Resources",
-        "definition": "These resources do not have an independent existence apart from the resource that contains them.",
         "min": 0,
         "max": "*",
         "type": [{ "code": "Resource" }]
@@ -327,7 +553,6 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "id": "{ResourceName}.extension",
         "path": "{ResourceName}.extension",
         "short": "Additional content defined by implementations",
-        "definition": "May be used to represent additional information that is not part of the basic definition of the resource.",
         "min": 0,
         "max": "*",
         "type": [{ "code": "Extension" }]
@@ -336,14 +561,12 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "id": "{ResourceName}.modifierExtension",
         "path": "{ResourceName}.modifierExtension",
         "short": "Extensions that cannot be ignored",
-        "definition": "May be used to represent additional information that modifies the understanding of the element that contains it.",
         "min": 0,
         "max": "*",
         "type": [{ "code": "Extension" }],
-        "isModifier": true,
-        "isModifierReason": "Modifier extensions are expected to modify the meaning or interpretation of the resource that contains them"
+        "isModifier": true
       },
-      // === Custom Elements (add your elements here) ===
+      // === Custom Elements ===
       {
         "id": "{ResourceName}.{elementName}",
         "path": "{ResourceName}.{elementName}",
@@ -355,8 +578,6 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
         "isSummary": {true|false},
         "isModifier": {true|false}
       }
-      // For BackboneElement children, also include backbone base elements:
-      // {ResourceName}.{backbone}.id, {ResourceName}.{backbone}.extension, {ResourceName}.{backbone}.modifierExtension
     ]
   },
   "differential": {
@@ -386,46 +607,54 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
 }
 ```
 
-### StructureDefinition Template (Profile)
+### BackboneElement in Snapshot
 
-**NOTE**: For profiles (constraints on existing resources), the snapshot is typically generated by FHIR tooling from the base resource. However, for HAPI FHIR validation to work correctly, include the snapshot if possible. For simpler profiles, the differential alone may suffice if the base resource snapshot is available.
+For each BackboneElement, include its base elements in the snapshot:
 
 ```json
+// The backbone element itself
 {
-  "resourceType": "StructureDefinition",
-  "id": "{ProfileName}",
-  "url": "{namespace}{ProfileName}",
-  "version": "1.0.0",
-  "name": "{ProfileName}",
-  "title": "{Profile Title}",
-  "status": "draft",
-  "experimental": true,
-  "date": "{YYYY-MM-DD}",
-  "publisher": "{Organization Name}",
-  "description": "{Description}",
-  "fhirVersion": "5.0.0",
-  "kind": "resource",
-  "abstract": false,
-  "type": "{BaseResourceType}",
-  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/{BaseResourceType}",
-  "derivation": "constraint",
-  "differential": {
-    "element": [
-      {
-        "id": "{BaseResourceType}",
-        "path": "{BaseResourceType}",
-        "short": "{Short description}",
-        "definition": "{Full definition}"
-      },
-      {
-        "id": "{BaseResourceType}.{elementPath}",
-        "path": "{BaseResourceType}.{elementPath}",
-        "min": {constrainedMin},
-        "max": "{constrainedMax}",
-        "mustSupport": true
-      }
-    ]
-  }
+  "id": "{ResourceName}.{backbone}",
+  "path": "{ResourceName}.{backbone}",
+  "short": "{description}",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "BackboneElement" }]
+},
+// BackboneElement base elements (REQUIRED in snapshot)
+{
+  "id": "{ResourceName}.{backbone}.id",
+  "path": "{ResourceName}.{backbone}.id",
+  "short": "Unique id for inter-element referencing",
+  "min": 0,
+  "max": "1",
+  "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "string" }] }]
+},
+{
+  "id": "{ResourceName}.{backbone}.extension",
+  "path": "{ResourceName}.{backbone}.extension",
+  "short": "Additional content defined by implementations",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "Extension" }]
+},
+{
+  "id": "{ResourceName}.{backbone}.modifierExtension",
+  "path": "{ResourceName}.{backbone}.modifierExtension",
+  "short": "Extensions that cannot be ignored",
+  "min": 0,
+  "max": "*",
+  "type": [{ "code": "Extension" }],
+  "isModifier": true
+},
+// Custom backbone children
+{
+  "id": "{ResourceName}.{backbone}.{child}",
+  "path": "{ResourceName}.{backbone}.{child}",
+  "short": "{description}",
+  "min": {min},
+  "max": "{max}",
+  "type": [{ "code": "{dataType}" }]
 }
 ```
 
@@ -470,7 +699,7 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
   "type": "reference",
   "expression": "{ResourceName}.{elementPath}",
   "processingMode": "normal",
-  "target": ["{TargetResourceType1}", "{TargetResourceType2}"]
+  "target": ["{TargetResourceType}"]
 }
 ```
 
@@ -493,7 +722,7 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
   "affectsState": {true|false},
   "code": "{operation-name}",
   "resource": ["{ResourceName}"],
-  "system": {true|false},
+  "system": false,
   "type": {true|false},
   "instance": {true|false},
   "parameter": [
@@ -514,6 +743,35 @@ Location: `fhir4java-server/src/main/resources/fhir-config/resources/{resourcena
       "type": "OperationOutcome"
     }
   ]
+}
+```
+
+### ValueSet Template
+
+```json
+{
+  "resourceType": "ValueSet",
+  "id": "{valueset-name}",
+  "url": "{namespace}ValueSet/{valueset-name}",
+  "version": "1.0.0",
+  "name": "{ValueSetName}",
+  "title": "{ValueSet Title}",
+  "status": "draft",
+  "experimental": true,
+  "date": "{YYYY-MM-DD}",
+  "publisher": "{Organization Name}",
+  "description": "{Description}",
+  "compose": {
+    "include": [
+      {
+        "system": "{namespace}CodeSystem/{codesystem-name}",
+        "concept": [
+          { "code": "{code1}", "display": "{Display 1}" },
+          { "code": "{code2}", "display": "{Display 2}" }
+        ]
+      }
+    ]
+  }
 }
 ```
 
@@ -557,7 +815,6 @@ searchParameters:
     - _profile
     - _security
   resourceSpecific:
-    # Add all custom search parameters defined for this resource
     - {param-name-1}
     - {param-name-2}
 
@@ -569,7 +826,7 @@ profiles:
 
 ---
 
-## Data Type Reference
+## Data Type Quick Reference
 
 ### Primitive Types
 
@@ -581,46 +838,30 @@ profiles:
 | `decimal` | Decimal number | `3.14159` |
 | `uri` | URI | `"http://example.org"` |
 | `url` | URL | `"https://example.org/page"` |
-| `canonical` | Canonical URL | `"http://hl7.org/fhir/StructureDefinition/Patient"` |
-| `base64Binary` | Base64 encoded data | `"SGVsbG8="` |
-| `instant` | Instant in time | `"2023-01-15T10:30:00Z"` |
-| `date` | Date | `"2023-01-15"` |
-| `dateTime` | Date and time | `"2023-01-15T10:30:00"` |
+| `date` | Date (YYYY-MM-DD) | `"2024-01-15"` |
+| `dateTime` | Date and time | `"2024-01-15T10:30:00"` |
 | `time` | Time of day | `"10:30:00"` |
+| `instant` | Instant in time (with timezone) | `"2024-01-15T10:30:00Z"` |
 | `code` | Code from a value set | `"active"` |
-| `oid` | OID | `"urn:oid:1.2.3.4"` |
-| `id` | FHIR ID | `"example-patient-1"` |
 | `markdown` | Markdown text | `"**Bold** text"` |
-| `unsignedInt` | Non-negative integer | `0` |
-| `positiveInt` | Positive integer | `1` |
-| `uuid` | UUID | `"urn:uuid:c757873d-ec9a-4326-a141-556f43239520"` |
 
 ### Complex Types
 
 | Type | Description | Common Use |
 |------|-------------|------------|
-| `Identifier` | Business identifier | MRN, SSN, device serial numbers |
+| `Identifier` | Business identifier | MRN, serial numbers |
 | `HumanName` | Person's name | Patient, Practitioner names |
 | `Address` | Physical/mailing address | Patient address |
 | `ContactPoint` | Phone, email, etc. | Contact information |
 | `Coding` | Code + system | Individual coded values |
-| `CodeableConcept` | Code + text | Coded values with display text |
-| `Quantity` | Numeric value with unit | Lab values, measurements |
-| `Money` | Currency amount | Costs, charges |
-| `Period` | Start/end time range | Encounter period |
+| `CodeableConcept` | Code + text | Coded values with display |
+| `Quantity` | Numeric value with unit | Measurements |
+| `Money` | Currency amount | Costs |
+| `Period` | Start/end time range | Date ranges |
 | `Range` | Low/high range | Reference ranges |
-| `Ratio` | Numerator/denominator | Drug concentrations |
 | `Reference` | Reference to another resource | Patient reference |
 | `Attachment` | Document/binary content | Images, PDFs |
 | `Annotation` | Note with author/time | Clinical notes |
-| `Signature` | Digital signature | Signed documents |
-| `Age` | Duration as age | Patient age |
-| `Duration` | Length of time | Procedure duration |
-| `Distance` | Physical distance | Travel distance |
-| `Count` | Discrete count | Number of items |
-| `SimpleQuantity` | Quantity without comparator | Simple measurements |
-| `Timing` | Schedule/timing | Medication timing |
-| `Dosage` | Medication dosing | Drug dosage instructions |
 
 ### Special Types
 
@@ -628,167 +869,6 @@ profiles:
 |------|-------------|
 | `BackboneElement` | Nested element with children |
 | `Reference(ResourceType)` | Reference to specific resource type |
-| `Reference(Resource)` | Reference to any resource |
-
----
-
-## Search Parameter Type Mapping
-
-| FHIR Data Type | Recommended Search Type | Notes |
-|----------------|------------------------|-------|
-| `string` | `string` | Supports :exact, :contains |
-| `code` | `token` | System optional |
-| `Coding` | `token` | system\|code format |
-| `CodeableConcept` | `token` | system\|code format |
-| `Identifier` | `token` | system\|value format |
-| `boolean` | `token` | true\|false |
-| `date` | `date` | Supports prefixes (eq, lt, gt, etc.) |
-| `dateTime` | `date` | Supports prefixes |
-| `instant` | `date` | Supports prefixes |
-| `Period` | `date` | Searches within period |
-| `Reference` | `reference` | [type]/[id] format |
-| `Quantity` | `quantity` | value\|system\|code format |
-| `uri`, `url`, `canonical` | `uri` | Full URI match |
-| `integer`, `decimal` | `number` | Supports prefixes |
-
----
-
-## Backbone Element Example
-
-When defining a backbone element, create the parent element first, then its children:
-
-**Resource definition:**
-```
-CustomMedicalDevice
-├── deviceIdentifier (Identifier, 1..*)
-├── manufacturer (string, 0..1)
-├── status (code, 1..1)
-├── contact (BackboneElement, 0..*)     <- Parent backbone element
-│   ├── contact.name (string, 1..1)     <- Child elements
-│   ├── contact.phone (ContactPoint, 0..*)
-│   └── contact.role (code, 0..1)
-└── patient (Reference(Patient), 0..1)
-```
-
-**StructureDefinition elements for backbone (DIFFERENTIAL - custom elements only):**
-```json
-{
-  "id": "CustomMedicalDevice.contact",
-  "path": "CustomMedicalDevice.contact",
-  "short": "Device contacts",
-  "min": 0,
-  "max": "*",
-  "type": [{ "code": "BackboneElement" }]
-},
-{
-  "id": "CustomMedicalDevice.contact.name",
-  "path": "CustomMedicalDevice.contact.name",
-  "short": "Contact name",
-  "min": 1,
-  "max": "1",
-  "type": [{ "code": "string" }]
-},
-{
-  "id": "CustomMedicalDevice.contact.phone",
-  "path": "CustomMedicalDevice.contact.phone",
-  "short": "Contact phone numbers",
-  "min": 0,
-  "max": "*",
-  "type": [{ "code": "ContactPoint" }]
-},
-{
-  "id": "CustomMedicalDevice.contact.role",
-  "path": "CustomMedicalDevice.contact.role",
-  "short": "Contact role",
-  "min": 0,
-  "max": "1",
-  "type": [{ "code": "code" }],
-  "binding": {
-    "strength": "required",
-    "valueSet": "http://example.org/ValueSet/contact-roles"
-  }
-}
-```
-
-**StructureDefinition elements for backbone (SNAPSHOT - includes backbone base elements):**
-```json
-// The backbone element itself
-{
-  "id": "CustomMedicalDevice.contact",
-  "path": "CustomMedicalDevice.contact",
-  "short": "Device contacts",
-  "min": 0,
-  "max": "*",
-  "type": [{ "code": "BackboneElement" }]
-},
-// BackboneElement base elements (REQUIRED in snapshot)
-{
-  "id": "CustomMedicalDevice.contact.id",
-  "path": "CustomMedicalDevice.contact.id",
-  "short": "Unique id for inter-element referencing",
-  "definition": "Unique id for the element within a resource.",
-  "min": 0,
-  "max": "1",
-  "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "string" }] }]
-},
-{
-  "id": "CustomMedicalDevice.contact.extension",
-  "path": "CustomMedicalDevice.contact.extension",
-  "short": "Additional content defined by implementations",
-  "definition": "May be used to represent additional information.",
-  "min": 0,
-  "max": "*",
-  "type": [{ "code": "Extension" }]
-},
-{
-  "id": "CustomMedicalDevice.contact.modifierExtension",
-  "path": "CustomMedicalDevice.contact.modifierExtension",
-  "short": "Extensions that cannot be ignored even if unrecognized",
-  "definition": "May be used to represent additional information that modifies the understanding of the element.",
-  "min": 0,
-  "max": "*",
-  "type": [{ "code": "Extension" }],
-  "isModifier": true,
-  "isModifierReason": "Modifier extensions are expected to modify the meaning or interpretation of the element that contains them"
-},
-// Custom backbone children
-{
-  "id": "CustomMedicalDevice.contact.name",
-  "path": "CustomMedicalDevice.contact.name",
-  "short": "Contact name",
-  "min": 1,
-  "max": "1",
-  "type": [{ "code": "string" }]
-},
-{
-  "id": "CustomMedicalDevice.contact.phone",
-  "path": "CustomMedicalDevice.contact.phone",
-  "short": "Contact phone numbers",
-  "min": 0,
-  "max": "*",
-  "type": [{ "code": "ContactPoint" }]
-},
-{
-  "id": "CustomMedicalDevice.contact.role",
-  "path": "CustomMedicalDevice.contact.role",
-  "short": "Contact role",
-  "min": 0,
-  "max": "1",
-  "type": [{ "code": "code" }],
-  "binding": { "strength": "required", "valueSet": "http://example.org/ValueSet/contact-roles" }
-}
-```
-
----
-
-## Value Set Binding Strengths
-
-| Strength | Description |
-|----------|-------------|
-| `required` | Must be from the value set (no exceptions) |
-| `extensible` | Should be from value set, but can use other codes if needed |
-| `preferred` | Recommended to use value set |
-| `example` | Value set is just an example |
 
 ---
 
@@ -796,258 +876,36 @@ CustomMedicalDevice
 
 Remind the user to:
 
-1. **Verify Generated Files**:
-   - StructureDefinition in `fhir-config/r5/profiles/`
-   - SearchParameter files in `fhir-config/r5/searchparameters/`
-   - OperationDefinition files in `fhir-config/r5/operations/` (if applicable)
-   - Resource configuration in `fhir-config/resources/`
+1. **Rebuild the Project**:
+   ```bash
+   ./mvnw clean install -pl fhir4java-core,fhir4java-server
+   ```
 
-2. **For R4B Support** (if enabled):
-   - Copy relevant files to `fhir-config/r4b/` directories
-   - Adjust fhirVersion to "4.3.0" in JSON files
-
-3. **Restart the Server**:
+2. **Restart the Server**:
    ```bash
    ./mvnw spring-boot:run -pl fhir4java-server
    ```
 
-4. **Test the New Resource**:
-   - Create: `POST /fhir/r5/{ResourceName}`
-   - Read: `GET /fhir/r5/{ResourceName}/{id}`
-   - Search: `GET /fhir/r5/{ResourceName}?{param}={value}`
-   - Validate: `POST /fhir/r5/{ResourceName}/$validate`
+3. **Test the New Resource**:
+   ```bash
+   # Create
+   curl -X POST http://localhost:8080/fhir/r5/{ResourceName} \
+     -H "Content-Type: application/fhir+json" \
+     -d '{"resourceType":"{ResourceName}", ...}'
 
-5. **Test Custom Operations** (if defined):
-   - Instance level: `POST /fhir/r5/{ResourceName}/{id}/${operationName}`
-   - Type level: `POST /fhir/r5/{ResourceName}/${operationName}`
+   # Read
+   curl http://localhost:8080/fhir/r5/{ResourceName}/{id}
 
-6. **Verify CapabilityStatement**:
-   - `GET /fhir/r5/metadata` should include the new resource
+   # Search
+   curl "http://localhost:8080/fhir/r5/{ResourceName}?{param}={value}"
 
----
+   # Validate
+   curl -X POST http://localhost:8080/fhir/r5/{ResourceName}/\$validate \
+     -H "Content-Type: application/fhir+json" \
+     -d '{"resourceType":"{ResourceName}", ...}'
+   ```
 
-## Complete Example: CustomMedicalDevice
-
-### Generated Files
-
-**1. StructureDefinition-CustomMedicalDevice.json**
-```json
-{
-  "resourceType": "StructureDefinition",
-  "id": "CustomMedicalDevice",
-  "url": "http://example.org/fhir/StructureDefinition/CustomMedicalDevice",
-  "version": "1.0.0",
-  "name": "CustomMedicalDevice",
-  "title": "Custom Medical Device",
-  "status": "draft",
-  "experimental": true,
-  "date": "2024-01-15",
-  "publisher": "Example Organization",
-  "description": "A custom resource for tracking medical devices with extended contact information",
-  "fhirVersion": "5.0.0",
-  "kind": "resource",
-  "abstract": false,
-  "type": "CustomMedicalDevice",
-  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
-  "derivation": "specialization",
-  "differential": {
-    "element": [
-      {
-        "id": "CustomMedicalDevice",
-        "path": "CustomMedicalDevice",
-        "short": "Custom medical device resource",
-        "definition": "A custom resource for tracking medical devices with extended contact information",
-        "min": 0,
-        "max": "*"
-      },
-      {
-        "id": "CustomMedicalDevice.deviceIdentifier",
-        "path": "CustomMedicalDevice.deviceIdentifier",
-        "short": "Unique device identifiers",
-        "definition": "Business identifiers for the device",
-        "min": 1,
-        "max": "*",
-        "type": [{ "code": "Identifier" }],
-        "isSummary": true
-      },
-      {
-        "id": "CustomMedicalDevice.manufacturer",
-        "path": "CustomMedicalDevice.manufacturer",
-        "short": "Device manufacturer name",
-        "definition": "The name of the device manufacturer",
-        "min": 0,
-        "max": "1",
-        "type": [{ "code": "string" }]
-      },
-      {
-        "id": "CustomMedicalDevice.status",
-        "path": "CustomMedicalDevice.status",
-        "short": "active | inactive | entered-in-error",
-        "definition": "The status of the device",
-        "min": 1,
-        "max": "1",
-        "type": [{ "code": "code" }],
-        "isModifier": true,
-        "isSummary": true,
-        "binding": {
-          "strength": "required",
-          "valueSet": "http://example.org/ValueSet/device-status"
-        }
-      },
-      {
-        "id": "CustomMedicalDevice.patient",
-        "path": "CustomMedicalDevice.patient",
-        "short": "Patient using the device",
-        "definition": "Reference to the patient using this device",
-        "min": 0,
-        "max": "1",
-        "type": [{
-          "code": "Reference",
-          "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Patient"]
-        }]
-      },
-      {
-        "id": "CustomMedicalDevice.contact",
-        "path": "CustomMedicalDevice.contact",
-        "short": "Device contacts",
-        "definition": "Contact information for the device",
-        "min": 0,
-        "max": "*",
-        "type": [{ "code": "BackboneElement" }]
-      },
-      {
-        "id": "CustomMedicalDevice.contact.name",
-        "path": "CustomMedicalDevice.contact.name",
-        "short": "Contact name",
-        "min": 1,
-        "max": "1",
-        "type": [{ "code": "string" }]
-      },
-      {
-        "id": "CustomMedicalDevice.contact.phone",
-        "path": "CustomMedicalDevice.contact.phone",
-        "short": "Contact phone numbers",
-        "min": 0,
-        "max": "*",
-        "type": [{ "code": "ContactPoint" }]
-      },
-      {
-        "id": "CustomMedicalDevice.contact.role",
-        "path": "CustomMedicalDevice.contact.role",
-        "short": "Contact role",
-        "min": 0,
-        "max": "1",
-        "type": [{ "code": "code" }]
-      }
-    ]
-  }
-}
-```
-
-**2. SearchParameter-CustomMedicalDevice-identifier.json**
-```json
-{
-  "resourceType": "SearchParameter",
-  "id": "CustomMedicalDevice-identifier",
-  "url": "http://example.org/fhir/SearchParameter/CustomMedicalDevice-identifier",
-  "version": "1.0.0",
-  "name": "identifier",
-  "status": "draft",
-  "experimental": true,
-  "date": "2024-01-15",
-  "publisher": "Example Organization",
-  "description": "Search by device identifier",
-  "code": "identifier",
-  "base": ["CustomMedicalDevice"],
-  "type": "token",
-  "expression": "CustomMedicalDevice.deviceIdentifier",
-  "processingMode": "normal"
-}
-```
-
-**3. SearchParameter-CustomMedicalDevice-status.json**
-```json
-{
-  "resourceType": "SearchParameter",
-  "id": "CustomMedicalDevice-status",
-  "url": "http://example.org/fhir/SearchParameter/CustomMedicalDevice-status",
-  "version": "1.0.0",
-  "name": "status",
-  "status": "draft",
-  "experimental": true,
-  "date": "2024-01-15",
-  "publisher": "Example Organization",
-  "description": "Search by device status",
-  "code": "status",
-  "base": ["CustomMedicalDevice"],
-  "type": "token",
-  "expression": "CustomMedicalDevice.status",
-  "processingMode": "normal"
-}
-```
-
-**4. SearchParameter-CustomMedicalDevice-patient.json**
-```json
-{
-  "resourceType": "SearchParameter",
-  "id": "CustomMedicalDevice-patient",
-  "url": "http://example.org/fhir/SearchParameter/CustomMedicalDevice-patient",
-  "version": "1.0.0",
-  "name": "patient",
-  "status": "draft",
-  "experimental": true,
-  "date": "2024-01-15",
-  "publisher": "Example Organization",
-  "description": "Search by patient reference",
-  "code": "patient",
-  "base": ["CustomMedicalDevice"],
-  "type": "reference",
-  "expression": "CustomMedicalDevice.patient",
-  "processingMode": "normal",
-  "target": ["Patient"]
-}
-```
-
-**5. custommedicaldevice.yml**
-```yaml
-# CustomMedicalDevice Resource Configuration
-resourceType: CustomMedicalDevice
-enabled: true
-
-fhirVersions:
-  - version: R5
-    default: true
-
-schema:
-  type: shared
-  name: fhir
-
-interactions:
-  read: true
-  vread: true
-  create: true
-  update: true
-  patch: false
-  delete: false
-  search: true
-  history: true
-
-searchParameters:
-  mode: allowlist
-  common:
-    - _id
-    - _lastUpdated
-    - _tag
-    - _profile
-    - _security
-  resourceSpecific:
-    - identifier
-    - manufacturer
-    - status
-    - patient
-    - contact-name
-
-profiles:
-  - url: http://example.org/fhir/StructureDefinition/CustomMedicalDevice
-    required: true
-```
+4. **Verify CapabilityStatement**:
+   ```bash
+   curl http://localhost:8080/fhir/r5/metadata | jq '.rest[0].resource[] | select(.type=="{ResourceName}")'
+   ```
