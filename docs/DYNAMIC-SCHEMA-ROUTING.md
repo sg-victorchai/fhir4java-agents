@@ -267,25 +267,46 @@ public class SchemaConfig {
 
 ## Database Schema Design
 
-### Current Design: Primary Table Only
+### Current Design: Full Table Replication
 
-The dedicated schema contains **only the `fhir_resource` table**:
+The dedicated schema contains **all resource-related tables**, providing complete feature parity with the shared schema:
 
 ```
 fhir/ (shared schema)
 ├── fhir_resource           ← Primary table for shared resources
-├── fhir_search_index       ← Unused (search uses JSONB)
-├── fhir_resource_history   ← Unused (versioning in main table)
-├── fhir_resource_tag       ← Unused (tags in JSONB content)
-├── fhir_compartment        ← Unused (hardcoded in operations)
-├── fhir_audit_log          ← Cross-cutting audit log
-└── flyway_schema_history   ← Migration metadata
+├── fhir_search_index       ← Search parameter indexes
+├── fhir_resource_history   ← Version history tracking
+├── fhir_resource_tag       ← Tags, security labels, profiles
+├── fhir_compartment        ← Compartment membership
+├── fhir_audit_log          ← Cross-cutting audit log (NOT replicated)
+└── flyway_schema_history   ← Migration metadata (NOT replicated)
 
 careplan/ (dedicated schema)
-└── fhir_resource           ← Primary table for CarePlan only
+├── fhir_resource           ← Primary table for CarePlan
+├── fhir_search_index       ← CarePlan search indexes
+├── fhir_resource_history   ← CarePlan version history
+├── fhir_resource_tag       ← CarePlan tags/security/profiles
+└── fhir_compartment        ← CarePlan compartment membership
 ```
 
-### Table Structure (Identical Across Schemas)
+### Tables in Dedicated Schemas
+
+| Table | Purpose | Foreign Keys |
+|-------|---------|--------------|
+| `fhir_resource` | Primary resource storage with JSONB content | None |
+| `fhir_resource_history` | Tracks all version changes with operation type | References `fhir_resource(id)` |
+| `fhir_search_index` | Pre-computed search parameter values | References `fhir_resource(id)` |
+| `fhir_resource_tag` | Tags, security labels, and profile references | References `fhir_resource(id)` |
+| `fhir_compartment` | Compartment membership for Patient, Encounter, etc. | References `fhir_resource(id)` |
+
+### Tables NOT Replicated (Cross-Cutting)
+
+| Table | Rationale |
+|-------|-----------|
+| `fhir_audit_log` | Audit trail spans all resources across all schemas |
+| `flyway_schema_history` | Migration metadata managed by Flyway |
+
+### Primary Table Structure
 
 ```sql
 CREATE TABLE {schema}.fhir_resource (
@@ -305,32 +326,82 @@ CREATE TABLE {schema}.fhir_resource (
     CONSTRAINT uk_{schema}_resource_version
         UNIQUE (tenant_id, resource_type, resource_id, version_id)
 );
-
--- Indexes
-CREATE UNIQUE INDEX uk_{schema}_current_resource
-    ON {schema}.fhir_resource(tenant_id, resource_type, resource_id)
-    WHERE is_current = TRUE;
-
-CREATE INDEX idx_{schema}_content
-    ON {schema}.fhir_resource USING GIN (content jsonb_path_ops);
 ```
 
-### Why Only the Primary Table?
+### Supporting Table Structures
 
-| Supporting Table | Status | Rationale |
-|------------------|--------|-----------|
-| `fhir_search_index` | **Not created** | Search uses JSONB `content` column directly via `jsonb_extract_path_text()` |
-| `fhir_resource_history` | **Not created** | Versioning uses `fhir_resource` with `is_current` flag and `version_id` |
-| `fhir_resource_tag` | **Not created** | Tags/security labels stored in JSONB `content` column |
-| `fhir_compartment` | **Not created** | Compartment membership uses hardcoded search parameters in `$everything` |
+```sql
+-- Version History
+CREATE TABLE {schema}.fhir_resource_history (
+    id UUID PRIMARY KEY,
+    resource_id UUID NOT NULL REFERENCES {schema}.fhir_resource(id) ON DELETE CASCADE,
+    version_id INTEGER NOT NULL,
+    content JSONB NOT NULL,
+    operation VARCHAR(20) NOT NULL,  -- CREATE, UPDATE, DELETE
+    changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    changed_by VARCHAR(256)
+);
 
-This minimizes complexity while supporting all current functionality.
+-- Search Parameter Index
+CREATE TABLE {schema}.fhir_search_index (
+    id UUID PRIMARY KEY,
+    resource_id UUID NOT NULL REFERENCES {schema}.fhir_resource(id) ON DELETE CASCADE,
+    resource_type VARCHAR(100) NOT NULL,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    param_name VARCHAR(100) NOT NULL,
+    param_type VARCHAR(20) NOT NULL,  -- string, token, reference, date, etc.
+    value_string VARCHAR(2048),
+    value_token_system VARCHAR(2048),
+    value_token_code VARCHAR(256),
+    value_reference_type VARCHAR(100),
+    value_reference_id VARCHAR(64),
+    value_date_start TIMESTAMP WITH TIME ZONE,
+    value_date_end TIMESTAMP WITH TIME ZONE,
+    -- ... additional value columns
+);
+
+-- Tags/Security/Profiles
+CREATE TABLE {schema}.fhir_resource_tag (
+    id UUID PRIMARY KEY,
+    resource_id UUID NOT NULL REFERENCES {schema}.fhir_resource(id) ON DELETE CASCADE,
+    tag_type VARCHAR(20) NOT NULL,  -- tag, security, profile
+    system_uri VARCHAR(2048),
+    code VARCHAR(256),
+    display VARCHAR(1024)
+);
+
+-- Compartment Membership
+CREATE TABLE {schema}.fhir_compartment (
+    id UUID PRIMARY KEY,
+    resource_id UUID NOT NULL REFERENCES {schema}.fhir_resource(id) ON DELETE CASCADE,
+    compartment_type VARCHAR(100) NOT NULL,  -- Patient, Encounter, etc.
+    compartment_id VARCHAR(64) NOT NULL
+);
+```
+
+### Why Full Table Replication?
+
+| Benefit | Description |
+|---------|-------------|
+| **Complete Feature Parity** | All FHIR features work identically in dedicated schemas |
+| **Future-Proof** | Ready for extracted search indexes, explicit history, etc. |
+| **Data Isolation** | All resource data (including indexes) is schema-contained |
+| **Independent Optimization** | Can tune indexes per resource type |
+| **Simpler Cross-Table Queries** | Joins stay within schema boundaries |
+
+### Trade-offs
+
+| Aspect | Impact |
+|--------|--------|
+| Storage Overhead | More tables per schema (currently unused tables still created) |
+| Migration Complexity | More DDL statements per new dedicated schema |
+| Index Maintenance | More indexes to maintain per schema |
 
 ---
 
 ## Design Options Analysis
 
-### Option 1: Primary Table Only (Current Implementation)
+### Option 1: Primary Table Only
 
 **Structure:**
 ```
@@ -348,12 +419,13 @@ dedicated_schema/
 - Limited optimization opportunities for specialized queries
 
 **When to Use:**
-- Current search/validation/history patterns remain unchanged
+- Search/validation/history patterns use JSONB directly
 - No specialized indexing requirements
+- Minimal storage footprint is critical
 
 ---
 
-### Option 2: Full Table Replication
+### Option 2: Full Table Replication (Current Implementation)
 
 **Structure:**
 ```
@@ -369,14 +441,16 @@ dedicated_schema/
 - Complete feature parity with shared schema
 - Future-proof for any feature additions
 - Consistent schema structure
+- Ready for extracted search indexes when implemented
 
 **Cons:**
-- Creates unused tables
+- Creates tables that may be unused initially
 - More complex migrations
 - Higher storage overhead
 - More indexes to maintain
 
 **When to Use:**
+- Default recommendation for dedicated schemas
 - Planning to implement extracted search indexes
 - Need cross-table queries within dedicated schema
 - Regulatory requirement for complete data isolation
@@ -624,7 +698,7 @@ spring:
 
 ### Integration Tests
 
-**H2SchemaInitializer** creates dedicated schemas in H2:
+**H2SchemaInitializer** creates all tables in dedicated schemas for H2 tests (full replication):
 
 ```java
 @Configuration
@@ -635,11 +709,20 @@ public class H2SchemaInitializer {
     @PostConstruct
     void initializeDedicatedSchemas() {
         for (String schema : DEDICATED_SCHEMAS) {
-            createDedicatedSchemaTable(schema);
+            // Creates ALL tables: fhir_resource, fhir_resource_history,
+            // fhir_search_index, fhir_resource_tag, fhir_compartment
+            createDedicatedSchemaTables(schema);
         }
     }
 }
 ```
+
+**Tables Created Per Schema:**
+- `fhir_resource` - Primary resource storage
+- `fhir_resource_history` - Version history
+- `fhir_search_index` - Search parameter indexes
+- `fhir_resource_tag` - Tags, security, profiles
+- `fhir_compartment` - Compartment membership
 
 **H2 JDBC URL Configuration:**
 ```yaml
