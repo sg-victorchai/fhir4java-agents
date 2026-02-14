@@ -1,0 +1,18 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Course-instructor",
+  "url": "http://fhir4java.org/fhir/SearchParameter/Course-instructor",
+  "version": "1.0.0",
+  "name": "instructor",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "Search by course instructor",
+  "code": "instructor",
+  "base": ["Course"],
+  "type": "reference",
+  "expression": "Course.instructor",
+  "processingMode": "normal",
+  "target": ["Person"]
+}

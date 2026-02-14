@@ -1,0 +1,26 @@
+{
+  "resourceType": "ValueSet",
+  "id": "course-status",
+  "url": "http://fhir4java.org/fhir/ValueSet/course-status",
+  "version": "1.0.0",
+  "name": "CourseStatus",
+  "title": "Course Status",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "The status of a course",
+  "compose": {
+    "include": [
+      {
+        "system": "http://fhir4java.org/fhir/CodeSystem/course-status",
+        "concept": [
+          {"code": "draft", "display": "Draft"},
+          {"code": "active", "display": "Active"},
+          {"code": "retired", "display": "Retired"},
+          {"code": "entered-in-error", "display": "Entered in Error"}
+        ]
+      }
+    ]
+  }
+}

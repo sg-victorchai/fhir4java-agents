@@ -1,0 +1,17 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Course-title",
+  "url": "http://fhir4java.org/fhir/SearchParameter/Course-title",
+  "version": "1.0.0",
+  "name": "title",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "Search by course title",
+  "code": "title",
+  "base": ["Course"],
+  "type": "string",
+  "expression": "Course.title",
+  "processingMode": "normal"
+}

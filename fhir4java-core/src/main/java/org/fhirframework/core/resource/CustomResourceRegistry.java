@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.model.api.annotation.Block;
 import ca.uhn.fhir.model.api.annotation.ResourceDef;
+import org.fhirframework.core.config.ResourceConfiguration;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.version.FhirVersion;
 import org.hl7.fhir.instance.model.api.IBaseResource;
@@ -14,14 +15,17 @@ import org.springframework.stereotype.Component;
 import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Registers custom FHIR resource classes generated from StructureDefinitions with HAPI FHIR contexts.
  * <p>
- * This component automatically scans for generated resource classes in the
- * {@code org.fhirframework.generated.resources} package and registers them with
- * the appropriate FHIR version contexts, allowing HAPI to parse, validate, and
- * serialize these custom resources.
+ * This component automatically discovers custom resource classes by scanning the
+ * {@link ResourceRegistry} for configured resources and checking if a corresponding
+ * generated class exists in the {@code org.fhirframework.generated.resources} package.
+ * Custom resources are those that have a generated Java class with the {@code @ResourceDef}
+ * annotation but are not standard FHIR resources known to HAPI.
  * </p>
  */
 @Component
@@ -31,10 +35,12 @@ public class CustomResourceRegistry {
     private static final String GENERATED_RESOURCES_PACKAGE = "org.fhirframework.generated.resources";
 
     private final FhirContextFactory contextFactory;
+    private final ResourceRegistry resourceRegistry;
     private final List<String> registeredResources = new ArrayList<>();
 
-    public CustomResourceRegistry(FhirContextFactory contextFactory) {
+    public CustomResourceRegistry(FhirContextFactory contextFactory, ResourceRegistry resourceRegistry) {
         this.contextFactory = contextFactory;
+        this.resourceRegistry = resourceRegistry;
     }
 
     @PostConstruct
@@ -152,25 +158,54 @@ public class CustomResourceRegistry {
     }
 
     /**
-     * Discover generated custom resource classes.
+     * Discover generated custom resource classes by scanning the ResourceRegistry.
      * <p>
-     * In a real implementation, this could scan the classpath or read a generated manifest file.
-     * For now, we manually list known custom resources.
+     * This method iterates through all configured resources and checks if a corresponding
+     * generated Java class exists with the {@code @ResourceDef} annotation. Resources that
+     * have a generated class are considered custom resources and will be registered with HAPI.
      * </p>
      *
-     * @return List of custom resource class names
+     * @return List of custom resource class names that have generated classes
      */
     private List<String> discoverGeneratedResources() {
-        List<String> resources = new ArrayList<>();
+        List<String> customResources = new ArrayList<>();
 
-        // Add known custom resources
-        // This list should ideally be generated during the code generation phase
-        resources.add("MedicationInventory");
+        // Get all configured resource types from the registry
+        Set<String> configuredResourceTypes = resourceRegistry.getAllResources().stream()
+                .filter(ResourceConfiguration::isEnabled)
+                .map(ResourceConfiguration::getResourceType)
+                .collect(Collectors.toSet());
 
-        // Future: Could scan classpath or read from a generated manifest
-        // resources.addAll(scanGeneratedResourcesFromClasspath());
+        log.debug("Scanning {} configured resources for custom resource classes", configuredResourceTypes.size());
 
-        return resources;
+        for (String resourceType : configuredResourceTypes) {
+            // Try to load the generated class for this resource type
+            String className = GENERATED_RESOURCES_PACKAGE + "." + resourceType;
+            try {
+                Class<?> resourceClass = Class.forName(className);
+
+                // Check if it has @ResourceDef annotation (confirms it's a HAPI-compatible resource)
+                if (resourceClass.isAnnotationPresent(ResourceDef.class)) {
+                    // Verify it implements IBaseResource
+                    if (IBaseResource.class.isAssignableFrom(resourceClass)) {
+                        log.debug("Discovered custom resource class: {}", resourceType);
+                        customResources.add(resourceType);
+                    } else {
+                        log.warn("Generated class {} does not implement IBaseResource, skipping", className);
+                    }
+                } else {
+                    log.debug("Class {} exists but has no @ResourceDef annotation, skipping", className);
+                }
+            } catch (ClassNotFoundException e) {
+                // No generated class for this resource type - it's a standard FHIR resource
+                log.trace("No generated class found for resource type: {} (standard FHIR resource)", resourceType);
+            }
+        }
+
+        log.info("Discovered {} custom resource(s) from configuration: {}",
+                customResources.size(), customResources);
+
+        return customResources;
     }
 
     /**

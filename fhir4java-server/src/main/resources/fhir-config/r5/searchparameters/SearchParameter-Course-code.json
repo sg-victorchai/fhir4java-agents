@@ -1,0 +1,17 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Course-code",
+  "url": "http://fhir4java.org/fhir/SearchParameter/Course-code",
+  "version": "1.0.0",
+  "name": "code",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "Search by course code",
+  "code": "code",
+  "base": ["Course"],
+  "type": "token",
+  "expression": "Course.code",
+  "processingMode": "normal"
+}

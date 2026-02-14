@@ -1,0 +1,17 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Course-start-date",
+  "url": "http://fhir4java.org/fhir/SearchParameter/Course-start-date",
+  "version": "1.0.0",
+  "name": "start-date",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "Search by course start date",
+  "code": "start-date",
+  "base": ["Course"],
+  "type": "date",
+  "expression": "Course.startDate",
+  "processingMode": "normal"
+}

@@ -1,0 +1,17 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Course-status",
+  "url": "http://fhir4java.org/fhir/SearchParameter/Course-status",
+  "version": "1.0.0",
+  "name": "status",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "Search by course status (draft | active | retired | entered-in-error)",
+  "code": "status",
+  "base": ["Course"],
+  "type": "token",
+  "expression": "Course.status",
+  "processingMode": "normal"
+}

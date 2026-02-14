@@ -1,0 +1,378 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Course",
+  "url": "http://fhir4java.org/fhir/StructureDefinition/Course",
+  "version": "1.0.0",
+  "name": "Course",
+  "title": "Course",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "This resource represents the available course for anyone to enroll",
+  "fhirVersion": "5.0.0",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Course",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "snapshot": {
+    "element": [
+      {
+        "id": "Course",
+        "path": "Course",
+        "short": "A course available for enrollment",
+        "definition": "This resource represents the available course for anyone to enroll",
+        "min": 0,
+        "max": "*"
+      },
+      {
+        "id": "Course.id",
+        "path": "Course.id",
+        "short": "Logical id of this artifact",
+        "definition": "The logical id of the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "http://hl7.org/fhirpath/System.String", "extension": [{"url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "id"}]}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.meta",
+        "path": "Course.meta",
+        "short": "Metadata about the resource",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Meta"}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.implicitRules",
+        "path": "Course.implicitRules",
+        "short": "A set of rules under which this content was created",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "uri"}],
+        "isModifier": true,
+        "isSummary": true
+      },
+      {
+        "id": "Course.language",
+        "path": "Course.language",
+        "short": "Language of the resource content",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "code"}],
+        "binding": {"strength": "required", "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0"}
+      },
+      {
+        "id": "Course.text",
+        "path": "Course.text",
+        "short": "Text summary of the resource",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Narrative"}]
+      },
+      {
+        "id": "Course.contained",
+        "path": "Course.contained",
+        "short": "Contained, inline Resources",
+        "min": 0,
+        "max": "*",
+        "type": [{"code": "Resource"}]
+      },
+      {
+        "id": "Course.extension",
+        "path": "Course.extension",
+        "short": "Additional content defined by implementations",
+        "min": 0,
+        "max": "*",
+        "type": [{"code": "Extension"}]
+      },
+      {
+        "id": "Course.modifierExtension",
+        "path": "Course.modifierExtension",
+        "short": "Extensions that cannot be ignored",
+        "min": 0,
+        "max": "*",
+        "type": [{"code": "Extension"}],
+        "isModifier": true
+      },
+      {
+        "id": "Course.code",
+        "path": "Course.code",
+        "short": "Unique code for the course",
+        "definition": "A unique code that identifies this course",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "code"}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.category",
+        "path": "Course.category",
+        "short": "Type of course",
+        "definition": "The category or type of the course such as infrastructure, cybersecurity, application security, programming, communication",
+        "min": 1,
+        "max": "*",
+        "type": [{"code": "code"}],
+        "isSummary": true,
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://fhir4java.org/fhir/ValueSet/course-category"
+        }
+      },
+      {
+        "id": "Course.title",
+        "path": "Course.title",
+        "short": "Name of the course",
+        "definition": "The human-readable name of the course",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "string"}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.status",
+        "path": "Course.status",
+        "short": "draft | active | retired | entered-in-error",
+        "definition": "The current status of the course",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "code"}],
+        "isModifier": true,
+        "isSummary": true,
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://fhir4java.org/fhir/ValueSet/course-status"
+        }
+      },
+      {
+        "id": "Course.description",
+        "path": "Course.description",
+        "short": "Detailed description of the course",
+        "definition": "A detailed description of the course content and objectives",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "markdown"}]
+      },
+      {
+        "id": "Course.instructor",
+        "path": "Course.instructor",
+        "short": "Who teaches the course",
+        "definition": "The person(s) who teach or instruct the course",
+        "min": 1,
+        "max": "*",
+        "type": [{"code": "Reference", "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Person"]}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.duration",
+        "path": "Course.duration",
+        "short": "How long the course takes",
+        "definition": "The duration of the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Duration"}]
+      },
+      {
+        "id": "Course.startDate",
+        "path": "Course.startDate",
+        "short": "When the course begins",
+        "definition": "The date when the course starts",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "date"}]
+      },
+      {
+        "id": "Course.prerequisites",
+        "path": "Course.prerequisites",
+        "short": "Required courses before enrollment",
+        "definition": "Other courses that must be completed before enrolling in this course",
+        "min": 0,
+        "max": "*",
+        "type": [{"code": "Reference", "targetProfile": ["http://fhir4java.org/fhir/StructureDefinition/Course"]}]
+      },
+      {
+        "id": "Course.courseFee",
+        "path": "Course.courseFee",
+        "short": "Cost of the course",
+        "definition": "The fee charged for the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Money"}]
+      },
+      {
+        "id": "Course.governmentSubsidy",
+        "path": "Course.governmentSubsidy",
+        "short": "Government subsidy amount",
+        "definition": "The amount of government subsidy available for the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Money"}]
+      },
+      {
+        "id": "Course.certExamFee",
+        "path": "Course.certExamFee",
+        "short": "Certification exam fee",
+        "definition": "The fee for the certification exam associated with the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Money"}]
+      },
+      {
+        "id": "Course.trainingProvider",
+        "path": "Course.trainingProvider",
+        "short": "Organization providing the training",
+        "definition": "The organization that provides or hosts the training course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Reference", "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Organization"]}],
+        "isSummary": true
+      }
+    ]
+  },
+  "differential": {
+    "element": [
+      {
+        "id": "Course",
+        "path": "Course",
+        "short": "A course available for enrollment",
+        "definition": "This resource represents the available course for anyone to enroll",
+        "min": 0,
+        "max": "*"
+      },
+      {
+        "id": "Course.code",
+        "path": "Course.code",
+        "short": "Unique code for the course",
+        "definition": "A unique code that identifies this course",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "code"}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.category",
+        "path": "Course.category",
+        "short": "Type of course",
+        "definition": "The category or type of the course such as infrastructure, cybersecurity, application security, programming, communication",
+        "min": 1,
+        "max": "*",
+        "type": [{"code": "code"}],
+        "isSummary": true,
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://fhir4java.org/fhir/ValueSet/course-category"
+        }
+      },
+      {
+        "id": "Course.title",
+        "path": "Course.title",
+        "short": "Name of the course",
+        "definition": "The human-readable name of the course",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "string"}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.status",
+        "path": "Course.status",
+        "short": "draft | active | retired | entered-in-error",
+        "definition": "The current status of the course",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "code"}],
+        "isModifier": true,
+        "isSummary": true,
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://fhir4java.org/fhir/ValueSet/course-status"
+        }
+      },
+      {
+        "id": "Course.description",
+        "path": "Course.description",
+        "short": "Detailed description of the course",
+        "definition": "A detailed description of the course content and objectives",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "markdown"}]
+      },
+      {
+        "id": "Course.instructor",
+        "path": "Course.instructor",
+        "short": "Who teaches the course",
+        "definition": "The person(s) who teach or instruct the course",
+        "min": 1,
+        "max": "*",
+        "type": [{"code": "Reference", "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Person"]}],
+        "isSummary": true
+      },
+      {
+        "id": "Course.duration",
+        "path": "Course.duration",
+        "short": "How long the course takes",
+        "definition": "The duration of the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Duration"}]
+      },
+      {
+        "id": "Course.startDate",
+        "path": "Course.startDate",
+        "short": "When the course begins",
+        "definition": "The date when the course starts",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "date"}]
+      },
+      {
+        "id": "Course.prerequisites",
+        "path": "Course.prerequisites",
+        "short": "Required courses before enrollment",
+        "definition": "Other courses that must be completed before enrolling in this course",
+        "min": 0,
+        "max": "*",
+        "type": [{"code": "Reference", "targetProfile": ["http://fhir4java.org/fhir/StructureDefinition/Course"]}]
+      },
+      {
+        "id": "Course.courseFee",
+        "path": "Course.courseFee",
+        "short": "Cost of the course",
+        "definition": "The fee charged for the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Money"}]
+      },
+      {
+        "id": "Course.governmentSubsidy",
+        "path": "Course.governmentSubsidy",
+        "short": "Government subsidy amount",
+        "definition": "The amount of government subsidy available for the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Money"}]
+      },
+      {
+        "id": "Course.certExamFee",
+        "path": "Course.certExamFee",
+        "short": "Certification exam fee",
+        "definition": "The fee for the certification exam associated with the course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Money"}]
+      },
+      {
+        "id": "Course.trainingProvider",
+        "path": "Course.trainingProvider",
+        "short": "Organization providing the training",
+        "definition": "The organization that provides or hosts the training course",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "Reference", "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Organization"]}],
+        "isSummary": true
+      }
+    ]
+  }
+}

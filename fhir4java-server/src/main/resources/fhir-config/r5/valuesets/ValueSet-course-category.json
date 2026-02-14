@@ -1,0 +1,27 @@
+{
+  "resourceType": "ValueSet",
+  "id": "course-category",
+  "url": "http://fhir4java.org/fhir/ValueSet/course-category",
+  "version": "1.0.0",
+  "name": "CourseCategory",
+  "title": "Course Category",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "The category or type of a course",
+  "compose": {
+    "include": [
+      {
+        "system": "http://fhir4java.org/fhir/CodeSystem/course-category",
+        "concept": [
+          {"code": "infrastructure", "display": "Infrastructure"},
+          {"code": "cybersecurity", "display": "Cybersecurity"},
+          {"code": "app-security", "display": "Application Security"},
+          {"code": "programming", "display": "Programming"},
+          {"code": "communication", "display": "Communication"}
+        ]
+      }
+    ]
+  }
+}

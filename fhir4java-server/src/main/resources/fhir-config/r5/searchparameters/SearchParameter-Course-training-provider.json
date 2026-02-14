@@ -1,0 +1,18 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Course-training-provider",
+  "url": "http://fhir4java.org/fhir/SearchParameter/Course-training-provider",
+  "version": "1.0.0",
+  "name": "training-provider",
+  "status": "draft",
+  "experimental": true,
+  "date": "2026-02-14",
+  "publisher": "FHIR4Java",
+  "description": "Search by training provider organization",
+  "code": "training-provider",
+  "base": ["Course"],
+  "type": "reference",
+  "expression": "Course.trainingProvider",
+  "processingMode": "normal",
+  "target": ["Organization"]
+}

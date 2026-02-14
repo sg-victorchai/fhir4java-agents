@@ -1,0 +1,49 @@
+# Course Resource Configuration
+resourceType: Course
+enabled: true
+
+# Multiple FHIR versions support
+fhirVersions:
+  - version: R5
+    default: true
+
+# Database schema configuration
+schema:
+  type: shared
+  name: fhir
+
+# Enabled interactions
+interactions:
+  read: true
+  vread: true
+  create: true
+  update: true
+  patch: false
+  delete: false
+  search: true
+  history: true
+
+# Search parameter restrictions (allowlist mode)
+searchParameters:
+  mode: allowlist
+  # Common parameters (from SearchParameter-Resource-* and SearchParameter-DomainResource-*)
+  common:
+    - _id
+    - _lastUpdated
+    - _tag
+    - _profile
+    - _security
+  # Resource-specific parameters (from SearchParameter-Course-*)
+  resourceSpecific:
+    - code
+    - category
+    - title
+    - status
+    - instructor
+    - training-provider
+    - start-date
+
+# Required/optional profiles
+profiles:
+  - url: http://fhir4java.org/fhir/StructureDefinition/Course
+    required: true
