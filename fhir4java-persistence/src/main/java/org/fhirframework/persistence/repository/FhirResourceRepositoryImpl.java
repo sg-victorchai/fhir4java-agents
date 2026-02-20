@@ -270,40 +270,43 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
         }
 
         // Build predicates based on what's provided
-        List<Predicate> tokenPredicates = new ArrayList<>();
+        // We need to handle both primitive code types and CodeableConcept/Coding types
+        List<Predicate> orPredicates = new ArrayList<>();
 
-        if (token.system != null) {
-            // System was specified (either "system|code" or "system|")
-            String systemPath = getTokenSystemPath(jsonPath);
-            Expression<String> systemExpr = buildJsonPathExpression(cb, contentExpr, systemPath);
+        // Check if this is potentially a primitive code path
+        boolean isPrimitive = isPrimitiveCodePath(jsonPath);
 
-            if (token.systemOnly) {
-                // Only system specified: system|
-                tokenPredicates.add(cb.equal(systemExpr, token.system));
-            } else {
-                // Both system and code specified
-                tokenPredicates.add(cb.equal(systemExpr, token.system));
+        if (isPrimitive) {
+            // Try primitive code matching first (direct value match)
+            Predicate primitivePredicate = buildPrimitiveCodePredicate(cb, contentExpr, jsonPath, token, exactMatch);
+            if (primitivePredicate != null) {
+                orPredicates.add(primitivePredicate);
+            }
+
+            // Also try CodeableConcept pattern in case the element is actually a CodeableConcept
+            String codeableConceptPath = getCodeableConceptPath(jsonPath);
+            if (!codeableConceptPath.equals(jsonPath)) {
+                Predicate codeableConceptPredicate = buildCodeableConceptPredicate(cb, contentExpr, codeableConceptPath, token, exactMatch);
+                if (codeableConceptPredicate != null) {
+                    orPredicates.add(codeableConceptPredicate);
+                }
+            }
+        } else {
+            // Path already points to CodeableConcept/Coding structure
+            Predicate complexPredicate = buildCodeableConceptPredicate(cb, contentExpr, jsonPath, token, exactMatch);
+            if (complexPredicate != null) {
+                orPredicates.add(complexPredicate);
             }
         }
 
-        if (token.code != null && !token.systemOnly) {
-            // Code was specified
-            String codePath = getTokenCodePath(jsonPath);
-            Expression<String> codeExpr = buildJsonPathExpression(cb, contentExpr, codePath);
-
-            if (exactMatch) {
-                tokenPredicates.add(cb.equal(codeExpr, token.code));
-            } else {
-                // Token codes typically require exact match
-                tokenPredicates.add(cb.equal(codeExpr, token.code));
-            }
-        }
-
-        if (tokenPredicates.isEmpty()) {
+        if (orPredicates.isEmpty()) {
             return null;
         }
 
-        Predicate result = cb.and(tokenPredicates.toArray(new Predicate[0]));
+        // Use OR to match either primitive code or CodeableConcept
+        Predicate result = orPredicates.size() == 1
+            ? orPredicates.get(0)
+            : cb.or(orPredicates.toArray(new Predicate[0]));
 
         // Handle :not modifier
         if (notMatch) {
@@ -345,6 +348,180 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
     }
 
     private record TokenValue(String system, String code, boolean codeOnly, boolean systemOnly) {}
+
+    /**
+     * Builds a predicate for primitive code types (direct string value).
+     * Primitive codes don't have system - they're just simple string values.
+     * Handles both scalar values and arrays of primitive codes.
+     */
+    private Predicate buildPrimitiveCodePredicate(
+            CriteriaBuilder cb,
+            Expression<String> contentExpr,
+            String jsonPath,
+            TokenValue token,
+            boolean exactMatch) {
+
+        // For primitive codes, we can only match the code value (no system)
+        if (token.code == null || token.systemOnly) {
+            // If only system is specified, primitive codes can't match
+            return null;
+        }
+
+        // If system is specified in the query (system|code format), primitive codes
+        // only match if system is empty (|code format meaning "no system")
+        if (token.system != null && !token.codeOnly) {
+            // System was explicitly specified - primitive codes don't have systems
+            // so they can only match if using |code format (codeOnly=true)
+            return null;
+        }
+
+        // Try multiple matching strategies for primitive codes:
+        // 1. Direct scalar match: jsonPath = 'value'
+        // 2. First array element match: jsonPath,0 = 'value'
+        // 3. JSONB array contains: jsonPath @> '["value"]' (for arrays)
+
+        List<Predicate> matchStrategies = new ArrayList<>();
+
+        // Strategy 1: Direct scalar match
+        Expression<String> scalarExpr = buildJsonPathExpression(cb, contentExpr, jsonPath);
+        matchStrategies.add(cb.equal(scalarExpr, token.code));
+
+        // Strategy 2: First array element match (for arrays of primitive codes)
+        String arrayPath = jsonPath + ",0";
+        Expression<String> arrayFirstExpr = buildJsonPathExpression(cb, contentExpr, arrayPath);
+        matchStrategies.add(cb.equal(arrayFirstExpr, token.code));
+
+        // Strategy 3: JSONB array contains (handles any position in the array)
+        // Using PostgreSQL's @> operator: content->'path' @> '"value"'
+        Expression<Boolean> arrayContains = buildJsonArrayContainsPredicate(cb, contentExpr, jsonPath, token.code);
+        if (arrayContains != null) {
+            matchStrategies.add(cb.isTrue(arrayContains));
+        }
+
+        return cb.or(matchStrategies.toArray(new Predicate[0]));
+    }
+
+    /**
+     * Builds a predicate that checks if a JSONB array contains a specific value.
+     * Uses PostgreSQL's @> operator.
+     */
+    private Expression<Boolean> buildJsonArrayContainsPredicate(
+            CriteriaBuilder cb,
+            Expression<String> contentExpr,
+            String jsonPath,
+            String value) {
+        try {
+            // Build: content->'path' @> '["value"]'::jsonb
+            // We use the jsonb_contains function which is equivalent to @>
+            String[] pathParts = jsonPath.split(",");
+
+            // Build the path navigation: content->'part1'->'part2'...
+            // We need to use -> (not ->>) to keep it as JSONB for the @> operator
+            Expression<?>[] pathArgs = new Expression<?>[pathParts.length + 1];
+            pathArgs[0] = contentExpr;
+            for (int i = 0; i < pathParts.length; i++) {
+                pathArgs[i + 1] = cb.literal(pathParts[i].trim());
+            }
+
+            // Use jsonb_extract_path to get the array as JSONB
+            Expression<String> jsonbPath = cb.function("jsonb_extract_path", String.class, pathArgs);
+
+            // Create the value to search for as a JSONB array element
+            // We check both as a direct element and as a quoted string in the array
+            String jsonValue = "\"" + value.replace("\"", "\\\"") + "\"";
+
+            // Use the @> operator via the jsonb_contains function
+            // jsonb_contains(array, '"value"') returns true if array contains the value
+            return cb.function("jsonb_contains",
+                    Boolean.class,
+                    cb.function("coalesce", String.class, jsonbPath, cb.literal("[]")),
+                    cb.literal(jsonValue));
+        } catch (Exception e) {
+            log.debug("Failed to build array contains predicate: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Builds a predicate for CodeableConcept/Coding types.
+     * These have .coding array with system and code fields.
+     * Handles both single CodeableConcept and arrays of CodeableConcept.
+     */
+    private Predicate buildCodeableConceptPredicate(
+            CriteriaBuilder cb,
+            Expression<String> contentExpr,
+            String jsonPath,
+            TokenValue token,
+            boolean exactMatch) {
+
+        // Try both direct path and array path (for arrays of CodeableConcept)
+        List<Predicate> orPredicates = new ArrayList<>();
+
+        // Try direct path (single CodeableConcept or already array-indexed path)
+        Predicate directMatch = buildSingleCodeableConceptPredicate(cb, contentExpr, jsonPath, token);
+        if (directMatch != null) {
+            orPredicates.add(directMatch);
+        }
+
+        // If path doesn't already have array index, also try with array index
+        if (!jsonPath.matches(".*,\\d+,.*")) {
+            String arrayPath = getCodeableConceptArrayPath(jsonPath.replace(",coding,0,code", ""));
+            if (!arrayPath.equals(jsonPath)) {
+                Predicate arrayMatch = buildSingleCodeableConceptPredicate(cb, contentExpr, arrayPath, token);
+                if (arrayMatch != null) {
+                    orPredicates.add(arrayMatch);
+                }
+            }
+        }
+
+        if (orPredicates.isEmpty()) {
+            return null;
+        }
+
+        return orPredicates.size() == 1
+            ? orPredicates.get(0)
+            : cb.or(orPredicates.toArray(new Predicate[0]));
+    }
+
+    /**
+     * Builds a predicate for a single CodeableConcept path (not handling arrays).
+     */
+    private Predicate buildSingleCodeableConceptPredicate(
+            CriteriaBuilder cb,
+            Expression<String> contentExpr,
+            String jsonPath,
+            TokenValue token) {
+
+        List<Predicate> predicates = new ArrayList<>();
+
+        if (token.system != null) {
+            // System was specified (either "system|code" or "system|")
+            String systemPath = getTokenSystemPath(jsonPath);
+            if (systemPath != null) {
+                Expression<String> systemExpr = buildJsonPathExpression(cb, contentExpr, systemPath);
+                if (token.systemOnly) {
+                    // Only system specified: system|
+                    predicates.add(cb.equal(systemExpr, token.system));
+                } else {
+                    // Both system and code specified
+                    predicates.add(cb.equal(systemExpr, token.system));
+                }
+            }
+        }
+
+        if (token.code != null && !token.systemOnly) {
+            // Code was specified
+            String codePath = getTokenCodePath(jsonPath);
+            Expression<String> codeExpr = buildJsonPathExpression(cb, contentExpr, codePath);
+            predicates.add(cb.equal(codeExpr, token.code));
+        }
+
+        if (predicates.isEmpty()) {
+            return null;
+        }
+
+        return cb.and(predicates.toArray(new Predicate[0]));
+    }
 
     // ==================== Quantity Search ====================
 
@@ -957,16 +1134,41 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
 
     // ==================== Token Path Helpers ====================
 
+    /**
+     * Checks if a path represents a primitive code type (not CodeableConcept or Coding).
+     * Primitive code paths don't have .coding structure.
+     */
+    private boolean isPrimitiveCodePath(String basePath) {
+        // If path already contains ,coding, it's expanded for CodeableConcept/Coding
+        if (basePath.contains(",coding,")) {
+            return false;
+        }
+        // If path ends with ,value it's an Identifier
+        if (basePath.endsWith(",value")) {
+            return false;
+        }
+        // Otherwise it could be a primitive code (simple field like "status", "code", "category")
+        return true;
+    }
+
+    /**
+     * Gets the system path for token search.
+     * Returns null for primitive code types (they have no system).
+     */
     private String getTokenSystemPath(String basePath) {
-        // For CodeableConcept: category -> category,0,coding,0,system
-        // For Coding: code -> code,coding,0,system or code,system
-        // For Identifier: identifier -> identifier,0,system
+        // For primitive code types, there is no system - return null
+        if (isPrimitiveCodePath(basePath)) {
+            return null;
+        }
+        // For CodeableConcept: category,0,coding,0,code -> category,0,coding,0,system
+        // For Coding: code,coding,0,code -> code,coding,0,system
         if (basePath.endsWith(",code")) {
             return basePath.replace(",code", ",system");
         }
         if (basePath.contains(",coding,")) {
             return basePath.replace(",code", ",system");
         }
+        // For Identifier: identifier,0,value -> identifier,0,system
         if (basePath.endsWith(",value")) {
             return basePath.replace(",value", ",system");
         }
@@ -976,6 +1178,44 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
     private String getTokenCodePath(String basePath) {
         // The base path should already point to the code field
         return basePath;
+    }
+
+    /**
+     * Gets the expanded CodeableConcept path for a given base path.
+     * Used for trying CodeableConcept structure when primitive code doesn't match.
+     * Handles both single CodeableConcept and arrays of CodeableConcept.
+     */
+    private String getCodeableConceptPath(String basePath) {
+        // Already expanded
+        if (basePath.contains(",coding,")) {
+            return basePath;
+        }
+        // Check if it's a simple field name that could be a CodeableConcept
+        if (!basePath.contains(",") || basePath.matches("^[a-zA-Z]+$")) {
+            // Single element like "code" -> "code,coding,0,code"
+            // Or array like "category" -> "category,0,coding,0,code" (access first element)
+            // We return the single element pattern; buildCodeableConceptPredicate handles arrays
+            return basePath + ",coding,0,code";
+        }
+        // Array element like "category,0" -> "category,0,coding,0,code"
+        if (basePath.matches(".*,\\d+$")) {
+            return basePath + ",coding,0,code";
+        }
+        return basePath;
+    }
+
+    /**
+     * Gets an array-aware CodeableConcept path (for arrays of CodeableConcept).
+     */
+    private String getCodeableConceptArrayPath(String basePath) {
+        if (basePath.contains(",coding,")) {
+            return basePath;
+        }
+        // For arrays like "category" -> "category,0,coding,0,code"
+        if (!basePath.contains(",") || basePath.matches("^[a-zA-Z]+$")) {
+            return basePath + ",0,coding,0,code";
+        }
+        return basePath + ",coding,0,code";
     }
 
     private String getTokenTextPath(String basePath) {
@@ -1566,44 +1806,39 @@ public class FhirResourceRepositoryImpl implements FhirResourceRepositoryCustom 
     * Expands common patterns that need array access or CodeableConcept navigation.
     */
    private String expandCommonPatterns(String path) {
-       // Handle code paths - expand to full CodeableConcept path
-       if (path.equals("code")) {
-           return "code,coding,0,code";
-       }
-       
-       if (path.equals("category")) {
-           return "category,0,coding,0,code";
-       }
-       
-       if (path.equals("type")) {
-           return "type,coding,0,code";
-       }
-       
+       // NOTE: We intentionally do NOT expand token-searchable fields like 'code', 'category', 'type', 'status'
+       // to CodeableConcept paths here. The buildTokenPredicate() method handles both primitive code
+       // and CodeableConcept structures dynamically using OR predicates.
+       // This allows the same search parameter to work for:
+       // - Resources with primitive 'code' type (e.g., Course.code, Course.status)
+       // - Resources with CodeableConcept type (e.g., Observation.code, Condition.category)
+
        // Handle nested code paths like "code,concept" -> "code,concept,coding,0,code"
+       // These are explicitly nested structures, not simple fields
        if (path.endsWith(",concept") && !path.contains(",coding,")) {
            return path.replace(",concept", ",concept,coding,0,code");
        }
-       
-       // Handle name paths
+
+       // Handle name paths - array of HumanName
        if (path.equals("name")) {
            return "name,0,text";
        }
-       
-       // Handle identifier paths
+
+       // Handle identifier paths - array of Identifier
        if (path.equals("identifier")) {
            return "identifier,0,value";
        }
-       
-       // Handle address paths
+
+       // Handle address paths - array of Address
        if (path.equals("address")) {
            return "address,0";
        }
-       
-       // Handle telecom paths
+
+       // Handle telecom paths - array of ContactPoint
        if (path.equals("telecom")) {
            return "telecom,0,value";
        }
-       
+
        return path;
    }
 

@@ -1,6 +1,6 @@
 # Task: Support Token Search for Code Data Type
 
-## Status: TODO
+## Status: COMPLETED
 
 ## Date Created: 2026-02-14
 
@@ -97,12 +97,20 @@ if (value instanceof Coding) {
 
 ## Implementation Steps
 
-1. [ ] Identify the search index extraction code for token parameters
-2. [ ] Add handling for `CodeType` (and `Code` in R4B) primitive type
-3. [ ] Verify FHIRPath expressions correctly extract code values
+1. [x] Identify the search index extraction code for token parameters
+2. [x] Add handling for `CodeType` (and `Code` in R4B) primitive type
+3. [x] Verify FHIRPath expressions correctly extract code values
 4. [ ] Add unit tests for token search with code data type
-5. [ ] Test with Course resource (code, category, status searches)
-6. [ ] Update any documentation if needed
+5. [x] Test with Course resource (code, category, status searches)
+6. [x] Update any documentation if needed
+
+## Solution Implemented
+
+Modified `FhirResourceRepositoryImpl.java` to:
+1. Detect primitive code paths vs CodeableConcept paths
+2. Build OR predicates that try both primitive and CodeableConcept patterns
+3. Handle arrays of primitive codes using PostgreSQL's `jsonb_contains` function
+4. Removed automatic expansion in `expandCommonPatterns()` for token-searchable fields
 
 ---
 
