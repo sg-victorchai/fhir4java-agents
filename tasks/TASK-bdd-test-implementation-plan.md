@@ -1,6 +1,6 @@
 # BDD Test Implementation Plan
 
-**Status:** Refined (v4) — test data strategy revised to external JSON files + TestDataLoader
+**Status:** Refined (v5) — multi-file test data patterns documented (sequential/composite/setup)
 **Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
@@ -696,29 +696,53 @@ fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SharedTestCont
 ```
 
 ### New test data files (external JSON — see §9 Q3)
+
+File naming follows the variant conventions in §9 Q3 (`{resource}.json`, `{resource}-update.json`, etc.).
+
 ```
 fhir4java-server/src/test/resources/testdata/
   crud/
-    patient.json                ← standard group (also used for update, patch, ETag tests)
+    patient.json                ← Pattern 1 create body
+    patient-update.json         ← Pattern 1 update body (PUT)
+    patient-patch.json          ← Pattern 1 patch document (RFC 6902 JSON Patch)
+    patient-invalid.json        ← Pattern 1 invalid body (422 tests)
     observation.json
+    observation-update.json
     condition.json
+    condition-update.json
     encounter.json
+    encounter-update.json
     organization.json
+    organization-update.json
     practitioner.json
+    practitioner-update.json
     medicationrequest.json
+    medicationrequest-update.json
+    medicationrequest-patch.json
     procedure.json
+    procedure-update.json
     careplan.json               ← multi-version group (R4B + R5)
-    medicationinventory.json    ← custom group
+    careplan-update.json
+    medicationinventory.json    ← custom group; DELETE-enabled
+    medicationinventory-update.json
     course.json
+    course-update.json
   operations/
-    patient-validate.json       ← $validate input
-    patient-validate-profile.json
-    patient-merge-source.json   ← $merge inputs
-    patient-merge-target.json
+    merge-parameters.json       ← Pattern 2: FHIR Parameters containing source + target Patient
+    validate-patient.json       ← Pattern 1: $validate input body
+    validate-patient-profile.json
+  bundle/
+    batch-create.json           ← Pattern 2: FHIR Bundle (batch type)
+    transaction-create.json     ← Pattern 2: FHIR Bundle (transaction type)
+  setup/
+    everything-seed.json[3]     ← Pattern 3 (loadAll): Patient + Observation + Condition
   tenant/
-    tenant-a-patient.json
-    tenant-b-patient.json
+    tenant-a-patient.json       ← Pattern 1: POST to tenant A
+    tenant-b-patient.json       ← Pattern 1: POST to tenant B
 ```
+
+> `[3]` — the three `everything-seed` resources are passed as separate paths to `loadAll()`, not
+> merged into one file. Listed as a group here for clarity.
 
 ### Auto-detection support (Phase 7)
 ```
@@ -803,6 +827,8 @@ loads them by relative path:
 ```java
 // TestDataLoader.java
 public class TestDataLoader {
+
+    /** Load a single test data file as a String. */
     public static String load(String relativePath) throws IOException {
         try (InputStream is = TestDataLoader.class.getClassLoader()
                 .getResourceAsStream("testdata/" + relativePath)) {
@@ -813,8 +839,81 @@ public class TestDataLoader {
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
+
+    /** Load multiple test data files, returning them in the same order. */
+    public static List<String> loadAll(String... relativePaths) throws IOException {
+        List<String> results = new ArrayList<>(relativePaths.length);
+        for (String path : relativePaths) {
+            results.add(load(path));
+        }
+        return results;
+    }
 }
 ```
+
+**Multi-file patterns — when a step needs more than one JSON file:**
+
+A single step may legitimately need multiple files. There are three distinct patterns; each has
+a different resolution:
+
+**Pattern 1 — Sequential loads (step makes multiple HTTP calls)**
+
+The step simply calls `load()` more than once. No API change needed; the step class is in
+control of what it does with each body.
+
+```java
+// CRUD update test: POST with create body, then PUT with update body
+String createBody = TestDataLoader.load("crud/" + resourceType.toLowerCase() + ".json");
+String updateBody = TestDataLoader.load("crud/" + resourceType.toLowerCase() + "-update.json");
+```
+
+Applies to: CRUD update, PATCH (resource body + patch document), tenant isolation
+(one POST per tenant).
+
+**Pattern 2 — Composite single request (one HTTP call, body built from multiple logical parts)**
+
+Do NOT merge files in Java. Instead create a dedicated composite file that *is* the full
+request payload — typically a FHIR `Parameters` resource or a `Bundle`.
+
+```
+testdata/operations/merge-parameters.json   ← valid FHIR Parameters containing source + target
+testdata/bundle/batch-create.json           ← valid FHIR Bundle with multiple entries
+```
+
+The step loads one file and POSTs it:
+```java
+String body = TestDataLoader.load("operations/merge-parameters.json");
+```
+
+Applies to: `$merge` (source + target), batch/transaction bundles, multi-part operation inputs.
+
+**Pattern 3 — Setup/teardown data (background data for a later assertion)**
+
+Use `loadAll()` to pre-populate resources before the scenario's actual step runs. Typically
+called in a `@Before` hook or a `Background:` step.
+
+```java
+// Before $everything test: seed Patient + Observation + Condition
+List<String> bodies = TestDataLoader.loadAll(
+    "crud/patient.json",
+    "crud/observation.json",
+    "crud/condition.json"
+);
+bodies.forEach(body -> given().body(body).post("/fhir/r5/..."));
+```
+
+Applies to: `$everything`, search result count assertions, any scenario that requires
+pre-existing linked resources.
+
+**Naming conventions for file variants:**
+
+| Purpose | File name |
+|---|---|
+| Create body | `{resource}.json` |
+| Update body | `{resource}-update.json` |
+| Patch document (RFC 6902) | `{resource}-patch.json` |
+| Invalid body (for 422 tests) | `{resource}-invalid.json` |
+| Composite/multi-part | `{operation}-parameters.json` |
 
 **Convention — Scenario Outline integration:**
 The `<resourceType>` Examples column value maps directly to a filename via `toLowerCase()`:
