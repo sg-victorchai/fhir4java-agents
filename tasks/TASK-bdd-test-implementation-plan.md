@@ -1,6 +1,6 @@
 # BDD Test Implementation Plan
 
-**Status:** Refined (v3) — structural refactor decision documented, ready to implement
+**Status:** Refined (v4) — test data strategy revised to external JSON files + TestDataLoader
 **Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
@@ -671,8 +671,8 @@ fhir4java-server/src/test/resources/features/tenant/tenant-unknown.feature
 
 ### Existing feature files to extend (add scenarios only)
 ```
-fhir4java-server/src/test/resources/features/everything-operation.feature
-fhir4java-server/src/test/resources/features/validate-operation.feature
+fhir4java-server/src/test/resources/features/operations/everything-operation.feature  (post Phase 1a path)
+fhir4java-server/src/test/resources/features/operations/validate-operation.feature    (post Phase 1a path)
 ```
 
 ### New step definition classes
@@ -681,6 +681,7 @@ fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/CrudSteps.java
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SearchSteps.java
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/HttpProtocolSteps.java
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/TenantSteps.java
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/TestDataLoader.java  ← see §9 Q3
 ```
 
 > **Not needed (steps already exist):** No new step class for `merge-operation.feature` — all
@@ -692,6 +693,31 @@ fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/TenantSteps.ja
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SharedTestContext.java
   → add lastVersionId, lastResourceType, lastEtag, tenantId, secondTenantId
   → add extractVersionId() helper
+```
+
+### New test data files (external JSON — see §9 Q3)
+```
+fhir4java-server/src/test/resources/testdata/
+  crud/
+    patient.json                ← standard group (also used for update, patch, ETag tests)
+    observation.json
+    condition.json
+    encounter.json
+    organization.json
+    practitioner.json
+    medicationrequest.json
+    procedure.json
+    careplan.json               ← multi-version group (R4B + R5)
+    medicationinventory.json    ← custom group
+    course.json
+  operations/
+    patient-validate.json       ← $validate input
+    patient-validate-profile.json
+    patient-merge-source.json   ← $merge inputs
+    patient-merge-target.json
+  tenant/
+    tenant-a-patient.json
+    tenant-b-patient.json
 ```
 
 ### Auto-detection support (Phase 7)
@@ -752,9 +778,69 @@ Flow when invoked:
 |---|---|---|
 | 1 | Scenario Outline vs individual? | **Scenario Outline per group** — keeps files manageable |
 | 2 | Step definition granularity? | **Per-domain files** — CrudSteps, SearchSteps, HttpProtocolSteps, TenantSteps |
-| 3 | Test data strategy? | **Inline JSON in step classes** (not in feature files) — keeps Gherkin readable |
+| 3 | Test data strategy? | **External JSON files** under `src/test/resources/testdata/` loaded by `TestDataLoader` — see detail below |
 | 4 | H2 supports fhir_tenant table? | **Yes** — Hibernate creates it via `ddl-auto: create-drop` |
 | 5 | Gap detection threshold? | **0 scenarios = gap** for CRUD; 0 param scenarios = gap for custom search params |
+
+### Q3 — Test data strategy (detail)
+
+**Original approach:** embed JSON strings inline inside step class methods.
+
+**Problem:** FHIR resource bodies are 20–40 lines each. With 11 resource types and multiple
+operation variants, step classes accumulate hundreds of lines of JSON string literals that:
+- Require a Java recompile for any data change (a clinical analyst or QA engineer editing
+  a test payload must rebuild the project)
+- Cannot be validated by a FHIR validator or JSON schema tooling in the IDE
+- Cannot be reviewed by non-Java stakeholders without opening a Java file
+- Break the "one step class, many resource types" Scenario Outline pattern — the step class
+  must fork on resource type in code rather than simply loading the right file
+
+**Decision: external JSON files + `TestDataLoader` utility**
+
+Resource bodies live in `src/test/resources/testdata/` (see §7). A single, thin utility class
+loads them by relative path:
+
+```java
+// TestDataLoader.java
+public class TestDataLoader {
+    public static String load(String relativePath) throws IOException {
+        try (InputStream is = TestDataLoader.class.getClassLoader()
+                .getResourceAsStream("testdata/" + relativePath)) {
+            if (is == null) {
+                throw new IllegalArgumentException(
+                    "Test data not found: testdata/" + relativePath);
+            }
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+}
+```
+
+**Convention — Scenario Outline integration:**
+The `<resourceType>` Examples column value maps directly to a filename via `toLowerCase()`:
+
+```gherkin
+Examples:
+  | resourceType |
+  | Patient      |   → testdata/crud/patient.json
+  | Observation  |   → testdata/crud/observation.json
+```
+
+Step class:
+```java
+String body = TestDataLoader.load("crud/" + resourceType.toLowerCase() + ".json");
+```
+
+No switch/if-else in Java. Adding a new resource type means adding one JSON file — no Java
+change, no recompile.
+
+**Rule — when inline is still acceptable:**
+| Use inline | Use external file |
+|---|---|
+| Short scalar values (`"active"`, `"true"`, `"Smith"`) | Any request body (FHIR resource JSON) |
+| URL query parameter strings (`?family=Smith&gender=male`) | Operation input payloads (`$validate`, `$merge`, `$everything` params) |
+| Response field assertions (`"resourceType": "Patient"`) | Tenant fixture payloads |
+| Error message fragments | Anything > ~5 tokens or subject to change independently |
 
 ---
 
