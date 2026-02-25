@@ -1,6 +1,6 @@
 # BDD Test Implementation Plan
 
-**Status:** Refined (v2) — codebase-verified, ready to implement
+**Status:** Refined (v3) — structural refactor decision documented, ready to implement
 **Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
@@ -10,21 +10,21 @@
 
 Before adding anything, these feature files already exist and must NOT be duplicated:
 
-| File | What it covers |
-|---|---|
-| `features/batch-transaction.feature` | Batch + transaction bundles |
-| `features/conformance/conformance-resources.feature` | StructureDefinition, SearchParameter, OperationDefinition CRUD + search |
-| `features/everything-operation.feature` | `$everything` instance + type level, `_count` param |
-| `features/patch-operation.feature` | JSON Patch on Patient (success + invalid patch) |
-| `features/plugin-patient-create.feature` | Plugin hooks on Patient CREATE (MRN, timestamp, phone normalisation) |
-| `features/validate-operation.feature` | `$validate` type + instance level for Patient |
-| `features/validation/http-422-validation-errors.feature` | 422 responses from profile validation |
-| `features/validation/profile-validation-integration.feature` | Profile validation integration |
-| `features/validation/profile-validation-modes.feature` | strict / lenient / off modes |
-| `features/validation/profile-validator-health.feature` | Actuator health indicator |
-| `features/validation/profile-validator-initialization.feature` | Startup behaviour |
-| `features/validation/profile-validator-metrics.feature` | Metrics endpoint |
-| `features/version-resolution.feature` | Versioned (`/r5/`) + unversioned paths, case-insensitive |
+| File | What it covers | Moved in Phase 1a? |
+|---|---|---|
+| `features/conformance/conformance-resources.feature` | StructureDefinition, SearchParameter, OperationDefinition CRUD + search | no |
+| `features/operations/batch-transaction.feature` | Batch + transaction bundles | yes (was root) |
+| `features/operations/everything-operation.feature` | `$everything` instance + type level, `_count` param | yes (was root) |
+| `features/operations/patch-operation.feature` | JSON Patch on Patient (success + invalid patch) | yes (was root) |
+| `features/operations/validate-operation.feature` | `$validate` type + instance level for Patient | yes (was root) |
+| `features/plugins/plugin-patient-create.feature` | Plugin hooks on Patient CREATE (MRN, timestamp, phone normalisation) | yes (was root) |
+| `features/validation/http-422-validation-errors.feature` | 422 responses from profile validation | no |
+| `features/validation/profile-validation-integration.feature` | Profile validation integration | no |
+| `features/validation/profile-validation-modes.feature` | strict / lenient / off modes | no |
+| `features/validation/profile-validator-health.feature` | Actuator health indicator | no |
+| `features/validation/profile-validator-initialization.feature` | Startup behaviour | no |
+| `features/validation/profile-validator-metrics.feature` | Metrics endpoint | no |
+| `features/versioning/version-resolution.feature` | Versioned (`/r5/`) + unversioned paths, case-insensitive | yes (was root) |
 
 **Notable gaps in existing coverage:**
 - No dedicated CRUD lifecycle feature (create/read/vread/update/delete) for any resource
@@ -161,11 +161,115 @@ fhir4java-server/src/test/resources/features/
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/
 ```
 
+### Structural refactoring decision
+
+**Feature files:** Yes — relocate the 6 root-level files into subdirectories matching the phase
+structure. `CucumberIT` scans `classpath:features/` recursively, so any subdirectory works
+automatically. Cucumber matches steps by text, not path — moves are zero-risk.
+
+**Step definition classes:** No — leave all 6 existing classes in place. They are coherent,
+working, and `ValidationSteps.java` (1,870 lines) carries meaningful regression risk if touched.
+The 4 new step classes will be added alongside them.
+
+### Complete target feature directory layout
+
+```
+features/
+  conformance/                           ← unchanged (already organised)
+    conformance-resources.feature
+
+  crud/                                  ← new (Phase 1b)
+    standard-resource-crud.feature
+    multi-version-resource-crud.feature
+    custom-resource-crud.feature
+
+  http/                                  ← new (Phase 4)
+    response-headers.feature
+    conditional-operations.feature
+    content-negotiation.feature
+    error-responses.feature
+
+  operations/                            ← new subdirectory; 4 existing files MOVED here
+    batch-transaction.feature            ← MOVED from root (Phase 1a)
+    everything-operation.feature         ← MOVED from root (Phase 1a); extended in Phase 3
+    merge-operation.feature              ← new (Phase 3)
+    operation-routing.feature            ← new (Phase 3)
+    patch-operation.feature              ← MOVED from root (Phase 1a)
+    validate-operation.feature           ← MOVED from root (Phase 1a); extended in Phase 3
+
+  plugins/                               ← new subdirectory; 1 existing file MOVED here
+    plugin-patient-create.feature        ← MOVED from root (Phase 1a)
+
+  search/                                ← new (Phase 2)
+    patient-search.feature
+    observation-search.feature
+    standard-resource-search.feature
+    custom-resource-search.feature
+    search-modifiers.feature
+    search-pagination.feature
+    search-post.feature
+
+  tenant/                                ← new (Phase 6)
+    tenant-isolation.feature
+    tenant-unknown.feature
+
+  validation/                            ← unchanged (already organised)
+    http-422-validation-errors.feature
+    profile-validation-integration.feature
+    profile-validation-modes.feature
+    profile-validator-health.feature
+    profile-validator-initialization.feature
+    profile-validator-metrics.feature
+
+  versioning/                            ← new subdirectory; 1 existing file MOVED here
+    multi-version-resources.feature      ← new (Phase 5)
+    version-resolution.feature           ← MOVED from root (Phase 1a)
+```
+
+**Summary of moves (Phase 1a):**
+
+| Current path | New path |
+|---|---|
+| `features/batch-transaction.feature` | `features/operations/batch-transaction.feature` |
+| `features/everything-operation.feature` | `features/operations/everything-operation.feature` |
+| `features/patch-operation.feature` | `features/operations/patch-operation.feature` |
+| `features/validate-operation.feature` | `features/operations/validate-operation.feature` |
+| `features/plugin-patient-create.feature` | `features/plugins/plugin-patient-create.feature` |
+| `features/version-resolution.feature` | `features/versioning/version-resolution.feature` |
+
 ---
 
 ## 5. Implementation Phases
 
-### Phase 1 — CRUD Lifecycle
+### Phase 1a — Structural Refactor (file moves only)
+
+**Goal:** Bring the 6 loose root-level feature files into the target directory structure before any
+new files are added. No scenario content changes, no step definition changes. This makes the
+baseline tidy and consistent with everything added in Phases 1b–7.
+
+**Actions:**
+```
+git mv features/batch-transaction.feature        features/operations/batch-transaction.feature
+git mv features/everything-operation.feature     features/operations/everything-operation.feature
+git mv features/patch-operation.feature          features/operations/patch-operation.feature
+git mv features/validate-operation.feature       features/operations/validate-operation.feature
+git mv features/plugin-patient-create.feature    features/plugins/plugin-patient-create.feature
+git mv features/version-resolution.feature       features/versioning/version-resolution.feature
+```
+
+**Pre-conditions before committing:**
+- Create subdirectories `operations/`, `plugins/`, `versioning/` (git mv creates them)
+- Run the full Cucumber suite and confirm **zero scenario failures** before pushing
+- No changes to any `.java` files, any `.feature` file content, or `CucumberIT.java`
+
+**Also update in this document:**
+- Section 1 (Existing Coverage Baseline) table — update all 6 paths to their new locations
+- Section 5 Phase 3 references to `features/everything-operation.feature` and
+  `features/validate-operation.feature` — update to the new paths under `operations/`
+
+---
+
+### Phase 1b — CRUD Lifecycle
 
 **Strategy:** Three feature files using `Scenario Outline` to parameterise across resource groups.
 This avoids 11 near-identical files while keeping readability. Each `Examples` row covers one
@@ -289,8 +393,8 @@ features/operations/merge-operation.feature       ← NEW (does not exist yet)
 
 **Extend existing files** (add scenarios, don't replace):
 ```
-features/everything-operation.feature             ← add _since + compartment types
-features/validate-operation.feature               ← add custom resource + profile param
+features/operations/everything-operation.feature  ← add _since + compartment types  (moved in Phase 1a)
+features/operations/validate-operation.feature    ← add custom resource + profile param  (moved in Phase 1a)
 ```
 
 **merge-operation.feature (new — full file):**
@@ -657,27 +761,30 @@ Flow when invoked:
 ## 10. Implementation Order
 
 ```
-Phase 1 (CRUD)         ← start here; creates CrudSteps + SharedTestContext extensions
-Phase 2 (Search)       ← can run in parallel with Phase 1; creates SearchSteps
+Phase 1a (Refactor)    ← first; git mv 6 feature files; run suite; confirm 0 failures; commit
+Phase 1b (CRUD)        ← creates CrudSteps + SharedTestContext extensions
+Phase 2 (Search)       ← can run in parallel with Phase 1b; creates SearchSteps
 Phase 3 (Operations)   ← create merge-operation.feature (no new step class!);
-                          extend everything-operation.feature + validate-operation.feature;
+                          extend operations/everything-operation.feature + operations/validate-operation.feature;
                           create operation-routing.feature
-Phase 4 (HTTP)         ← depends on SharedTestContext.lastEtag from Phase 1; creates HttpProtocolSteps
+Phase 4 (HTTP)         ← depends on SharedTestContext.lastEtag from Phase 1b; creates HttpProtocolSteps
 Phase 5 (Versioning)   ← standalone; no new step class (reuse VersionResolutionSteps patterns)
 Phase 6 (Tenancy)      ← needs CucumberTenantSpringConfig; creates TenantSteps; do last
-Phase 7 (Auto-detect)  ← purely scripting; can do any time after Phase 1
+Phase 7 (Auto-detect)  ← purely scripting; can do any time after Phase 1b
 ```
 
 **Step class summary:**
-| Phase | New step class |
-|---|---|
-| 1 (CRUD) | `CrudSteps.java` |
-| 2 (Search) | `SearchSteps.java` |
-| 3 (Operations) | *none — reuses `OperationSteps.java`* |
-| 4 (HTTP) | `HttpProtocolSteps.java` |
-| 5 (Versioning) | *none — reuses `VersionResolutionSteps.java`* |
-| 6 (Tenancy) | `TenantSteps.java` |
-| 7 (Auto-detect) | *none — shell script + skill* |
+| Phase | New step class | Notes |
+|---|---|---|
+| 1a (Refactor) | *none* | file moves only |
+| 1b (CRUD) | `CrudSteps.java` | |
+| 2 (Search) | `SearchSteps.java` | |
+| 3 (Operations) | *none* | reuses `OperationSteps.java` |
+| 4 (HTTP) | `HttpProtocolSteps.java` | |
+| 5 (Versioning) | *none* | reuses `VersionResolutionSteps.java` |
+| 6 (Tenancy) | `TenantSteps.java` | |
+| 7 (Auto-detect) | *none* | shell script + skill |
 
-**To continue:** Check out branch `claude/fhir-api-bdd-tests-w7LEW` and start with Phase 1.
+**To continue:** Check out branch `claude/fhir-api-bdd-tests-w7LEW` and start with Phase 1a
+(structural refactor — git mv 6 files, run suite, commit). Then proceed to Phase 1b (CRUD).
 Reference this file at `tasks/TASK-bdd-test-implementation-plan.md`.
