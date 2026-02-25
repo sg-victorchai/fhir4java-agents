@@ -1,6 +1,6 @@
 # BDD Test Implementation Plan
 
-**Status:** Refined (v6) — data variant pattern (Pattern 4) documented; profile-based naming convention added
+**Status:** Refined (v7) — profile names standardised to minimum-set / common-set / maximum-set
 **Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
@@ -706,16 +706,16 @@ Two filename patterns are used:
 fhir4java-server/src/test/resources/testdata/
   crud/
     patient.json                ← baseline (primary CRUD outline)
-    patient-minimal.json        ← Profile variant: name only
-    patient-identifier.json     ← Profile variant: with MRN identifier
-    patient-address.json        ← Profile variant: with structured address
-    patient-full.json           ← Profile variant: all demographic fields
+    patient-minimum-set.json    ← Profile variant: mandatory fields only
+    patient-common-set.json     ← Profile variant: typical real-world payload
+    patient-maximum-set.json    ← Profile variant: all supported fields populated
     patient-update.json         ← Pattern 1: update body (PUT)
     patient-patch.json          ← Pattern 1: patch document (RFC 6902)
     patient-invalid.json        ← Pattern 1: invalid body (422 tests)
     observation.json
-    observation-minimal.json
-    observation-with-value.json
+    observation-minimum-set.json
+    observation-common-set.json
+    observation-maximum-set.json
     observation-update.json
     condition.json
     condition-update.json
@@ -919,7 +919,7 @@ pre-existing linked resources.
 **Pattern 4 — Data variants for the same resource type (multiple payloads, same operation)**
 
 When the same operation (e.g., patient create) needs to be exercised with several different
-payloads — minimal, with identifier, with address, full — the number of variants grows with
+payloads — minimum-set, common-set, maximum-set — the number of variants grows with
 the number of scenarios being tested and must not require Java changes to add.
 
 Three approaches were considered:
@@ -930,8 +930,8 @@ Three approaches were considered:
 | B — explicit file path column | `"<dataFile>"` column | yes | no |
 | C — DocString | inline `"""json ... """` | n/a | yes |
 
-**Option A is recommended.** The label is readable to non-developers ("minimal patient",
-"patient with identifier"). The file path is hidden — implementers just follow the naming
+**Option A is recommended.** The label is readable to non-developers ("minimum-set patient",
+"maximum-set patient"). The file path is hidden — implementers just follow the naming
 convention. Option B leaks directory structure into Gherkin. Option C puts large JSON back in
 the feature file, which was the original problem.
 
@@ -943,11 +943,10 @@ Scenario Outline: Patient create succeeds for various data profiles
   And the response contains resourceType "Patient"
 
 Examples:
-  | profile    | notes                         |
-  | minimal    | name only                     |
-  | identifier | with MRN identifier           |
-  | address    | with structured address       |
-  | full       | all demographic fields        |
+  | profile      | notes                                          |
+  | minimum-set  | mandatory fields only (name + gender)          |
+  | common-set   | typical real-world payload (+ identifier, DOB) |
+  | maximum-set  | all supported fields populated                 |
 ```
 
 Step class — single method, no branching:
@@ -970,12 +969,13 @@ Scenario Outline: Resource create - data variants
   Then the response status is 201
 
 Examples:
-  | resourceType | profile    | notes                   |
-  | patient      | minimal    | name only               |
-  | patient      | identifier | with MRN                |
-  | patient      | address    | with address            |
-  | observation  | minimal    | code + subject only     |
-  | observation  | with-value | with valueQuantity      |
+  | resourceType | profile      | notes                                          |
+  | patient      | minimum-set  | mandatory fields only                          |
+  | patient      | common-set   | typical real-world payload                     |
+  | patient      | maximum-set  | all supported fields populated                 |
+  | observation  | minimum-set  | code + subject only                            |
+  | observation  | common-set   | + valueQuantity and effectiveDateTime          |
+  | observation  | maximum-set  | all supported fields populated                 |
 ```
 
 Step class:
@@ -994,7 +994,7 @@ File convention: `testdata/crud/{resourceType}-{profile}.json`
 | Purpose | File name pattern | Example |
 |---|---|---|
 | Default / baseline create | `{resource}.json` | `patient.json` |
-| Named data variant | `{resource}-{profile}.json` | `patient-minimal.json`, `patient-identifier.json` |
+| Named data variant | `{resource}-{profile}.json` | `patient-minimum-set.json`, `patient-common-set.json`, `patient-maximum-set.json` |
 | Update body | `{resource}-update.json` | `patient-update.json` |
 | Patch document (RFC 6902) | `{resource}-patch.json` | `patient-patch.json` |
 | Invalid body (422 tests) | `{resource}-invalid.json` | `patient-invalid.json` |
@@ -1016,9 +1016,10 @@ Step: `TestDataLoader.load("crud/" + resourceType.toLowerCase() + ".json")`
 **Convention — data variant Scenario Outline (within one resource type):**
 ```gherkin
 Examples:
-  | profile    |
-  | minimal    |   → testdata/crud/patient-minimal.json
-  | identifier |   → testdata/crud/patient-identifier.json
+  | profile      |
+  | minimum-set  |   → testdata/crud/patient-minimum-set.json
+  | common-set   |   → testdata/crud/patient-common-set.json
+  | maximum-set  |   → testdata/crud/patient-maximum-set.json
 ```
 Step: `TestDataLoader.load("crud/patient-" + profile + ".json")`
 
