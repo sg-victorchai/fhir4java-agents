@@ -1,6 +1,6 @@
 # BDD Test Implementation Plan
 
-**Status:** Refined (v5) — multi-file test data patterns documented (sequential/composite/setup)
+**Status:** Refined (v6) — data variant pattern (Pattern 4) documented; profile-based naming convention added
 **Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
@@ -697,16 +697,25 @@ fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SharedTestCont
 
 ### New test data files (external JSON — see §9 Q3)
 
-File naming follows the variant conventions in §9 Q3 (`{resource}.json`, `{resource}-update.json`, etc.).
+File naming follows the variant conventions in §9 Q3.
+Two filename patterns are used:
+- `{resource}.json` — baseline payload used by the primary cross-resource-type Scenario Outline
+- `{resource}-{profile}.json` — named variant used by per-resource data-variant Scenario Outline (Pattern 4)
 
 ```
 fhir4java-server/src/test/resources/testdata/
   crud/
-    patient.json                ← Pattern 1 create body
-    patient-update.json         ← Pattern 1 update body (PUT)
-    patient-patch.json          ← Pattern 1 patch document (RFC 6902 JSON Patch)
-    patient-invalid.json        ← Pattern 1 invalid body (422 tests)
+    patient.json                ← baseline (primary CRUD outline)
+    patient-minimal.json        ← Profile variant: name only
+    patient-identifier.json     ← Profile variant: with MRN identifier
+    patient-address.json        ← Profile variant: with structured address
+    patient-full.json           ← Profile variant: all demographic fields
+    patient-update.json         ← Pattern 1: update body (PUT)
+    patient-patch.json          ← Pattern 1: patch document (RFC 6902)
+    patient-invalid.json        ← Pattern 1: invalid body (422 tests)
     observation.json
+    observation-minimal.json
+    observation-with-value.json
     observation-update.json
     condition.json
     condition-update.json
@@ -728,21 +737,23 @@ fhir4java-server/src/test/resources/testdata/
     course.json
     course-update.json
   operations/
-    merge-parameters.json       ← Pattern 2: FHIR Parameters containing source + target Patient
+    merge-parameters.json       ← Pattern 2: FHIR Parameters (source + target Patient inline)
     validate-patient.json       ← Pattern 1: $validate input body
     validate-patient-profile.json
   bundle/
     batch-create.json           ← Pattern 2: FHIR Bundle (batch type)
     transaction-create.json     ← Pattern 2: FHIR Bundle (transaction type)
   setup/
-    everything-seed.json[3]     ← Pattern 3 (loadAll): Patient + Observation + Condition
+    patient.json                ← Pattern 3 (loadAll seed): referenced alongside
+    observation.json            ←   observation.json and condition.json for $everything setup
+    condition.json              ←   (separate files, one path per loadAll() argument)
   tenant/
     tenant-a-patient.json       ← Pattern 1: POST to tenant A
     tenant-b-patient.json       ← Pattern 1: POST to tenant B
 ```
 
-> `[3]` — the three `everything-seed` resources are passed as separate paths to `loadAll()`, not
-> merged into one file. Listed as a group here for clarity.
+> Profile variants are added incrementally — start with only the variants needed for Phase 1b
+> scenarios. Add more as new scenario rows are added to the Examples table.
 
 ### Auto-detection support (Phase 7)
 ```
@@ -905,33 +916,114 @@ bodies.forEach(body -> given().body(body).post("/fhir/r5/..."));
 Applies to: `$everything`, search result count assertions, any scenario that requires
 pre-existing linked resources.
 
+**Pattern 4 — Data variants for the same resource type (multiple payloads, same operation)**
+
+When the same operation (e.g., patient create) needs to be exercised with several different
+payloads — minimal, with identifier, with address, full — the number of variants grows with
+the number of scenarios being tested and must not require Java changes to add.
+
+Three approaches were considered:
+
+| Option | Gherkin shape | File path in feature file? | Large JSON in feature file? |
+|---|---|---|---|
+| A — profile label (recommended) | `"<profile>" patient` | no | no |
+| B — explicit file path column | `"<dataFile>"` column | yes | no |
+| C — DocString | inline `"""json ... """` | n/a | yes |
+
+**Option A is recommended.** The label is readable to non-developers ("minimal patient",
+"patient with identifier"). The file path is hidden — implementers just follow the naming
+convention. Option B leaks directory structure into Gherkin. Option C puts large JSON back in
+the feature file, which was the original problem.
+
+Feature file using Option A:
+```gherkin
+Scenario Outline: Patient create succeeds for various data profiles
+  When I create a "<profile>" patient
+  Then the response status is 201
+  And the response contains resourceType "Patient"
+
+Examples:
+  | profile    | notes                         |
+  | minimal    | name only                     |
+  | identifier | with MRN identifier           |
+  | address    | with structured address       |
+  | full       | all demographic fields        |
+```
+
+Step class — single method, no branching:
+```java
+@When("I create a {string} patient")
+public void createPatientVariant(String profile) throws IOException {
+    String body = TestDataLoader.load("crud/patient-" + profile + ".json");
+    // POST to /fhir/r5/Patient, store response in SharedTestContext
+}
+```
+
+**Adding a new data variant** = one new `Examples` row + one new JSON file. Zero Java changes.
+
+**Combined with `<resourceType>` column** — the same step can drive variant testing across
+multiple resource types simultaneously:
+
+```gherkin
+Scenario Outline: Resource create - data variants
+  When I create a "<profile>" <resourceType>
+  Then the response status is 201
+
+Examples:
+  | resourceType | profile    | notes                   |
+  | patient      | minimal    | name only               |
+  | patient      | identifier | with MRN                |
+  | patient      | address    | with address            |
+  | observation  | minimal    | code + subject only     |
+  | observation  | with-value | with valueQuantity      |
+```
+
+Step class:
+```java
+@When("I create a {string} {word}")
+public void createResourceVariant(String profile, String resourceType) throws IOException {
+    String body = TestDataLoader.load(
+        "crud/" + resourceType.toLowerCase() + "-" + profile + ".json");
+}
+```
+
+File convention: `testdata/crud/{resourceType}-{profile}.json`
+
 **Naming conventions for file variants:**
 
-| Purpose | File name |
-|---|---|
-| Create body | `{resource}.json` |
-| Update body | `{resource}-update.json` |
-| Patch document (RFC 6902) | `{resource}-patch.json` |
-| Invalid body (for 422 tests) | `{resource}-invalid.json` |
-| Composite/multi-part | `{operation}-parameters.json` |
+| Purpose | File name pattern | Example |
+|---|---|---|
+| Default / baseline create | `{resource}.json` | `patient.json` |
+| Named data variant | `{resource}-{profile}.json` | `patient-minimal.json`, `patient-identifier.json` |
+| Update body | `{resource}-update.json` | `patient-update.json` |
+| Patch document (RFC 6902) | `{resource}-patch.json` | `patient-patch.json` |
+| Invalid body (422 tests) | `{resource}-invalid.json` | `patient-invalid.json` |
+| Composite/multi-part | `{operation}-parameters.json` | `merge-parameters.json` |
 
-**Convention — Scenario Outline integration:**
-The `<resourceType>` Examples column value maps directly to a filename via `toLowerCase()`:
+The `{resource}.json` baseline (no profile suffix) is used by the primary CRUD Scenario Outline
+that parameterises across resource types. The `{resource}-{profile}.json` variants are used by
+scenario-specific outlines within the same resource type.
 
+**Convention — primary CRUD Scenario Outline (across resource types):**
 ```gherkin
 Examples:
   | resourceType |
   | Patient      |   → testdata/crud/patient.json
   | Observation  |   → testdata/crud/observation.json
 ```
+Step: `TestDataLoader.load("crud/" + resourceType.toLowerCase() + ".json")`
 
-Step class:
-```java
-String body = TestDataLoader.load("crud/" + resourceType.toLowerCase() + ".json");
+**Convention — data variant Scenario Outline (within one resource type):**
+```gherkin
+Examples:
+  | profile    |
+  | minimal    |   → testdata/crud/patient-minimal.json
+  | identifier |   → testdata/crud/patient-identifier.json
 ```
+Step: `TestDataLoader.load("crud/patient-" + profile + ".json")`
 
-No switch/if-else in Java. Adding a new resource type means adding one JSON file — no Java
-change, no recompile.
+No switch/if-else in Java. Adding a new resource type or variant means adding one JSON file —
+no Java change, no recompile.
 
 **Rule — when inline is still acceptable:**
 | Use inline | Use external file |
