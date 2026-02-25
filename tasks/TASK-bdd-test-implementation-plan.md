@@ -1,286 +1,619 @@
 # BDD Test Implementation Plan
 
-**Status:** In progress — awaiting approval to begin implementation
-**Last updated:** 2026-02-23
+**Status:** Refined — ready to implement
+**Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
 ---
 
-## Complete Server Inventory
+## 1. Existing Coverage Baseline
 
-### 11 Configured Resources
+Before adding anything, these feature files already exist and must NOT be duplicated:
 
-| Resource | Type | Versions | Search Mode | Notable |
-|---|---|---|---|---|
-| Patient | Standard | R5 | Allowlist (23 params) | Full PATCH, DELETE disabled |
-| Observation | Standard | R5 | Denylist (5 excluded) | |
-| Condition | Standard | R5 | All allowed | |
-| Encounter | Standard | R5 | All allowed | |
-| CarePlan | Standard | R5 + R4B | All allowed | Multi-version |
-| Procedure | Standard | R5 + R4B | All allowed | Multi-version |
-| Organization | Standard | R5 | All allowed | |
-| Practitioner | Standard | R5 | All allowed | |
-| MedicationRequest | Standard | R5 | All allowed | |
-| **MedicationInventory** | **Custom** | R5 | Allowlist (6 custom params) | DELETE enabled |
-| **Course** | **Custom** | R5 | Allowlist (8 custom params) | Training domain |
+| File | What it covers |
+|---|---|
+| `features/batch-transaction.feature` | Batch + transaction bundles |
+| `features/conformance/conformance-resources.feature` | StructureDefinition, SearchParameter, OperationDefinition CRUD + search |
+| `features/everything-operation.feature` | `$everything` instance + type level, `_count` param |
+| `features/patch-operation.feature` | JSON Patch on Patient (success + invalid patch) |
+| `features/plugin-patient-create.feature` | Plugin hooks on Patient CREATE (MRN, timestamp, phone normalisation) |
+| `features/validate-operation.feature` | `$validate` type + instance level for Patient |
+| `features/validation/http-422-validation-errors.feature` | 422 responses from profile validation |
+| `features/validation/profile-validation-integration.feature` | Profile validation integration |
+| `features/validation/profile-validation-modes.feature` | strict / lenient / off modes |
+| `features/validation/profile-validator-health.feature` | Actuator health indicator |
+| `features/validation/profile-validator-initialization.feature` | Startup behaviour |
+| `features/validation/profile-validator-metrics.feature` | Metrics endpoint |
+| `features/version-resolution.feature` | Versioned (`/r5/`) + unversioned paths, case-insensitive |
 
-### 3 Implemented Extended Operations
-
-| Operation | Scopes | Resources | Parameters |
-|---|---|---|---|
-| `$validate` | TYPE + INSTANCE | All resources | `resource` (required), `profile` (optional) |
-| `$merge` | TYPE | Patient only | `source-patient`, `target-patient` |
-| `$everything` | TYPE + INSTANCE | Patient only | `_count`, `_since` |
-
-**Key source files:**
-- Resource configs: `fhir4java-server/src/main/resources/fhir-config/resources/*.yml`
-- Operation configs: `fhir4java-server/src/main/resources/fhir-config/r5/operations/*.yml`
-- Operation handlers: `fhir4java-core/.../operation/handlers/ValidateOperationHandler.java`
-- Operation handlers: `fhir4java-persistence/.../operation/MergeOperationHandler.java`
-- Operation handlers: `fhir4java-persistence/.../operation/EverythingOperationHandler.java`
-- Operation controller: `fhir4java-api/.../controller/OperationController.java`
+**Notable gaps in existing coverage:**
+- No dedicated CRUD lifecycle feature (create/read/vread/update/delete) for any resource
+- No search feature files at all
+- No `$merge` feature file (plan previously listed it as "extend existing" — that was wrong)
+- No multi-version R4B path tests for CarePlan / Procedure
+- No multi-tenancy tests
+- No systematic HTTP protocol / conditional header tests
 
 ---
 
-## Implementation Phases
+## 2. Corrected Resource Inventory
 
-### Phase 1 — CRUD Lifecycle (all 11 resources)
+### 2a. Interaction Matrix (source of truth from YAML configs)
 
-**Strategy:** Parameterized `Scenario Outline` per resource group (avoids 11 near-identical files).
+| Resource | Type | Versions | PATCH | DELETE | Search mode |
+|---|---|---|---|---|---|
+| Patient | Standard | R5 | **yes** | no | Allowlist (25 params) |
+| Observation | Standard | R5 | no | no | Denylist (3 denied common + 2 denied resource-specific) |
+| Condition | Standard | R5 | **yes** | no | All allowed |
+| Encounter | Standard | R5 | **yes** | no | All allowed |
+| CarePlan | Standard | R5 + R4B | no | no | All allowed (dedicated schema) |
+| Procedure | Standard | R5 + R4B | no | no | All allowed |
+| Organization | Standard | R5 | **yes** | no | All allowed |
+| Practitioner | Standard | R5 | **yes** | no | All allowed |
+| MedicationRequest | Standard | R5 | **yes** | no | All allowed |
+| MedicationInventory | Custom | R5 | **yes** | **yes** | Allowlist (12 params) |
+| Course | Custom | R5 | no | no | Allowlist (12 params) |
+
+**Previous plan errors corrected:**
+- Course: PATCH=false (not PATCH-able)
+- CarePlan: PATCH=false (not PATCH-able)
+- Procedure: PATCH=false (not PATCH-able)
+- Patient allowlisted params = 25 (5 common + 20 resource-specific), not 23
+- MedicationInventory resource-specific params = 7 (identifier, status, medication, location,
+  expiration-date, lot-number, supplier), not 6
+- Course resource-specific params = 7 (code, category, title, status, instructor,
+  training-provider, start-date), not 8
+
+### 2b. PATCH-enabled resources (7)
+Patient, Condition, Encounter, Organization, Practitioner, MedicationRequest, MedicationInventory
+
+### 2c. DELETE-enabled resources (1)
+MedicationInventory only
+
+---
+
+## 3. Test Infrastructure Notes
+
+### Spring / RestAssured setup
+- `CucumberSpringConfig` boots full Spring Boot app on random port with `@ActiveProfiles("test")`
+- `@Before` sets `RestAssured.basePath = "/fhir"` for every scenario
+- All step definitions use **relative paths** (e.g. `POST /Patient` resolves to `http://host/fhir/Patient`)
+- `VersionResolutionSteps` overrides with `.basePath("")` for absolute paths — new versioned-path
+  tests must follow the same pattern
+
+### Test profile (H2)
+- `spring.datasource.url` is H2 in PostgreSQL-compatibility mode
+- `flyway.enabled=false` — schema is created by `ddl-auto: create-drop`
+- This means **the `fhir_tenant` table IS created automatically** by Hibernate at test startup
+- `fhir4java.tenant.enabled=false` in `application.yml` by default
+
+  → **For tenant tests**: add `@TestPropertySource(properties = "fhir4java.tenant.enabled=true")`
+  on a separate `@CucumberContextConfiguration` class, or use a Spring `@Profile("tenant-test")`.
+  Simplest: add a background step `Given multi-tenancy is enabled` that verifies the header is
+  processed (server behaviour), without requiring a config override if the tenant filter degrades
+  gracefully when disabled.
+
+### SharedTestContext gaps
+Current fields: `lastResponse`, `lastCreatedPatientId`, `lastCreatedResourceId`, `requestBody`
+
+New fields needed for the new test phases:
+
+| Field | Type | Used by |
+|---|---|---|
+| `lastVersionId` | `String` | VREAD tests |
+| `lastResourceType` | `String` | Generic CRUD steps |
+| `lastEtag` | `String` | Conditional update (If-Match) |
+| `tenantId` | `String` | Tenant isolation tests |
+| `secondTenantId` | `String` | Tenant isolation (resource invisible cross-tenant) |
+
+### Step definition package
+All new step definitions: `org.fhirframework.server.bdd.steps`
+(required — this is the glue path declared in `CucumberIT`)
+
+---
+
+## 4. File Structure
+
+### Feature files root
+```
+fhir4java-server/src/test/resources/features/
+```
+
+### Step definition root
+```
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/
+```
+
+---
+
+## 5. Implementation Phases
+
+### Phase 1 — CRUD Lifecycle
+
+**Strategy:** Three feature files using `Scenario Outline` to parameterise across resource groups.
+This avoids 11 near-identical files while keeping readability. Each `Examples` row covers one
+resource type.
 
 ```
-features/crud/
-  standard-resource-crud.feature     # Patient, Observation, Condition, Encounter,
-                                     # Organization, Practitioner, MedicationRequest
-  careplan-procedure-crud.feature    # R5 + R4B multi-version lifecycle
-  custom-resource-crud.feature       # MedicationInventory (DELETE enabled), Course
+features/crud/standard-resource-crud.feature
+features/crud/multi-version-resource-crud.feature   # CarePlan + Procedure
+features/crud/custom-resource-crud.feature          # MedicationInventory + Course
 ```
 
-**Scenarios per resource:**
-- CREATE → 201 + `Location` header + `ETag`
-- READ → 200 with correct `resourceType`
-- VREAD (`/_history/{vid}`) → 200 with correct version
-- UPDATE → 200/201 with `If-Match`
-- PATCH (Patient, Condition, Encounter, Organization, Practitioner, MedicationRequest, MedicationInventory) → 200
-- DELETE — only `MedicationInventory` → 204; all others → 405 Method Not Allowed
-- READ after DELETE → 410 Gone
-- READ non-existent → 404
+**New step definition:** `CrudSteps.java`
 
-### Phase 2 — Search (per resource, per param type)
+**Scenarios per resource group:**
+
+| Scenario | Standard | CarePlan/Procedure | MedicationInventory | Course |
+|---|---|---|---|---|
+| CREATE → 201 + Location + ETag | yes | yes (R5) | yes | yes |
+| READ → 200 + correct resourceType | yes | yes | yes | yes |
+| VREAD `/_history/{vid}` → 200 | yes | yes | yes | yes |
+| UPDATE with If-Match → 200 | yes | yes | yes | yes |
+| PATCH → 200 | only PATCH-enabled¹ | no | yes | no |
+| PATCH on non-PATCH resource → 405 | no | yes | no | yes |
+| DELETE → 204 | no | no | yes | no |
+| DELETE on non-DELETE resource → 405 | yes | yes | no | yes |
+| READ non-existent → 404 | yes | yes | yes | yes |
+| READ after DELETE → 410 | no | no | yes | no |
+
+¹ Standard PATCH-enabled: Condition, Encounter, Organization, Practitioner, MedicationRequest.
+  Patient PATCH already covered in `patch-operation.feature` — skip in CRUD outline to avoid
+  duplication.
+
+**Note on CarePlan schema:** Uses `schema.type: dedicated` (schema name `careplan`). The H2 URL
+already initialises `CREATE SCHEMA IF NOT EXISTS CAREPLAN` — tests will work without modification.
+
+---
+
+### Phase 2 — Search
 
 ```
-features/search/
-  patient-search.feature             # 23 allowlisted params
-  observation-search.feature         # Denylist validation (denied params return 400)
-  custom-resource-search.feature     # MedicationInventory (6 params), Course (8 params)
-  search-modifiers.feature           # :exact, :contains, :missing, :not across resources
-  search-pagination.feature          # _count, Bundle next/prev links
-  search-post.feature                # POST /Patient/_search, POST /Observation/_search
+features/search/patient-search.feature            # Allowlist enforcement + key params
+features/search/observation-search.feature        # Denylist enforcement (denied → 400)
+features/search/standard-resource-search.feature  # Smoke test for all-allowed resources
+features/search/custom-resource-search.feature    # MedicationInventory + Course custom params
+features/search/search-modifiers.feature          # :exact, :contains, :missing, :not
+features/search/search-pagination.feature         # _count, next/prev Bundle links
+features/search/search-post.feature               # POST /{Resource}/_search
 ```
 
-**MedicationInventory search scenarios:**
-```gherkin
-When I search for MedicationInventory with status "active"
-When I search for MedicationInventory with expiration-date "lt2026-01-01"
-When I search for MedicationInventory with lot-number "LOT-12345"
-When I search for MedicationInventory with supplier "Organization/supplier-1"
-```
+**New step definition:** `SearchSteps.java`
 
-**Course search scenarios:**
-```gherkin
-When I search for Course with category "clinical-training"
-When I search for Course with instructor "Practitioner/123"
-When I search for Course with start-date "ge2026-01-01"
-When I search for Course with training-provider "Organization/hosp-1"
-```
+**Patient search scenarios (allowlist enforcement):**
+- Allowed params work: `family`, `given`, `identifier`, `birthdate`, `gender`, `active`
+- Blocked param returns 400: any param NOT in the 25-param allowlist
+- Multiple params (AND combination) returns filtered results
 
 **Observation denylist scenarios:**
+- `_text` param → 400
+- `_content` param → 400
+- `_filter` param → 400
+- `combo-code-value-concept` → 400
+- `combo-code-value-quantity` → 400
+- Normal param (e.g., `code`, `subject`, `date`) → 200
+
+**Standard resource search (smoke):**
 ```gherkin
-When I search for Observation with "_text" parameter
-Then the response should be 400 Bad Request
+Scenario Outline: Search <resource> with no params returns Bundle
+  When I GET "/r5/<resource>"
+  Then the response status should be 200
+  And the response should be a Bundle
+  Examples:
+    | resource          |
+    | Condition         |
+    | Encounter         |
+    | Organization      |
+    | Practitioner      |
+    | MedicationRequest |
+    | CarePlan          |
+    | Procedure         |
 ```
 
-### Phase 3 — Extended Operations
-
-```
-features/operations/
-  validate-operation.feature         # All resource types (extend existing)
-  everything-operation.feature       # _since param, compartment resource types (extend existing)
-  merge-operation.feature            # Edge cases (extend existing):
-                                     #   missing source, already merged, non-Patient resource
-  operation-routing.feature          # 404 for unregistered operations per resource
-```
-
-**New edge cases to add to merge-operation.feature:**
+**MedicationInventory custom search scenarios:**
 ```gherkin
-Scenario: Merge fails for unknown source patient
-Scenario: Merge fails when target already merged
-Scenario: Merge fails for non-Patient resource type
+Given a MedicationInventory resource exists with status "active"
+When I search for MedicationInventory with status "active"
+Then the result Bundle includes the MedicationInventory resource
+
+When I search for MedicationInventory with expiration-date "lt2027-01-01"
+When I search for MedicationInventory with lot-number "LOT-12345"
+When I search for MedicationInventory with supplier "Organization/supplier-1"
+When I search for MedicationInventory with medication "Medication/med-001"
+When I search for MedicationInventory with location "Location/loc-001"
+When I search for MedicationInventory with unknown-param "x"  # → 400 (allowlist)
 ```
 
-**New edge cases to add to everything-operation.feature:**
+**Course custom search scenarios:**
 ```gherkin
-Scenario: $everything excludes resources before _since date
+When I search for Course with category "clinical-training"
+When I search for Course with instructor "Practitioner/p-123"
+When I search for Course with start-date "ge2026-01-01"
+When I search for Course with training-provider "Organization/org-001"
+When I search for Course with status "active"
+When I search for Course with code "training-101"
+When I search for Course with unknown-param "x"  # → 400 (allowlist)
+```
+
+**Search modifiers** (tested on Patient as the most constrained resource):
+- `family:exact` → case-sensitive exact match
+- `name:contains` → substring match
+- `gender:missing=true` → resources without a gender
+- `gender:missing=false` → resources with a gender
+- `identifier:not` → exclude matching identifier
+
+---
+
+### Phase 3 — Extended Operations (new + extensions)
+
+```
+features/operations/merge-operation.feature       ← NEW (does not exist yet)
+```
+
+**Extend existing files** (add scenarios, don't replace):
+```
+features/everything-operation.feature             ← add _since + compartment types
+features/validate-operation.feature               ← add custom resource + profile param
+```
+
+**merge-operation.feature (new — full file):**
+
+```gherkin
+Feature: $merge Operation
+  ...
+  Background:
+    Given the FHIR server is running
+
+  Scenario: Successfully merge source patient into target patient   # happy path
+  Scenario: Merge fails with missing source-patient parameter       # validation
+  Scenario: Merge fails with missing target-patient parameter
+  Scenario: Merge fails when source patient does not exist          # 404 source
+  Scenario: After successful merge, source patient is inactive      # state verification
+  Scenario: After successful merge, source patient has replaced-by link
+  Scenario: $merge on non-Patient resource type returns 404         # operation not registered
+```
+
+**New everything-operation.feature scenarios:**
+```gherkin
+Scenario: $everything with _since excludes older resources
+  Given a Patient resource exists
+  And an Observation linked to that Patient was created before today
+  When I request $everything with _since set to today
+  Then the Bundle should not include the old Observation
+
 Scenario: $everything includes all compartment resource types
-          (Condition, Observation, Encounter, MedicationRequest, Procedure, CarePlan)
+  Given a Patient resource exists with linked Condition, Observation, and Encounter
+  When I request $everything for the Patient
+  Then the Bundle should contain resources of type "Condition"
+  And the Bundle should contain resources of type "Observation"
+  And the Bundle should contain resources of type "Encounter"
 ```
 
-**New validate scenarios:**
+**New validate-operation.feature scenarios:**
 ```gherkin
-Scenario Outline: $validate succeeds for valid resources
-  Examples: Patient, Observation, MedicationInventory, Course
+Scenario Outline: $validate accepts valid custom resources
+  Given I have a valid <resource> resource body
+  When I POST it to "/<resource>/$validate"
+  Then the response status should be 200
+  And the OperationOutcome should indicate success
+  Examples:
+    | resource            |
+    | MedicationInventory |
+    | Course              |
 
-Scenario: $validate rejects MedicationInventory with invalid status code
-Scenario: $validate accepts optional profile parameter
+Scenario: $validate with optional profile parameter is accepted
+  Given I have a valid Patient resource
+  When I validate with profile "http://hl7.org/fhir/StructureDefinition/Patient"
+  Then the response status should be 200
 ```
+
+**operation-routing.feature (new — 404 for unregistered operations):**
+```
+features/operations/operation-routing.feature
+```
+
+```gherkin
+Scenario Outline: Unregistered operation on resource returns 404
+  When I POST to "/<resource>/$unknown-op" with empty Parameters
+  Then the response status should be 404
+  And the response should be an OperationOutcome
+  Examples:
+    | resource            |
+    | Patient             |
+    | Observation         |
+    | MedicationInventory |
+
+Scenario: $merge on Observation returns 404
+  When I POST to "/Observation/$merge" with empty Parameters
+  Then the response status should be 404
+
+Scenario: $everything on Observation returns 404
+  When I GET "/Observation/$everything"
+  Then the response status should be 404
+```
+
+---
 
 ### Phase 4 — HTTP Protocol & Headers
 
 ```
-features/http/
-  response-headers.feature           # ETag, Location, Content-Location
-  conditional-operations.feature     # If-Match (update), If-None-Match, If-None-Exist
-  content-negotiation.feature        # _format param, Accept header
-  error-responses.feature            # 404, 405, 409, 410, 422 systematically
-```
-
-### Phase 5 — Multi-version (CarePlan, Procedure)
-
-```
-features/versioning/
-  multi-version-resources.feature    # CarePlan and Procedure under /r4b/ and /r5/ paths
-```
-
-### Phase 6 — Multi-tenancy
-
-```
-features/tenant/
-  tenant-isolation.feature           # Resources created in tenant A invisible to tenant B
-  tenant-unknown.feature             # Unknown X-Tenant-ID → 403/404
-```
-
----
-
-## Auto-Detection of New Resources & Operations (Requirement 3)
-
-### What to Detect
-
-- **New resource:** a new `*.yml` added to `fhir-config/resources/` with no matching `features/crud/*.feature` scenario
-- **New operation:** a new `*.yml` added to `fhir-config/r5/operations/` with no matching `features/operations/*.feature` scenario
-- **New custom search param:** a new `SearchParameter-*.json` for a resource whose search feature file doesn't cover it
-
-### Recommended Architecture: Sub-agent + SessionStart Hook
-
-**Why sub-agent?** Gap detection requires autonomously reading many config files, diffing against
-feature coverage, computing gaps, and writing structured output — exactly what sub-agents are
-designed for.
-
-**Flow:**
-
-```
-User runs: /generate-bdd-tests
-         │
-         ▼
-  Skill (interactive prompt)
-  "Full generation or gap-only?"
-         │
-         ▼
-  Launches sub-agent: DetectAndGenerateAgent
-         │
-         ├─ Step 1: Scan fhir-config/resources/*.yml  →  resource inventory
-         ├─ Step 2: Scan fhir-config/r5/operations/*.yml  →  operation inventory
-         ├─ Step 3: Grep features/ for covered resources/operations
-         ├─ Step 4: Compute gap list
-         ├─ Step 5: Generate .feature files for each gap
-         ├─ Step 6: Generate/update step definition Java classes
-         └─ Step 7: Report: "Generated N new scenarios covering X resources, Y operations"
-```
-
-**For passive always-on detection:** `SessionStart` hook runs a fast shell script that warns if
-coverage gaps exist, then user runs `/generate-bdd-tests` to fill them.
-
-### Option Comparison
-
-| Option | Detection? | File generation? | Automation? | Best for |
-|---|---|---|---|---|
-| Skill only | No (static) | Via Claude | Manual | Interactive guided flow |
-| Sub-agent | **Yes** | **Yes** | Via skill/hook | Multi-step autonomous work |
-| SessionStart hook | **Yes** (fast shell) | No (alerts only) | **Fully automatic** | Always-on awareness |
-| **Recommended: Both** | Yes | Yes | Yes | Full coverage |
-
----
-
-## Files to Create / Modify
-
-### New Feature Files
-```
-features/crud/standard-resource-crud.feature
-features/crud/careplan-procedure-crud.feature
-features/crud/custom-resource-crud.feature
-features/search/patient-search.feature
-features/search/observation-search.feature
-features/search/custom-resource-search.feature
-features/search/search-modifiers.feature
-features/search/search-pagination.feature
-features/search/search-post.feature
-features/operations/operation-routing.feature
 features/http/response-headers.feature
 features/http/conditional-operations.feature
 features/http/content-negotiation.feature
 features/http/error-responses.feature
+```
+
+**New step definition:** `HttpProtocolSteps.java`
+
+**response-headers.feature:**
+```gherkin
+Scenario: CREATE returns Location header pointing to new resource
+Scenario: CREATE returns ETag header
+Scenario: READ returns ETag header
+Scenario: READ returns Last-Modified header
+Scenario: UPDATE returns updated ETag header
+Scenario: Content-Location header matches resource URL
+```
+
+**conditional-operations.feature:**
+```gherkin
+Scenario: UPDATE with correct If-Match ETag succeeds
+Scenario: UPDATE with wrong If-Match ETag returns 409 Conflict
+Scenario: UPDATE without If-Match succeeds (non-strict mode)
+
+# SharedTestContext.lastEtag used here — read after CREATE, supply in UPDATE
+```
+
+**content-negotiation.feature:**
+```gherkin
+Scenario: _format=json returns application/fhir+json
+Scenario: _format=xml returns application/fhir+xml
+Scenario: Accept: application/fhir+json returns JSON
+Scenario: Accept: application/fhir+xml returns XML
+Scenario: Unsupported Accept type returns 406 Not Acceptable
+```
+
+**error-responses.feature (systematic):**
+
+| Code | Trigger |
+|---|---|
+| 404 | GET non-existent resource |
+| 405 | DELETE on Patient (delete=false) |
+| 405 | PATCH on Observation (patch=false) |
+| 409 | UPDATE with stale ETag |
+| 410 | GET previously deleted MedicationInventory |
+| 422 | CREATE resource failing profile validation |
+
+---
+
+### Phase 5 — Multi-Version (CarePlan and Procedure)
+
+```
 features/versioning/multi-version-resources.feature
+```
+
+**Scenarios:**
+```gherkin
+Scenario Outline: Create <resource> via R5 path
+  When I POST a <resource> to "/r5/<resource>"
+  Then the response status should be 201
+  And the response header "X-FHIR-Version" equals "5.0.0"
+
+Scenario Outline: Create <resource> via R4B path
+  When I POST a <resource> to "/r4b/<resource>"
+  Then the response status should be 201
+  And the response header "X-FHIR-Version" equals "4.3.0"
+
+Scenario Outline: Read <resource> created under R5 via R5 path succeeds
+Scenario Outline: Read <resource> created under R5 via R4B path also resolves
+  # (unversioned default is R5; reading via /r4b/ should still return the resource)
+
+Examples:
+  | resource |
+  | CarePlan |
+  | Procedure |
+```
+
+---
+
+### Phase 6 — Multi-Tenancy
+
+```
 features/tenant/tenant-isolation.feature
 features/tenant/tenant-unknown.feature
 ```
 
-### Existing Feature Files to Extend
-```
-features/operations/validate-operation.feature
-features/operations/everything-operation.feature
-features/operations/merge-operation.feature
+**New step definition:** `TenantSteps.java`
+
+**Infrastructure note:** `fhir4java.tenant.enabled=false` in the test profile. Two approaches:
+
+- **Option A (recommended):** Use a `@SpringBootTest` variant with
+  `properties = "fhir4java.tenant.enabled=true"` in a second `CucumberContextConfiguration`
+  class (e.g., `CucumberTenantSpringConfig`). Tag tenant scenarios with `@tenant` and use
+  a separate Cucumber suite or tag filter. This keeps the default suite fast.
+
+- **Option B:** Test the tenant header plumbing without enabling the feature (verify that
+  the header is ignored when disabled, rather than rejected). Simpler but less meaningful.
+
+**Recommendation: Option A.** The `fhir_tenant` table is created by Hibernate at H2 startup
+(confirmed via `ddl-auto: create-drop`), so there's no migration concern.
+
+**tenant-isolation.feature scenarios:**
+```gherkin
+Background:
+  Given multi-tenancy is enabled
+  And tenant "HOSP-A" exists with header "tenant-a-guid"
+  And tenant "HOSP-B" exists with header "tenant-b-guid"
+
+Scenario: Resource created in tenant A is not visible to tenant B
+  Given I create a Patient in tenant "HOSP-A"
+  When I search for all Patients as tenant "HOSP-B"
+  Then the Bundle should not include the Patient from tenant "HOSP-A"
+
+Scenario: Resource created in tenant A is visible within tenant A
+  Given I create a Patient in tenant "HOSP-A"
+  When I read the Patient as tenant "HOSP-A"
+  Then the response status should be 200
+
+Scenario: Resource created without tenant header uses default tenant
+  Given I create a Patient without an X-Tenant-ID header
+  When I read the Patient without an X-Tenant-ID header
+  Then the response status should be 200
 ```
 
-### New Step Definitions
-```
-fhir4java-server/src/test/java/.../bdd/steps/CrudSteps.java
-fhir4java-server/src/test/java/.../bdd/steps/SearchSteps.java
-fhir4java-server/src/test/java/.../bdd/steps/HttpProtocolSteps.java
-fhir4java-server/src/test/java/.../bdd/steps/TenantSteps.java
-```
+**tenant-unknown.feature scenarios:**
+```gherkin
+Scenario: Unknown tenant header returns 403
+  When I GET "/Patient" with X-Tenant-ID "unknown-guid-not-in-table"
+  Then the response status should be 403
+  And the response should be an OperationOutcome
 
-### Auto-detection Support
-```
-.claude/skills/generate-bdd-tests/SKILL.md    # Rewrite to invoke sub-agent
-.claude/settings.json                          # SessionStart hook config
-scripts/detect-bdd-gaps.sh                    # Gap detection shell script
+Scenario: Disabled tenant returns 403
+  Given tenant "DISABLED-TENANT" exists but is disabled
+  When I GET "/Patient" with X-Tenant-ID for "DISABLED-TENANT"
+  Then the response status should be 403
 ```
 
 ---
 
-## Open Questions / Decisions Needed
+## 6. SharedTestContext — Required Extensions
 
-1. **Scenario Outline vs individual scenarios:** Use `Scenario Outline` for CRUD across standard
-   resources, or keep separate files per resource for readability?
-2. **Step definition granularity:** One monolithic `CommonSteps.java` or per-domain step files
-   (preferred above)?
-3. **Test data strategy:** Inline JSON in feature files vs external fixture files in
-   `src/test/resources/fixtures/`?
-4. **Multi-tenancy setup:** Does the H2 test database support the `fhir_tenant` mapping table?
-   Needs verification.
-5. **Gap detection threshold:** Warn when 0 scenarios cover a resource, or use a minimum
-   (e.g., at least 3 scenarios per resource)?
+Add these fields to the existing `SharedTestContext.java`:
+
+```java
+private String lastVersionId;      // for VREAD /_history/{vid} tests
+private String lastResourceType;   // for generic CRUD steps
+private String lastEtag;           // for conditional update tests
+private String tenantId;           // for tenant isolation tests
+private String secondTenantId;     // for cross-tenant visibility tests
+```
+
+Also needed: a generic `extractVersionId(String responseBody)` utility (similar to existing
+`extractResourceId`).
 
 ---
 
-## Next Steps
+## 7. Files to Create
 
-- [ ] Review and approve phases above
-- [ ] Answer open questions (or accept defaults)
-- [ ] Implement Phase 1 (CRUD) — can start immediately
-- [ ] Implement Phase 2 (Search) — parallel with Phase 1
-- [ ] Extend Phase 3 (Operations) — extend existing feature files
-- [ ] Implement Phases 4–6 (HTTP, Versioning, Tenancy)
-- [ ] Build auto-detection skill + hook
+### New feature files (17 new files)
+```
+fhir4java-server/src/test/resources/features/crud/standard-resource-crud.feature
+fhir4java-server/src/test/resources/features/crud/multi-version-resource-crud.feature
+fhir4java-server/src/test/resources/features/crud/custom-resource-crud.feature
+fhir4java-server/src/test/resources/features/search/patient-search.feature
+fhir4java-server/src/test/resources/features/search/observation-search.feature
+fhir4java-server/src/test/resources/features/search/standard-resource-search.feature
+fhir4java-server/src/test/resources/features/search/custom-resource-search.feature
+fhir4java-server/src/test/resources/features/search/search-modifiers.feature
+fhir4java-server/src/test/resources/features/search/search-pagination.feature
+fhir4java-server/src/test/resources/features/search/search-post.feature
+fhir4java-server/src/test/resources/features/operations/merge-operation.feature
+fhir4java-server/src/test/resources/features/operations/operation-routing.feature
+fhir4java-server/src/test/resources/features/http/response-headers.feature
+fhir4java-server/src/test/resources/features/http/conditional-operations.feature
+fhir4java-server/src/test/resources/features/http/content-negotiation.feature
+fhir4java-server/src/test/resources/features/http/error-responses.feature
+fhir4java-server/src/test/resources/features/versioning/multi-version-resources.feature
+fhir4java-server/src/test/resources/features/tenant/tenant-isolation.feature
+fhir4java-server/src/test/resources/features/tenant/tenant-unknown.feature
+```
 
-**To continue:** Resume on branch `claude/fhir-api-bdd-tests-w7LEW` and reference this file at
-`tasks/TASK-bdd-test-implementation-plan.md`.
+### Existing feature files to extend (add scenarios only)
+```
+fhir4java-server/src/test/resources/features/everything-operation.feature
+fhir4java-server/src/test/resources/features/validate-operation.feature
+```
+
+### New step definition classes
+```
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/CrudSteps.java
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SearchSteps.java
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/HttpProtocolSteps.java
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/TenantSteps.java
+```
+
+### Modify existing
+```
+fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SharedTestContext.java
+  → add lastVersionId, lastResourceType, lastEtag, tenantId, secondTenantId
+  → add extractVersionId() helper
+```
+
+### Auto-detection support (Phase 7)
+```
+.claude/skills/generate-bdd-tests/SKILL.md
+scripts/detect-bdd-gaps.sh
+```
+
+---
+
+## 8. Auto-Detection Architecture
+
+### What counts as a coverage gap
+1. A `fhir-config/resources/*.yml` with `enabled: true` and no scenario in
+   `features/crud/` that creates a resource of that `resourceType`
+2. A `fhir-config/r5/operations/*.yml` with no scenario in `features/operations/`
+   that posts to `/{resource}/$<operation-name>`
+3. A resource-specific search param in a YAML config with no scenario in
+   `features/search/` that uses that param name
+
+### Detection script: `scripts/detect-bdd-gaps.sh`
+
+```bash
+#!/usr/bin/env bash
+# Scans resource configs and feature files, prints gap report.
+# Exit code 1 if gaps found, 0 if fully covered.
+RESOURCES_DIR="fhir4java-server/src/main/resources/fhir-config/resources"
+FEATURES_DIR="fhir4java-server/src/test/resources/features"
+gaps=0
+for yml in "$RESOURCES_DIR"/*.yml; do
+  rt=$(grep "^resourceType:" "$yml" | awk '{print $2}')
+  enabled=$(grep "^enabled:" "$yml" | awk '{print $2}')
+  [[ "$enabled" != "true" ]] && continue
+  if ! grep -rl "\"$rt\"\|/$rt\b\|resourceType.*$rt" "$FEATURES_DIR" --include="*.feature" -q; then
+    echo "GAP: No feature scenarios found for resource: $rt"
+    gaps=$((gaps + 1))
+  fi
+done
+exit $((gaps > 0))
+```
+
+### Skill: `/generate-bdd-tests`
+
+```
+.claude/skills/generate-bdd-tests/SKILL.md
+```
+
+Flow when invoked:
+1. Run `scripts/detect-bdd-gaps.sh` to get gap list
+2. For each gap: generate a minimal `.feature` file and stub step definitions
+3. Report: "Generated N files covering X new resources / Y new operations"
+
+---
+
+## 9. Resolved Open Questions
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Scenario Outline vs individual? | **Scenario Outline per group** — keeps files manageable |
+| 2 | Step definition granularity? | **Per-domain files** — CrudSteps, SearchSteps, HttpProtocolSteps, TenantSteps |
+| 3 | Test data strategy? | **Inline JSON in step classes** (not in feature files) — keeps Gherkin readable |
+| 4 | H2 supports fhir_tenant table? | **Yes** — Hibernate creates it via `ddl-auto: create-drop` |
+| 5 | Gap detection threshold? | **0 scenarios = gap** for CRUD; 0 param scenarios = gap for custom search params |
+
+---
+
+## 10. Implementation Order
+
+```
+Phase 1 (CRUD)         ← start here; unblocks Phase 2
+Phase 2 (Search)       ← can run in parallel with Phase 1
+Phase 3 (Operations)   ← create merge-operation.feature; extend existing two
+Phase 4 (HTTP)         ← depends on SharedTestContext ETag field from Phase 1
+Phase 5 (Versioning)   ← standalone; no dependencies
+Phase 6 (Tenancy)      ← needs CucumberTenantSpringConfig; do last
+Phase 7 (Auto-detect)  ← purely scripting; can do any time after Phase 1
+```
+
+**To continue:** Check out branch `claude/fhir-api-bdd-tests-w7LEW` and start with Phase 1.
+Reference this file at `tasks/TASK-bdd-test-implementation-plan.md`.
