@@ -1,6 +1,6 @@
 # BDD Test Implementation Plan
 
-**Status:** Refined — ready to implement
+**Status:** Refined (v2) — codebase-verified, ready to implement
 **Last updated:** 2026-02-25
 **Branch:** `claude/fhir-api-bdd-tests-w7LEW`
 
@@ -102,13 +102,50 @@ New fields needed for the new test phases:
 |---|---|---|
 | `lastVersionId` | `String` | VREAD tests |
 | `lastResourceType` | `String` | Generic CRUD steps |
-| `lastEtag` | `String` | Conditional update (If-Match) |
+| `lastEtag` | `String` | Conditional update (If-Match) — note: `patch-operation.feature` already asserts ETag is present but does NOT store it for reuse in subsequent steps; new `CrudSteps` will store it |
 | `tenantId` | `String` | Tenant isolation tests |
 | `secondTenantId` | `String` | Tenant isolation (resource invisible cross-tenant) |
 
 ### Step definition package
 All new step definitions: `org.fhirframework.server.bdd.steps`
-(required — this is the glue path declared in `CucumberIT`)
+
+`CucumberIT` declares glue path `org.fhirframework.server.bdd` (the parent package), which
+recursively picks up all sub-packages. The `steps` sub-package is correct and already used by
+all six existing step classes.
+
+### basePath patterns in existing step classes
+
+`CucumberSpringConfig.@Before` sets `RestAssured.basePath = "/fhir"` globally for every scenario.
+
+Existing classes that **override with `basePath("")`** (for absolute paths such as `/actuator/*`):
+- `ValidationSteps`, `ConformanceResourceSteps`
+
+Existing classes that **use the default `/fhir` basePath**:
+- `OperationSteps`, `BatchTransactionSteps`, `PluginSteps`, `VersionResolutionSteps`
+
+**New step classes should use the default** — no `basePath` override needed. Relative paths like
+`/Patient` and `/r5/Patient/{id}` automatically resolve to `/fhir/Patient` and `/fhir/r5/Patient/{id}`.
+
+### Existing step reuse
+
+New feature files can reference steps already implemented in existing classes. This avoids
+duplicating implementations:
+
+| Step text (Gherkin) | Defined in |
+|---|---|
+| `the FHIR server is running` | `OperationSteps` |
+| `a Patient resource exists` | `OperationSteps` |
+| `two Patient resources exist for the merge operation` | `OperationSteps` |
+| `I merge the source patient into the target patient` | `OperationSteps` |
+| `I call \$merge without the required parameters` | `OperationSteps` |
+| `the response status should be {int}` | `OperationSteps` (and others) |
+| Source patient inactive after merge assertion | `OperationSteps` |
+| Source patient replaced-by link assertion | `OperationSteps` |
+| `I apply the JSON Patch to the Patient` | `OperationSteps` |
+| `I have a valid Patient resource` | `OperationSteps` |
+| `I request \$everything for the Patient` | `OperationSteps` |
+| `I validate the Patient resource at the type level` | `OperationSteps` |
+| Version header assertions (`X-FHIR-Version`) | `VersionResolutionSteps` |
 
 ---
 
@@ -257,6 +294,11 @@ features/validate-operation.feature               ← add custom resource + prof
 ```
 
 **merge-operation.feature (new — full file):**
+
+> **Note:** All `$merge` step implementations already exist in `OperationSteps.java`.
+> This feature file only needs to be created — **no new step class is required for merge**.
+> Verify that each step line below exactly matches the `@Given`/`@When`/`@Then` patterns
+> in `OperationSteps.java` before writing the file.
 
 ```gherkin
 Feature: $merge Operation
@@ -488,8 +530,13 @@ private String tenantId;           // for tenant isolation tests
 private String secondTenantId;     // for cross-tenant visibility tests
 ```
 
-Also needed: a generic `extractVersionId(String responseBody)` utility (similar to existing
-`extractResourceId`).
+Also needed:
+- `extractVersionId(String responseBody)` utility — parses `meta.versionId` from JSON response body
+  (analogous to existing `extractResourceId`, which parses `id`)
+- `extractEtag(Response response)` helper — reads the `ETag` response header and strips surrounding
+  `W/"..."` quotes, storing the raw version number
+
+`extractResourceId` already exists and works for all resource types — **do not duplicate it**.
 
 ---
 
@@ -531,6 +578,10 @@ fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/SearchSteps.ja
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/HttpProtocolSteps.java
 fhir4java-server/src/test/java/org/fhirframework/server/bdd/steps/TenantSteps.java
 ```
+
+> **Not needed (steps already exist):** No new step class for `merge-operation.feature` — all
+> merge step methods are already in `OperationSteps.java`. Similarly, `operation-routing.feature`
+> can reuse generic HTTP steps from `OperationSteps` and `CrudSteps`.
 
 ### Modify existing
 ```
@@ -606,14 +657,27 @@ Flow when invoked:
 ## 10. Implementation Order
 
 ```
-Phase 1 (CRUD)         ← start here; unblocks Phase 2
-Phase 2 (Search)       ← can run in parallel with Phase 1
-Phase 3 (Operations)   ← create merge-operation.feature; extend existing two
-Phase 4 (HTTP)         ← depends on SharedTestContext ETag field from Phase 1
-Phase 5 (Versioning)   ← standalone; no dependencies
-Phase 6 (Tenancy)      ← needs CucumberTenantSpringConfig; do last
+Phase 1 (CRUD)         ← start here; creates CrudSteps + SharedTestContext extensions
+Phase 2 (Search)       ← can run in parallel with Phase 1; creates SearchSteps
+Phase 3 (Operations)   ← create merge-operation.feature (no new step class!);
+                          extend everything-operation.feature + validate-operation.feature;
+                          create operation-routing.feature
+Phase 4 (HTTP)         ← depends on SharedTestContext.lastEtag from Phase 1; creates HttpProtocolSteps
+Phase 5 (Versioning)   ← standalone; no new step class (reuse VersionResolutionSteps patterns)
+Phase 6 (Tenancy)      ← needs CucumberTenantSpringConfig; creates TenantSteps; do last
 Phase 7 (Auto-detect)  ← purely scripting; can do any time after Phase 1
 ```
+
+**Step class summary:**
+| Phase | New step class |
+|---|---|
+| 1 (CRUD) | `CrudSteps.java` |
+| 2 (Search) | `SearchSteps.java` |
+| 3 (Operations) | *none — reuses `OperationSteps.java`* |
+| 4 (HTTP) | `HttpProtocolSteps.java` |
+| 5 (Versioning) | *none — reuses `VersionResolutionSteps.java`* |
+| 6 (Tenancy) | `TenantSteps.java` |
+| 7 (Auto-detect) | *none — shell script + skill* |
 
 **To continue:** Check out branch `claude/fhir-api-bdd-tests-w7LEW` and start with Phase 1.
 Reference this file at `tasks/TASK-bdd-test-implementation-plan.md`.
