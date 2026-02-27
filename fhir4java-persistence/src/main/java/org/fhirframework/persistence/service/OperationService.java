@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.operation.*;
+import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.core.operation.OperationConfigRegistry;
 import org.hl7.fhir.instance.model.api.IBaseResource;
@@ -136,6 +137,7 @@ public class OperationService {
                 .resourceId(resourceId)
                 .inputResource(inputResource)
                 .parameters(params)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .build();
 
         try {

@@ -7,6 +7,7 @@ import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.guard.InteractionGuard;
 import org.fhirframework.core.interaction.InteractionType;
+import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.FhirResourceService;
 import org.fhirframework.persistence.service.FhirResourceService.ResourceResult;
@@ -227,6 +228,7 @@ public class FhirResourceController {
                 .operationType(OperationType.CREATE)
                 .resourceType(resourceType)
                 .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .inputResource(parsedResource)
                 .build();
 
