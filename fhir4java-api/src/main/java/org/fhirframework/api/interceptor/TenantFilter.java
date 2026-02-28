@@ -4,6 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.fhirframework.core.exception.TenantDisabledException;
+import org.fhirframework.core.exception.TenantNotFoundException;
 import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.tenant.TenantProperties;
 import org.fhirframework.persistence.service.TenantService;
@@ -11,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -53,9 +57,38 @@ public class TenantFilter extends OncePerRequestFilter {
             }
 
             filterChain.doFilter(request, response);
+        } catch (TenantNotFoundException ex) {
+            log.warn("Tenant not found: {}", ex.getMessage());
+            sendErrorResponse(response, HttpStatus.BAD_REQUEST, ex.getMessage());
+        } catch (TenantDisabledException ex) {
+            log.warn("Tenant disabled: {}", ex.getMessage());
+            sendErrorResponse(response, HttpStatus.FORBIDDEN, ex.getMessage());
+        } catch (IllegalArgumentException ex) {
+            log.warn("Invalid tenant header: {}", ex.getMessage());
+            sendErrorResponse(response, HttpStatus.BAD_REQUEST, ex.getMessage());
         } finally {
             TenantContext.clear();
         }
+    }
+
+    private void sendErrorResponse(HttpServletResponse response, HttpStatus status, String message) throws IOException {
+        response.setStatus(status.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        String body = """
+                {
+                  "resourceType": "OperationOutcome",
+                  "issue": [{
+                    "severity": "error",
+                    "code": "%s",
+                    "diagnostics": "%s"
+                  }]
+                }
+                """.formatted(
+                status == HttpStatus.FORBIDDEN ? "forbidden" : "invalid",
+                message.replace("\"", "\\\"")
+        );
+        response.getWriter().write(body);
+        response.getWriter().flush();
     }
 
     @Override
