@@ -9,6 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,8 +31,16 @@ public class TenantService {
     private final FhirTenantRepository tenantRepository;
     private final TenantProperties tenantProperties;
 
-    // Simple in-memory cache: external UUID -> internal ID
-    private final Map<UUID, String> tenantCache = new ConcurrentHashMap<>();
+    // TTL-based in-memory cache: external UUID -> CacheEntry(internal ID, expiry)
+    private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(5);
+    private final Map<UUID, CacheEntry> tenantCache = new ConcurrentHashMap<>();
+    private Duration cacheTtl = DEFAULT_CACHE_TTL;
+
+    record CacheEntry(String internalId, Instant expiresAt) {
+        boolean isExpired() {
+            return Instant.now().isAfter(expiresAt);
+        }
+    }
 
     public TenantService(FhirTenantRepository tenantRepository,
                          TenantProperties tenantProperties) {
@@ -79,10 +89,14 @@ public class TenantService {
      * @throws TenantDisabledException if the tenant is disabled
      */
     public String resolveInternalTenantId(UUID externalId) {
-        // Check cache first
-        String cached = tenantCache.get(externalId);
+        // Check cache first (with TTL)
+        CacheEntry cached = tenantCache.get(externalId);
+        if (cached != null && !cached.isExpired()) {
+            return cached.internalId();
+        }
+        // Remove expired entry
         if (cached != null) {
-            return cached;
+            tenantCache.remove(externalId);
         }
 
         FhirTenantEntity tenant = tenantRepository.findByExternalId(externalId)
@@ -92,9 +106,9 @@ public class TenantService {
             throw new TenantDisabledException(externalId.toString());
         }
 
-        // Cache the mapping
-        tenantCache.put(externalId, tenant.getInternalId());
-        log.debug("Resolved tenant: external={} -> internal={}", externalId, tenant.getInternalId());
+        // Cache the mapping with TTL
+        tenantCache.put(externalId, new CacheEntry(tenant.getInternalId(), Instant.now().plus(cacheTtl)));
+        log.debug("Resolved tenant: external={} -> internal={} (TTL={})", externalId, tenant.getInternalId(), cacheTtl);
 
         return tenant.getInternalId();
     }
@@ -118,5 +132,27 @@ public class TenantService {
      */
     public void clearCache() {
         tenantCache.clear();
+    }
+
+    /**
+     * Set the cache TTL. Useful for testing and runtime configuration.
+     */
+    public void setCacheTtl(Duration ttl) {
+        this.cacheTtl = ttl;
+        log.info("Tenant cache TTL set to {}", ttl);
+    }
+
+    /**
+     * Get the current cache TTL.
+     */
+    public Duration getCacheTtl() {
+        return cacheTtl;
+    }
+
+    /**
+     * Get the current cache size (for monitoring/testing).
+     */
+    public int getCacheSize() {
+        return tenantCache.size();
     }
 }

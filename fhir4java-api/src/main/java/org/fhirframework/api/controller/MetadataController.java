@@ -5,6 +5,8 @@ import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.api.config.FhirMediaType;
 import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.config.ResourceConfiguration;
+import org.fhirframework.core.tenant.TenantContext;
+import org.fhirframework.core.tenant.TenantProperties;
 import org.fhirframework.core.conformance.ConformanceResourceRegistry;
 import org.fhirframework.core.conformance.ConformanceResourceType;
 import org.fhirframework.core.context.FhirContextFactory;
@@ -50,6 +52,7 @@ public class MetadataController {
     private final OperationRegistry operationRegistry;
     private final OperationConfigRegistry operationConfigRegistry;
     private final ConformanceResourceRegistry conformanceResourceRegistry;
+    private final TenantProperties tenantProperties;
 
     @Value("${fhir4java.server.base-url:http://localhost:8080/fhir}")
     private String baseUrl;
@@ -65,13 +68,15 @@ public class MetadataController {
                               SearchParameterRegistry searchParameterRegistry,
                               OperationRegistry operationRegistry,
                               OperationConfigRegistry operationConfigRegistry,
-                              ConformanceResourceRegistry conformanceResourceRegistry) {
+                              ConformanceResourceRegistry conformanceResourceRegistry,
+                              TenantProperties tenantProperties) {
         this.contextFactory = contextFactory;
         this.resourceRegistry = resourceRegistry;
         this.searchParameterRegistry = searchParameterRegistry;
         this.operationRegistry = operationRegistry;
         this.operationConfigRegistry = operationConfigRegistry;
         this.conformanceResourceRegistry = conformanceResourceRegistry;
+        this.tenantProperties = tenantProperties;
     }
 
     /**
@@ -141,9 +146,25 @@ public class MetadataController {
 
         // Implementation information
         CapabilityStatementImplementationComponent implementation = new CapabilityStatementImplementationComponent();
-        implementation.setDescription("FHIR4Java - Enterprise-grade HL7 FHIR Server");
+        String implDescription = "FHIR4Java - Enterprise-grade HL7 FHIR Server";
+        if (tenantProperties.isEnabled()) {
+            String tenantId = TenantContext.getCurrentTenantId();
+            implDescription += " (tenant: " + tenantId + ")";
+        }
+        implementation.setDescription(implDescription);
         implementation.setUrl(baseUrl);
         cs.setImplementation(implementation);
+
+        // Add multi-tenancy extension if enabled
+        if (tenantProperties.isEnabled()) {
+            Extension tenantExt = new Extension("http://fhir4java.org/StructureDefinition/multi-tenancy");
+            tenantExt.addExtension(new Extension("enabled", new BooleanType(true)));
+            tenantExt.addExtension(new Extension("tenantId",
+                    new StringType(TenantContext.getCurrentTenantId())));
+            tenantExt.addExtension(new Extension("headerName",
+                    new StringType(tenantProperties.getHeaderName())));
+            cs.addExtension(tenantExt);
+        }
 
         // REST capabilities
         CapabilityStatementRestComponent rest = new CapabilityStatementRestComponent();
