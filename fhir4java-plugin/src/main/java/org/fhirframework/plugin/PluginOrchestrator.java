@@ -1,5 +1,6 @@
 package org.fhirframework.plugin;
 
+import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.plugin.business.BusinessContext;
 import org.fhirframework.plugin.business.BusinessLogicPlugin;
 import org.fhirframework.plugin.business.OperationResult;
@@ -62,6 +63,24 @@ public class PluginOrchestrator {
         log.info("Shutting down plugin orchestrator");
         asyncExecutor.shutdown();
         plugins.forEach(FhirPlugin::destroy);
+    }
+
+    /**
+     * Wraps a task with tenant context propagation for async execution.
+     * Captures the current tenant ID from the calling thread and sets it
+     * on the async thread before execution, clearing it afterwards to
+     * prevent thread pool contamination.
+     */
+    private Runnable wrapWithTenantContext(Runnable task) {
+        String tenantId = TenantContext.getCurrentTenantId();
+        return () -> {
+            TenantContext.setCurrentTenantId(tenantId);
+            try {
+                task.run();
+            } finally {
+                TenantContext.clear();
+            }
+        };
     }
 
     /**
@@ -183,14 +202,14 @@ public class PluginOrchestrator {
         if (!asyncPlugins.isEmpty()) {
             PluginContext contextCopy = context; // Capture for lambda
             asyncPlugins.forEach(plugin ->
-                    CompletableFuture.runAsync(() -> {
+                    CompletableFuture.runAsync(wrapWithTenantContext(() -> {
                         try {
                             log.debug("Executing AFTER (async): {} for {}", plugin.getName(), contextCopy);
                             plugin.executeAfter(contextCopy);
                         } catch (Exception e) {
                             log.error("Async plugin {} threw exception in AFTER phase", plugin.getName(), e);
                         }
-                    }, asyncExecutor)
+                    }), asyncExecutor)
             );
         }
 
@@ -225,14 +244,14 @@ public class PluginOrchestrator {
 
         if (!asyncPlugins.isEmpty()) {
             asyncPlugins.forEach(plugin ->
-                    CompletableFuture.runAsync(() -> {
+                    CompletableFuture.runAsync(wrapWithTenantContext(() -> {
                         try {
                             log.debug("Executing ON_ERROR (async): {} for {}", plugin.getName(), context);
                             plugin.executeOnError(context, exception);
                         } catch (Exception e) {
                             log.error("Async plugin {} threw exception in ON_ERROR phase", plugin.getName(), e);
                         }
-                    }, asyncExecutor)
+                    }), asyncExecutor)
             );
         }
     }

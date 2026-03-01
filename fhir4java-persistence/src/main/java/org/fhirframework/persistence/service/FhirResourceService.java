@@ -5,6 +5,7 @@ import ca.uhn.fhir.parser.IParser;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.exception.FhirException;
 import org.fhirframework.core.exception.ResourceNotFoundException;
+import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.validation.ProfileValidator;
 import org.fhirframework.core.validation.SearchParameterValidator;
 import org.fhirframework.core.validation.ValidationConfig;
@@ -49,7 +50,6 @@ import java.util.stream.Collectors;
 public class FhirResourceService {
 
     private static final Logger log = LoggerFactory.getLogger(FhirResourceService.class);
-    private static final String DEFAULT_TENANT = "default";
 
     private final SchemaRoutingRepository schemaRoutingRepository;
     private final FhirContextFactory contextFactory;
@@ -129,7 +129,7 @@ public class FhirResourceService {
                 .content(updatedJson)
                 .lastUpdated(now)
                 .createdAt(now)
-                .tenantId(DEFAULT_TENANT)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .build();
 
         schemaRoutingRepository.save(resourceType, entity);
@@ -151,7 +151,7 @@ public class FhirResourceService {
     public ResourceResult read(String resourceType, String resourceId, FhirVersion version) {
         FhirResourceEntity entity = schemaRoutingRepository
                 .findByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
-                        DEFAULT_TENANT, resourceType, resourceId)
+                        TenantContext.getCurrentTenantId(), resourceType, resourceId)
                 .orElseThrow(() -> new ResourceNotFoundException(resourceType, resourceId));
 
         if (entity.getIsDeleted()) {
@@ -180,7 +180,7 @@ public class FhirResourceService {
     public ResourceResult vread(String resourceType, String resourceId, int versionId, FhirVersion version) {
         FhirResourceEntity entity = schemaRoutingRepository
                 .findByTenantIdAndResourceTypeAndResourceIdAndVersionId(
-                        DEFAULT_TENANT, resourceType, resourceId, versionId)
+                        TenantContext.getCurrentTenantId(), resourceType, resourceId, versionId)
                 .orElseThrow(() -> new ResourceNotFoundException(resourceType, resourceId));
 
         return new ResourceResult(
@@ -207,7 +207,7 @@ public class FhirResourceService {
         IParser parser = context.newJsonParser();
 
         // Get current version to determine new version number
-        Integer maxVersion = schemaRoutingRepository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
+        Integer maxVersion = schemaRoutingRepository.findMaxVersionId(TenantContext.getCurrentTenantId(), resourceType, resourceId);
         int newVersionId = (maxVersion != null ? maxVersion : 0) + 1;
         boolean isCreate = (maxVersion == null || maxVersion == 0);
 
@@ -232,7 +232,7 @@ public class FhirResourceService {
 
         // Mark all existing versions as not current
         if (!isCreate) {
-            schemaRoutingRepository.markAllVersionsNotCurrent(DEFAULT_TENANT, resourceType, resourceId);
+            schemaRoutingRepository.markAllVersionsNotCurrent(TenantContext.getCurrentTenantId(), resourceType, resourceId);
         }
 
         // Create new version entity
@@ -246,7 +246,7 @@ public class FhirResourceService {
                 .content(updatedJson)
                 .lastUpdated(now)
                 .createdAt(isCreate ? now : null)
-                .tenantId(DEFAULT_TENANT)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .build();
 
         schemaRoutingRepository.save(resourceType, entity);
@@ -268,17 +268,17 @@ public class FhirResourceService {
     public ResourceResult delete(String resourceType, String resourceId, FhirVersion version) {
         // Check if resource exists
         boolean exists = schemaRoutingRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
-                DEFAULT_TENANT, resourceType, resourceId);
+                TenantContext.getCurrentTenantId(), resourceType, resourceId);
 
         if (!exists) {
             throw new ResourceNotFoundException(resourceType, resourceId);
         }
 
         // Get current version
-        Integer maxVersion = schemaRoutingRepository.findMaxVersionId(DEFAULT_TENANT, resourceType, resourceId);
+        Integer maxVersion = schemaRoutingRepository.findMaxVersionId(TenantContext.getCurrentTenantId(), resourceType, resourceId);
 
         // Soft delete
-        schemaRoutingRepository.softDelete(DEFAULT_TENANT, resourceType, resourceId, Instant.now());
+        schemaRoutingRepository.softDelete(TenantContext.getCurrentTenantId(), resourceType, resourceId, Instant.now());
 
         log.info("Deleted {}/{}", resourceType, resourceId);
 
@@ -335,7 +335,7 @@ public class FhirResourceService {
 
         // Use the custom search method with parameters
         Page<FhirResourceEntity> page = schemaRoutingRepository.searchWithParams(
-                DEFAULT_TENANT, resourceType, params, pageable);
+                TenantContext.getCurrentTenantId(), resourceType, params, pageable);
 
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
@@ -381,7 +381,7 @@ public class FhirResourceService {
 
         List<FhirResourceEntity> versions = schemaRoutingRepository
                 .findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
-                        DEFAULT_TENANT, resourceType, resourceId);
+                        TenantContext.getCurrentTenantId(), resourceType, resourceId);
 
         if (versions.isEmpty()) {
             throw new ResourceNotFoundException(resourceType, resourceId);
@@ -430,7 +430,7 @@ public class FhirResourceService {
     @Transactional(readOnly = true)
     public boolean exists(String resourceType, String resourceId) {
         return schemaRoutingRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
-                DEFAULT_TENANT, resourceType, resourceId);
+                TenantContext.getCurrentTenantId(), resourceType, resourceId);
     }
 
     private void setResourceId(IBaseResource resource, String resourceType, String resourceId) {

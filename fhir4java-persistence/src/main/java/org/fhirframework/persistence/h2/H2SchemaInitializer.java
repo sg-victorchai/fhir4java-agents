@@ -54,6 +54,9 @@ public class H2SchemaInitializer {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
 
+            // Create fhir_tenant table in the shared FHIR schema
+            createTenantTable(stmt);
+
             for (String schemaName : DEDICATED_SCHEMAS) {
                 createDedicatedSchemaTables(stmt, schemaName);
             }
@@ -62,6 +65,40 @@ public class H2SchemaInitializer {
         } catch (Exception e) {
             log.warn("Could not initialize H2 dedicated schemas (not H2?): {}", e.getMessage());
         }
+    }
+
+    /**
+     * Creates the fhir_tenant mapping table in the shared FHIR schema.
+     * Mirrors V5__add_tenant_mapping_table.sql for H2.
+     */
+    private void createTenantTable(Statement stmt) throws Exception {
+        String createTenantTable = """
+            CREATE TABLE IF NOT EXISTS FHIR.fhir_tenant (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                external_id UUID NOT NULL UNIQUE,
+                internal_id VARCHAR(64) NOT NULL UNIQUE,
+                tenant_code VARCHAR(50),
+                tenant_name VARCHAR(255),
+                description CLOB,
+                enabled BOOLEAN DEFAULT TRUE,
+                settings CLOB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """;
+        stmt.execute(createTenantTable);
+
+        createIndexSafe(stmt, "CREATE INDEX IF NOT EXISTS idx_h2_tenant_external_id ON FHIR.fhir_tenant(external_id)");
+        createIndexSafe(stmt, "CREATE INDEX IF NOT EXISTS idx_h2_tenant_code ON FHIR.fhir_tenant(tenant_code)");
+
+        // Seed default tenant
+        stmt.execute("""
+            MERGE INTO FHIR.fhir_tenant (external_id, internal_id, tenant_code, tenant_name, enabled)
+            KEY (internal_id)
+            VALUES ('00000000-0000-0000-0000-000000000000', 'default', 'DEFAULT', 'Default Tenant', true)
+            """);
+
+        log.debug("Created fhir_tenant table in FHIR schema");
     }
 
     /**

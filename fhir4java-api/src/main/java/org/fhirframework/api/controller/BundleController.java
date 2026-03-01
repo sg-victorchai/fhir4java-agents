@@ -6,6 +6,7 @@ import org.fhirframework.api.config.FhirMediaType;
 import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.exception.FhirException;
+import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.BundleProcessorService;
 import org.fhirframework.plugin.OperationType;
@@ -106,6 +107,7 @@ public class BundleController {
         PluginContext pluginContext = PluginContext.builder()
                 .operationType(OperationType.BATCH)
                 .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .inputResource(bundle)
                 .build();
 

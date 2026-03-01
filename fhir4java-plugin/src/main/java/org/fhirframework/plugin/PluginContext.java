@@ -150,10 +150,6 @@ public class PluginContext {
         this.outputResource = resource;
     }
 
-    public void setTenantId(String tenantId) {
-        this.tenantId = tenantId;
-    }
-
     public void setUserId(String userId) {
         this.userId = userId;
     }
