@@ -56,12 +56,31 @@ public interface CachePlugin extends FhirPlugin {
     }
 
     /**
-     * Generate a cache key for the given context.
+     * Generate a resource-specific cache key for the given context.
+     * <p>
+     * Implementations should NOT include the tenant ID in the key;
+     * tenant scoping is handled automatically by {@link #tenantScopedCacheKey(PluginContext)}.
+     * </p>
      *
      * @param context The plugin context
      * @return Cache key, or empty if not cacheable
      */
     Optional<String> generateCacheKey(PluginContext context);
+
+    /**
+     * Generate a tenant-scoped cache key by prefixing the resource-specific
+     * key with the tenant ID from the plugin context.
+     * <p>
+     * This ensures cache entries are isolated between tenants automatically.
+     * </p>
+     *
+     * @param context The plugin context
+     * @return Tenant-scoped cache key, or empty if not cacheable
+     */
+    default Optional<String> tenantScopedCacheKey(PluginContext context) {
+        return generateCacheKey(context)
+                .map(key -> context.getTenantId().orElse("default") + ":" + key);
+    }
 
     /**
      * Get a cached resource.
@@ -95,6 +114,13 @@ public interface CachePlugin extends FhirPlugin {
     void invalidateByType(String resourceType);
 
     /**
+     * Invalidate all cache entries for a specific tenant.
+     *
+     * @param tenantId The tenant ID whose cache entries should be evicted
+     */
+    void invalidateByTenant(String tenantId);
+
+    /**
      * Get the default TTL for cache entries.
      */
     default Duration getDefaultTtl() {
@@ -107,7 +133,7 @@ public interface CachePlugin extends FhirPlugin {
         if (context.getOperationType() == OperationType.READ ||
             context.getOperationType() == OperationType.VREAD) {
 
-            Optional<String> cacheKey = generateCacheKey(context);
+            Optional<String> cacheKey = tenantScopedCacheKey(context);
             if (cacheKey.isPresent()) {
                 Optional<IBaseResource> cached = get(cacheKey.get());
                 if (cached.isPresent()) {
@@ -131,7 +157,7 @@ public interface CachePlugin extends FhirPlugin {
             !context.hasAttribute(CACHE_HIT_ATTRIBUTE)) {
 
             context.getOutputResource().ifPresent(resource -> {
-                generateCacheKey(context).ifPresent(key ->
+                tenantScopedCacheKey(context).ifPresent(key ->
                         put(key, resource, getDefaultTtl())
                 );
             });
@@ -139,7 +165,7 @@ public interface CachePlugin extends FhirPlugin {
 
         // Invalidate cache on write operations
         if (opType.isWriteOperation()) {
-            generateCacheKey(context).ifPresent(this::invalidate);
+            tenantScopedCacheKey(context).ifPresent(this::invalidate);
         }
 
         return PluginResult.continueProcessing();

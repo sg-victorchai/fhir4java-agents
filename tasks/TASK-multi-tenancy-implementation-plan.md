@@ -1,9 +1,9 @@
 # Multi-Tenancy Implementation Plan
 
 **Date:** 2026-02-27 (updated: 2026-03-01)
-**Status:** All Phases (1-6) Implemented & Tested
+**Status:** All Phases (1-7) Implemented & Tested
 **Priority:** High
-**Estimated Phases:** 6 (All phases complete)
+**Estimated Phases:** 7 (All phases complete)
 
 ---
 
@@ -581,6 +581,50 @@ Feature: Multi-Tenant Resource Isolation
 
 ---
 
+### Phase 7: Plugin Tenant Isolation Hardening
+
+**Goal:** Enforce tenant isolation in the plugin execution pipeline, fixing async ThreadLocal context loss and preventing cross-tenant data leakage through plugins.
+
+#### 7.1 Problem Statement
+
+The plugin system has several vulnerabilities that can cause cross-tenant data leakage:
+
+1. **Async plugin ThreadLocal loss**: `PluginOrchestrator` dispatches async plugins to a fixed thread pool (`asyncExecutor`) without propagating `TenantContext`. The `TenantFilter` clears the ThreadLocal before async plugins finish executing.
+2. **Thread pool contamination**: Reused pool threads can retain stale `TenantContext` values from previous requests.
+3. **Silent fallback to "default" tenant**: `TenantContext.getCurrentTenantId()` returns `"default"` when unset — no warning, no error. An async plugin calling `FhirResourceService` would silently query the default tenant.
+4. **Mutable `PluginContext.tenantId`**: The public `setTenantId()` allows any plugin to accidentally change the tenant for downstream plugins in the same chain.
+5. **CachePlugin cross-tenant risk**: `generateCacheKey()` is abstract with no enforcement to include tenantId. Implementations could serve cached data from the wrong tenant.
+
+#### 7.2 Propagate TenantContext to Async Threads ✅ Done
+**File:** `fhir4java-plugin/src/main/java/org/fhirframework/plugin/PluginOrchestrator.java`
+
+- [x] Add `wrapWithTenantContext(Runnable)` helper that captures tenantId from calling thread, sets it on the async thread, and clears it in `finally`
+- [x] Apply wrapper in `executeAfter()` async section
+- [x] Apply wrapper in `executeOnError()` async section
+- [x] Thread pool threads are cleaned up after each task (no stale tenant context)
+
+#### 7.3 Make PluginContext.tenantId Immutable ✅ Done
+**File:** `fhir4java-plugin/src/main/java/org/fhirframework/plugin/PluginContext.java`
+
+- [x] Remove public `setTenantId(String)` method
+- [x] tenantId is set only via Builder during construction (all controllers already use builder pattern)
+- [x] Prevents plugins from accidentally changing tenant for downstream plugins
+
+#### 7.4 Enforce Tenant-Scoped Cache Keys ✅ Done
+**File:** `fhir4java-plugin/src/main/java/org/fhirframework/plugin/cache/CachePlugin.java`
+
+- [x] Add `tenantScopedCacheKey(PluginContext)` default method that prefixes cache keys with tenant ID
+- [x] Update default `executeBefore()` to use tenant-scoped keys for cache lookups
+- [x] Update default `executeAfter()` to use tenant-scoped keys for cache writes and invalidation
+- [x] Add `invalidateByTenant(String)` method for bulk tenant cache eviction
+
+#### 7.5 Tests ✅ Done
+
+- [x] `PluginOrchestratorTenantTest` — Unit tests for async tenant propagation (4 tests)
+- [x] `CachePluginTenantTest` — Unit tests for tenant-scoped cache keys (3 tests)
+
+---
+
 ## 5. File Change Summary
 
 ### New Files to Create
@@ -606,6 +650,8 @@ Feature: Multi-Tenant Resource Isolation
 | 17 | `fhir4java-persistence/src/test/java/.../TenantManagementServiceTest.java` | persistence | 5 |
 | 18 | `fhir4java-persistence/src/test/java/.../TenantServiceCacheTtlTest.java` | persistence | 6.1 |
 | 19 | Various test files (see Phase 4) | various | 4 |
+| 20 | `fhir4java-plugin/src/test/java/.../PluginOrchestratorTenantTest.java` | plugin | 7 |
+| 21 | `fhir4java-plugin/src/test/java/.../CachePluginTenantTest.java` | plugin | 7 |
 
 ### Existing Files to Modify
 
@@ -622,6 +668,9 @@ Feature: Multi-Tenant Resource Isolation
 | 9 | `TenantFilter.java` | api | 5 | Skip `/api/admin` paths in `shouldNotFilter()` |
 | 10 | `TenantService.java` | persistence | 6.1 | TTL-based CacheEntry, configurable TTL, getCacheSize() |
 | 11 | `MetadataController.java` | api | 6.2 | Inject TenantProperties, add tenant info + extension to CapabilityStatement |
+| 12 | `PluginOrchestrator.java` | plugin | 7 | Add `wrapWithTenantContext()`, apply to async dispatches |
+| 13 | `PluginContext.java` | plugin | 7 | Remove `setTenantId()` setter (immutable after construction) |
+| 14 | `CachePlugin.java` | plugin | 7 | Add `tenantScopedCacheKey()`, `invalidateByTenant()`, update defaults |
 
 ---
 
@@ -630,7 +679,7 @@ Feature: Multi-Tenant Resource Isolation
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | Breaking existing single-tenant behavior | Medium | High | Feature flag (`fhir4java.tenant.enabled`), comprehensive backward compat tests |
-| ThreadLocal leak in async operations | Medium | Medium | Clear in filter `finally`, document async limitations |
+| ThreadLocal leak in async operations | Low | Medium | Mitigated in Phase 7: `wrapWithTenantContext()` propagates and cleans up tenant on async threads |
 | Performance impact of tenant lookup per request | Low | Medium | Cache tenant mappings, use `@Cacheable` |
 | Forgetting tenant filter in new custom queries | Medium | High | Consider Hibernate `@TenantId` (Phase 6.5), code review checklist |
 | H2 test compatibility with new migration | Medium | Low | Conditional migration or H2-specific DDL in test config |
@@ -662,9 +711,14 @@ FhirTenantRepository
                                                               Phase 5 (Management API) ✅
                                                                        ↓
                                                               Phase 6 (Advanced) ✅ (6.1, 6.2)
+                                                                       ↓
+                                                              Phase 7 (Plugin Isolation) ✅
+                                                              - Async TenantContext propagation
+                                                              - Immutable PluginContext.tenantId
+                                                              - Tenant-scoped cache keys
 ```
 
-All 6 phases are **complete**. Phases 6.3-6.5 are future enhancements (rate limiting, data migration, Hibernate @TenantId).
+All 7 phases are **complete**. Phases 6.3-6.5 are future enhancements (rate limiting, data migration, Hibernate @TenantId).
 
 ### Complete Test Results Summary (All Phases)
 
@@ -680,4 +734,6 @@ All 6 phases are **complete**. Phases 6.3-6.5 are future enhancements (rate limi
 | TenantManagementIntegrationTest | server | 12 | 5 | ✅ All pass |
 | multi-tenancy.feature (BDD) | server | 10 | 4 | ✅ All pass |
 | tenant-management.feature (BDD) | server | 8 | 5 | ✅ All pass |
-| **Total** | | **120** | | **✅ All pass** |
+| PluginOrchestratorTenantTest | plugin | 4 | 7 | ✅ All pass |
+| CachePluginTenantTest | plugin | 3 | 7 | ✅ All pass |
+| **Total** | | **127** | | **✅ All pass** |
