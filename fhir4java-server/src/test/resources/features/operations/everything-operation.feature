@@ -27,3 +27,16 @@ Feature: $everything Operation
     Then the response status should be 200
     And the response should be a Bundle
     And the Bundle should be of type searchset
+
+  # ========== Extended scenarios (Phase 3) ==========
+
+  Scenario: Get everything with _since parameter
+    Given a Patient resource exists
+    When I request $everything for the Patient with _since "2020-01-01"
+    Then the response status should be 200
+    And the response should be a Bundle
+    And the Bundle should be of type searchset
+
+  Scenario: Get everything for non-existent Patient returns 404
+    When I request $everything for Patient with ID "non-existent-99999"
+    Then the response status should be 404

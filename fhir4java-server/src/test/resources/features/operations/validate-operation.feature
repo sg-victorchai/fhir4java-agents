@@ -25,3 +25,17 @@ Feature: $validate Operation
     When I validate the Patient resource at instance level
     Then the response status should be 200
     And the response should be an OperationOutcome
+
+  # ========== Extended scenarios (Phase 3) ==========
+
+  Scenario: Validate an Observation resource at type level
+    Given I have a valid Observation resource
+    When I validate the Observation resource at type level
+    Then the response status should be 200
+    And the response should be an OperationOutcome
+
+  Scenario: Validate a Condition resource at type level
+    Given I have a valid Condition resource
+    When I validate the Condition resource at type level
+    Then the response status should be 200
+    And the response should be an OperationOutcome

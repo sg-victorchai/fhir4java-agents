@@ -38,9 +38,14 @@ public class CrudSteps {
 
         response.then().statusCode(201);
         ctx.setLastResponse(response);
-        ctx.setLastCreatedResourceId(ctx.extractResourceId(response.body().asString()));
+        String resourceId = ctx.extractResourceId(response.body().asString());
+        ctx.setLastCreatedResourceId(resourceId);
         ctx.setLastResourceType(resourceType);
         ctx.captureEtag();
+        // Also set Patient-specific ID for backward compatibility with OperationSteps
+        if ("Patient".equals(resourceType)) {
+            ctx.setLastCreatedPatientId(resourceId);
+        }
     }
 
     @Given("the {word} resource is deleted")
