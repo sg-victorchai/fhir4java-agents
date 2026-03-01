@@ -178,6 +178,41 @@ public class CrudSteps {
         ctx.setLastResponse(response);
     }
 
+    @When("I read the created resource via version {string} for {string}")
+    public void iReadTheCreatedResourceViaVersion(String version, String resourceType) {
+        Response response = given()
+                .basePath("")
+                .accept("application/fhir+json")
+                .when()
+                .get("/fhir/" + version + "/" + resourceType + "/" + ctx.getLastCreatedResourceId());
+
+        ctx.setLastResponse(response);
+        ctx.captureEtag();
+    }
+
+    @When("I read the created resource via unversioned path for {string}")
+    public void iReadTheCreatedResourceViaUnversionedPath(String resourceType) {
+        Response response = given()
+                .basePath("")
+                .accept("application/fhir+json")
+                .when()
+                .get("/fhir/" + resourceType + "/" + ctx.getLastCreatedResourceId());
+
+        ctx.setLastResponse(response);
+        ctx.captureEtag();
+    }
+
+    @When("I search via version {string} for {string}")
+    public void iSearchViaVersionFor(String version, String resourceType) {
+        Response response = given()
+                .basePath("")
+                .accept("application/fhir+json")
+                .when()
+                .get("/fhir/" + version + "/" + resourceType);
+
+        ctx.setLastResponse(response);
+    }
+
     // ========== Then Steps ==========
 
     @Then("the response should contain resourceType {string}")
