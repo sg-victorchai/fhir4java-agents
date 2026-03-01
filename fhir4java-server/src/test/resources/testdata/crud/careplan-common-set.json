@@ -1,0 +1,8 @@
+{
+  "resourceType": "CarePlan",
+  "status": "active",
+  "intent": "plan",
+  "subject": {"reference": "Patient/example"},
+  "period": {"start": "2024-01-01", "end": "2024-06-30"},
+  "category": [{"coding": [{"system": "http://hl7.org/fhir/us/core/CodeSystem/careplan-category", "code": "assess-plan"}]}]
+}

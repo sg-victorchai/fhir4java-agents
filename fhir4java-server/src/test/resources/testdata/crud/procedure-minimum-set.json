@@ -1,0 +1,5 @@
+{
+  "resourceType": "Procedure",
+  "status": "completed",
+  "code": {"coding": [{"system": "http://snomed.info/sct", "code": "80146002"}]}
+}

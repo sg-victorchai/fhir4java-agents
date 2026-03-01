@@ -1,0 +1,5 @@
+{
+  "resourceType": "CarePlan",
+  "status": "draft",
+  "intent": "proposal"
+}

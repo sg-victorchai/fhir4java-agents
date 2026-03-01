@@ -1,0 +1,11 @@
+{
+  "resourceType": "CarePlan",
+  "status": "active",
+  "intent": "plan",
+  "title": "Diabetes Management Plan",
+  "description": "Comprehensive care plan for managing Type 2 Diabetes",
+  "subject": {"reference": "Patient/example"},
+  "period": {"start": "2024-01-01", "end": "2024-12-31"},
+  "category": [{"coding": [{"system": "http://hl7.org/fhir/us/core/CodeSystem/careplan-category", "code": "assess-plan"}]}],
+  "activity": [{"plannedActivityReference": {"reference": "#activity1"}}]
+}

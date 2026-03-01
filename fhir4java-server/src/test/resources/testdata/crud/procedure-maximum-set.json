@@ -1,0 +1,11 @@
+{
+  "resourceType": "Procedure",
+  "identifier": [{"system": "http://example.org/proc", "value": "PROC-MAX-001"}],
+  "status": "completed",
+  "category": [{"coding": [{"system": "http://snomed.info/sct", "code": "387713003", "display": "Surgical procedure"}]}],
+  "code": {"coding": [{"system": "http://snomed.info/sct", "code": "80146002", "display": "Appendectomy"}]},
+  "subject": {"reference": "Patient/example"},
+  "occurrenceDateTime": "2024-01-15T14:30:00Z",
+  "performer": [{"actor": {"reference": "Practitioner/example"}}],
+  "note": [{"text": "Laparoscopic appendectomy performed successfully"}]
+}

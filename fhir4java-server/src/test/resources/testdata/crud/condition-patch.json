@@ -1,0 +1,3 @@
+[
+  {"op": "replace", "path": "/clinicalStatus/coding/0/code", "value": "inactive"}
+]

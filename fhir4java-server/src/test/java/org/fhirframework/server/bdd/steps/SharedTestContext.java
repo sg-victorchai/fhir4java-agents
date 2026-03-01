@@ -18,6 +18,9 @@ public class SharedTestContext {
     private String lastCreatedPatientId;
     private String lastCreatedResourceId;
     private String requestBody;
+    private String lastVersionId;
+    private String lastResourceType;
+    private String lastEtag;
 
     public Response getLastResponse() {
         return lastResponse;
@@ -49,6 +52,48 @@ public class SharedTestContext {
 
     public void setRequestBody(String requestBody) {
         this.requestBody = requestBody;
+    }
+
+    public String getLastVersionId() {
+        return lastVersionId;
+    }
+
+    public void setLastVersionId(String lastVersionId) {
+        this.lastVersionId = lastVersionId;
+    }
+
+    public String getLastResourceType() {
+        return lastResourceType;
+    }
+
+    public void setLastResourceType(String lastResourceType) {
+        this.lastResourceType = lastResourceType;
+    }
+
+    public String getLastEtag() {
+        return lastEtag;
+    }
+
+    public void setLastEtag(String lastEtag) {
+        this.lastEtag = lastEtag;
+    }
+
+    /**
+     * Extract the version ID from an ETag header value like {@code W/"1"}.
+     */
+    public String extractVersionId(String etag) {
+        if (etag == null) return null;
+        return etag.replaceAll("W/\"", "").replaceAll("\"", "");
+    }
+
+    /**
+     * Extract and store the ETag from the last response.
+     */
+    public void captureEtag() {
+        if (lastResponse != null) {
+            lastEtag = lastResponse.header("ETag");
+            lastVersionId = extractVersionId(lastEtag);
+        }
     }
 
     /**

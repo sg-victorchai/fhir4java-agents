@@ -1,0 +1,9 @@
+{
+  "resourceType": "Patient",
+  "active": true,
+  "identifier": [{"system": "http://example.org/mrn", "value": "MRN-COMMON-001"}],
+  "name": [{"family": "CommonPatient", "given": ["Jane"]}],
+  "gender": "female",
+  "birthDate": "1985-06-15",
+  "telecom": [{"system": "phone", "value": "555-0100", "use": "home"}]
+}

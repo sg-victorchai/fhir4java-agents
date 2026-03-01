@@ -1,0 +1,12 @@
+{
+  "resourceType": "Observation",
+  "status": "final",
+  "identifier": [{"system": "http://example.org/obs", "value": "OBS-MAX-001"}],
+  "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs"}]}],
+  "code": {"coding": [{"system": "http://loinc.org", "code": "29463-7", "display": "Body Weight"}]},
+  "subject": {"reference": "Patient/example"},
+  "effectiveDateTime": "2024-01-15T10:30:00Z",
+  "valueQuantity": {"value": 75.5, "unit": "kg", "system": "http://unitsofmeasure.org", "code": "kg"},
+  "interpretation": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation", "code": "N"}]}],
+  "note": [{"text": "Measured during routine check-up"}]
+}

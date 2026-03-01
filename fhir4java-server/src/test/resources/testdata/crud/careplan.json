@@ -1,0 +1,6 @@
+{
+  "resourceType": "CarePlan",
+  "status": "active",
+  "intent": "plan",
+  "subject": {"reference": "Patient/example"}
+}
