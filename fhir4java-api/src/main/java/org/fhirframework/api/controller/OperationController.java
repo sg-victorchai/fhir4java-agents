@@ -6,6 +6,7 @@ import org.fhirframework.api.config.FhirMediaType;
 import org.fhirframework.api.interceptor.FhirVersionFilter;
 import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.guard.InteractionGuard;
+import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.service.OperationService;
 import org.fhirframework.persistence.service.OperationService.OperationResult;
@@ -133,6 +134,7 @@ public class OperationController {
                 .operationType(OperationType.OPERATION)
                 .operationCode(operation)
                 .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .build();
 
         // Execute BEFORE plugins
@@ -238,6 +240,7 @@ public class OperationController {
                 .operationCode(operation)
                 .resourceType(resourceType)
                 .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .build();
 
         // Execute BEFORE plugins
@@ -348,6 +351,7 @@ public class OperationController {
                 .resourceType(resourceType)
                 .resourceId(id)
                 .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
                 .build();
 
         // Execute BEFORE plugins

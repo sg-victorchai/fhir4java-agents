@@ -8,6 +8,8 @@ import org.fhirframework.core.context.FhirContextFactory;
 import org.fhirframework.core.exception.FhirException;
 import org.fhirframework.core.exception.InteractionDisabledException;
 import org.fhirframework.core.exception.ResourceNotFoundException;
+import org.fhirframework.core.exception.TenantDisabledException;
+import org.fhirframework.core.exception.TenantNotFoundException;
 import org.fhirframework.core.exception.VersionNotSupportedException;
 import org.fhirframework.core.version.FhirVersion;
 import jakarta.servlet.http.HttpServletRequest;
@@ -81,6 +83,26 @@ public class FhirExceptionHandler {
                 ex.getResourceType(), ex.getInteraction().getCode());
 
         return buildResponse(outcome, HttpStatus.METHOD_NOT_ALLOWED, request);
+    }
+
+    @ExceptionHandler(TenantNotFoundException.class)
+    public ResponseEntity<String> handleTenantNotFound(TenantNotFoundException ex,
+                                                       HttpServletRequest request) {
+        log.warn("Tenant not found: {}", ex.getMessage());
+
+        OperationOutcome outcome = OperationOutcomeBuilder.badRequest(ex.getMessage());
+        return buildResponse(outcome, HttpStatus.BAD_REQUEST, request);
+    }
+
+    @ExceptionHandler(TenantDisabledException.class)
+    public ResponseEntity<String> handleTenantDisabled(TenantDisabledException ex,
+                                                       HttpServletRequest request) {
+        log.warn("Tenant disabled: {}", ex.getMessage());
+
+        OperationOutcome outcome = new OperationOutcomeBuilder()
+                .error(IssueType.FORBIDDEN, ex.getMessage(), ex.getDiagnostics())
+                .build();
+        return buildResponse(outcome, HttpStatus.FORBIDDEN, request);
     }
 
     @ExceptionHandler(FhirException.class)
