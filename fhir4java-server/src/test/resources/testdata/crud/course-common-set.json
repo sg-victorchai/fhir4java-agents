@@ -1,0 +1,8 @@
+{
+  "resourceType": "Course",
+  "status": "active",
+  "code": {"coding": [{"system": "http://example.org/training", "code": "BLS-101", "display": "Basic Life Support"}]},
+  "title": "Basic Life Support Certification",
+  "category": {"coding": [{"system": "http://example.org/course-category", "code": "clinical"}]},
+  "instructor": {"reference": "Practitioner/example"}
+}

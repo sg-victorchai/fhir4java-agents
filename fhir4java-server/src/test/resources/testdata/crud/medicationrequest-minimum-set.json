@@ -1,0 +1,7 @@
+{
+  "resourceType": "MedicationRequest",
+  "status": "active",
+  "intent": "order",
+  "medication": {"concept": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "1049502"}]}},
+  "subject": {"reference": "Patient/example"}
+}

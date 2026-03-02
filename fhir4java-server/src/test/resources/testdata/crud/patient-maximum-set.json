@@ -1,0 +1,27 @@
+{
+  "resourceType": "Patient",
+  "active": true,
+  "identifier": [
+    {"system": "http://example.org/mrn", "value": "MRN-MAX-001"},
+    {"system": "http://example.org/ssn", "value": "999-99-9999"}
+  ],
+  "name": [
+    {"use": "official", "family": "MaxPatient", "given": ["Alice", "Marie"], "prefix": ["Ms."]},
+    {"use": "nickname", "given": ["Ali"]}
+  ],
+  "gender": "female",
+  "birthDate": "1975-03-22",
+  "deceasedBoolean": false,
+  "telecom": [
+    {"system": "phone", "value": "555-0200", "use": "home"},
+    {"system": "email", "value": "alice@example.org", "use": "work"}
+  ],
+  "address": [
+    {
+      "use": "home", "type": "physical",
+      "line": ["123 Main St", "Apt 4B"],
+      "city": "Springfield", "state": "IL", "postalCode": "62701", "country": "US"
+    }
+  ],
+  "maritalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus", "code": "M"}]}
+}

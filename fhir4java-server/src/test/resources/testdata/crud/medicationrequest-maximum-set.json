@@ -1,0 +1,12 @@
+{
+  "resourceType": "MedicationRequest",
+  "identifier": [{"system": "http://example.org/rx", "value": "RX-MAX-001"}],
+  "status": "active",
+  "intent": "order",
+  "medication": {"concept": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "1049502", "display": "Acetaminophen 325 MG"}]}},
+  "subject": {"reference": "Patient/example"},
+  "authoredOn": "2024-01-15",
+  "requester": {"reference": "Practitioner/example"},
+  "dosageInstruction": [{"text": "Take 2 tablets every 6 hours as needed", "timing": {"repeat": {"frequency": 4, "period": 1, "periodUnit": "d"}}}],
+  "note": [{"text": "Do not exceed 8 tablets per day"}]
+}

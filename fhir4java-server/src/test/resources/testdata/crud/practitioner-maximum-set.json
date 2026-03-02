@@ -1,0 +1,11 @@
+{
+  "resourceType": "Practitioner",
+  "active": true,
+  "identifier": [{"system": "http://example.org/npi", "value": "NPI-MAX-001"}],
+  "name": [{"use": "official", "family": "MaxDoc", "given": ["Emily", "Rose"], "prefix": ["Dr."]}],
+  "gender": "female",
+  "birthDate": "1980-04-10",
+  "telecom": [{"system": "email", "value": "emily@hospital.org", "use": "work"}],
+  "address": [{"use": "work", "line": ["789 Medical Dr"], "city": "Medtown", "state": "NY", "postalCode": "10001"}],
+  "qualification": [{"code": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v2-0360", "code": "MD"}]}}]
+}

@@ -1,0 +1,9 @@
+{
+  "resourceType": "MedicationRequest",
+  "status": "active",
+  "intent": "order",
+  "medication": {"concept": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "1049502", "display": "Acetaminophen 325 MG"}]}},
+  "subject": {"reference": "Patient/example"},
+  "authoredOn": "2024-01-15",
+  "requester": {"reference": "Practitioner/example"}
+}

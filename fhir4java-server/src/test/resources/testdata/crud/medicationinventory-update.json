@@ -1,0 +1,6 @@
+{
+  "resourceType": "MedicationInventory",
+  "status": "active",
+  "medication": {"concept": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "1049502", "display": "Acetaminophen 325 MG"}]}},
+  "quantity": {"value": 85, "unit": "tablets"}
+}

@@ -1,0 +1,7 @@
+{
+  "resourceType": "Practitioner",
+  "active": true,
+  "identifier": [{"system": "http://example.org/npi", "value": "NPI-COMMON-001"}],
+  "name": [{"family": "CommonDoc", "given": ["James"]}],
+  "gender": "male"
+}

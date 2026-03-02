@@ -1,0 +1,5 @@
+{
+  "resourceType": "Course",
+  "status": "planned",
+  "code": {"coding": [{"system": "http://example.org/training", "code": "BLS-101"}]}
+}
