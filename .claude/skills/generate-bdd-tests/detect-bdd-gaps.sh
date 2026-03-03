@@ -5,13 +5,13 @@
 # Cross-references YAML resource configs against BDD feature files to identify
 # untested resources, search parameters, operations, and HTTP protocol scenarios.
 #
-# Usage: ./scripts/detect-bdd-gaps.sh [--verbose]
+# Usage: ./.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh [--verbose]
 # ==============================================================================
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 RESOURCE_CONFIG_DIR="$PROJECT_ROOT/fhir4java-server/src/main/resources/fhir-config/resources"
 FEATURES_DIR="$PROJECT_ROOT/fhir4java-server/src/test/resources/features"

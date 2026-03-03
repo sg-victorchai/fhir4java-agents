@@ -758,7 +758,7 @@ fhir4java-server/src/test/resources/testdata/
 ### Auto-detection support (Phase 7)
 ```
 .claude/skills/generate-bdd-tests/SKILL.md
-scripts/detect-bdd-gaps.sh
+.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh
 ```
 
 ---
@@ -773,7 +773,7 @@ scripts/detect-bdd-gaps.sh
 3. A resource-specific search param in a YAML config with no scenario in
    `features/search/` that uses that param name
 
-### Detection script: `scripts/detect-bdd-gaps.sh`
+### Detection script: `.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -801,7 +801,7 @@ exit $((gaps > 0))
 ```
 
 Flow when invoked:
-1. Run `scripts/detect-bdd-gaps.sh` to get gap list
+1. Run `.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh` to get gap list
 2. For each gap: generate a minimal `.feature` file and stub step definitions
 3. Report: "Generated N files covering X new resources / Y new operations"
 
