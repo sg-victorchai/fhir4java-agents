@@ -6,7 +6,7 @@ Automatically detect BDD test coverage gaps and generate feature files and step 
 
 This skill implements the auto-detection architecture from the BDD test implementation plan (Section 8). When invoked, it:
 
-1. **Runs** `scripts/detect-bdd-gaps.sh` to identify untested resources, operations, and search parameters
+1. **Runs** `.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh` to identify untested resources, operations, and search parameters
 2. **Generates** minimal `.feature` files and stub step definitions for each gap
 3. **Reports** what was generated: "Generated N files covering X new resources / Y new operations"
 
@@ -23,7 +23,7 @@ When this skill is invoked, follow these steps **automatically** (do not prompt 
 ### Step 1: Run Gap Detection
 
 ```bash
-./scripts/detect-bdd-gaps.sh --verbose 2>&1
+./.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh --verbose 2>&1
 ```
 
 Parse the output to identify:
@@ -199,5 +199,5 @@ searchParameters:
 ./mvnw test -pl fhir4java-server -Dtest=CucumberIT -Dcucumber.filter.tags="@crud"
 
 # Re-run gap detection to verify coverage
-./scripts/detect-bdd-gaps.sh
+./.claude/skills/generate-bdd-tests/detect-bdd-gaps.sh
 ```
