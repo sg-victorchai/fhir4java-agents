@@ -1,3 +1,4 @@
+@operations @R5
 Feature: Batch and Transaction Bundle Processing
   As a FHIR API consumer
   I want to submit batch and transaction bundles

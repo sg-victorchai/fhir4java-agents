@@ -1,4 +1,4 @@
-@validation @validation-modes
+@validation @validation-modes @R5
 Feature: Profile Validation Modes
   As a FHIR server administrator
   I want to configure validation strictness

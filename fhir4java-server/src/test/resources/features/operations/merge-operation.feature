@@ -1,4 +1,4 @@
-@operations
+@operations @R5
 Feature: $merge Operation
   As a FHIR client
   I want to merge two Patient resources

@@ -98,10 +98,14 @@
     <build>
         <plugins>
             <!-- FHIR Resource Code Generation Plugin -->
+            <!-- Note: Run './mvnw install -pl fhir4java-codegen' first if building from clean -->
             <plugin>
                 <groupId>org.fhirframework</groupId>
                 <artifactId>fhir4java-codegen</artifactId>
                 <version>${project.version}</version>
+                <configuration>
+                    <skip>${fhir.codegen.skip}</skip>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>

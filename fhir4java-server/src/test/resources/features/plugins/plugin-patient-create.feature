@@ -1,3 +1,4 @@
+@plugins @R5
 Feature: Patient CREATE Plugin
   As a FHIR server operator
   I want business logic plugins to execute during Patient creation

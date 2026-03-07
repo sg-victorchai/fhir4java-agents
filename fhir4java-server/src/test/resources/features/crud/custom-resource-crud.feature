@@ -1,4 +1,4 @@
-@crud @custom
+@crud @custom @R5
 Feature: Custom Resource CRUD Lifecycle
   As a FHIR API consumer
   I want to perform CRUD operations on custom FHIR resources

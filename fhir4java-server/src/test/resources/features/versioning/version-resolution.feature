@@ -1,3 +1,4 @@
+@versioning @R5
 Feature: FHIR Version Resolution
   As a FHIR API consumer
   I want the server to resolve FHIR versions from request paths

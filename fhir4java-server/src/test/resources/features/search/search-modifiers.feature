@@ -1,4 +1,4 @@
-@search
+@search @R5
 Feature: Search Parameter Modifiers
   As a FHIR API consumer
   I want to use search modifiers like :exact, :contains, :missing, :not

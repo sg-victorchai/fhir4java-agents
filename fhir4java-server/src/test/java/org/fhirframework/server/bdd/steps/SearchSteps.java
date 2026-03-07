@@ -158,4 +158,27 @@ public class SearchSteps {
         ctx.getLastResponse().then()
                 .body("link.find { it.relation == 'next' }", notNullValue());
     }
+    
+    //Made changes on 04 Mar 2026
+    //moved over from ConformanceResourceSteps since it also applies to search results
+    //The step theBundleShouldHaveAtMostEntries is removed since it is already defined in SearchSteps
+    @Then("the Bundle should have total greater than {int}")
+    public void theBundleShouldHaveTotalGreaterThan(int total) {
+        ctx.getLastResponse().then()
+                .body("total", greaterThan(total));
+    }
+
+    @Then("the Bundle should contain entry with resource id {string}")
+    public void theBundleShouldContainEntryWithResourceId(String id) {
+        ctx.getLastResponse().then()
+                .body("entry.find { it.resource.id == '" + id + "' }", notNullValue());
+    }
+
+    @Then("the Bundle should have pagination links")
+    public void theBundleShouldHavePaginationLinks() {
+        ctx.getLastResponse().then()
+                .body("link", notNullValue())
+                .body("link.find { it.relation == 'self' }", notNullValue())
+                .body("link.find { it.relation == 'first' }", notNullValue());
+    }
 }

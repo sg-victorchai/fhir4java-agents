@@ -72,7 +72,7 @@ public class SearchParameterRegistry {
             loadSearchParametersForVersion(version);
         }
 
-        logSummary();
+        //logSummary();
     }
 
     private void loadSearchParametersForVersion(FhirVersion version) {
@@ -112,7 +112,7 @@ public class SearchParameterRegistry {
             // This is necessary because HAPI's SearchParameter.base uses an enum
             // that doesn't support custom resource types like "MedicationInventory"
             List<String> baseTypes = extractBaseTypesFromJson(jsonContent);
-            log.debug("Extracted base types from {}: {}", filename, baseTypes);
+            log.trace("Extracted base types from {}: {}", filename, baseTypes);
 
             if (baseTypes.isEmpty()) {
                 log.warn("Skipping search parameter {} - no base resource types", filename);
@@ -130,7 +130,7 @@ public class SearchParameterRegistry {
                     log.warn("Failed to parse search parameter from JSON: {}", filename);
                     return;
                 }
-                log.debug("Parsed custom resource search parameter '{}' from JSON", sp.getCode());
+                log.trace("Parsed custom resource search parameter '{}' from JSON", sp.getCode());
             } else {
                 // For standard resources, use HAPI parser
                 sp = parser.parseResource(SearchParameter.class, new ByteArrayInputStream(content));
@@ -148,7 +148,7 @@ public class SearchParameterRegistry {
                             .computeIfAbsent(resourceType, k -> new ArrayList<>())
                             .add(sp);
 
-                    log.info("Registered search parameter '{}' for resource type '{}'",
+                    log.trace("Registered search parameter '{}' for resource type '{}'",
                             sp.getCode(), resourceType);
 
                     // Add to lookup cache

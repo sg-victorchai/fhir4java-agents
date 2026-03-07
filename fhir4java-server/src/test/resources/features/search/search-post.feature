@@ -1,4 +1,4 @@
-@search
+@search @R5
 Feature: POST-based Search
   As a FHIR API consumer
   I want to search via POST to /{resourceType}/_search

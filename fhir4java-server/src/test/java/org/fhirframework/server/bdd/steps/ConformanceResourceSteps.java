@@ -88,6 +88,7 @@ public class ConformanceResourceSteps {
                 .body("id", equalTo(id));
     }
 
+    /*
     @Then("the Bundle should have total greater than {int}")
     public void theBundleShouldHaveTotalGreaterThan(int total) {
         ctx.getLastResponse().then()
@@ -113,7 +114,7 @@ public class ConformanceResourceSteps {
                 .body("link.find { it.relation == 'self' }", notNullValue())
                 .body("link.find { it.relation == 'first' }", notNullValue());
     }
-
+   */
     @Then("the CapabilityStatement should include resource type {string}")
     public void theCapabilityStatementShouldIncludeResourceType(String resourceType) {
         ctx.getLastResponse().then()

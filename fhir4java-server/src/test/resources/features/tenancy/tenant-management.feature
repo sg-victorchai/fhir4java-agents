@@ -1,4 +1,4 @@
-@tenant-management
+@tenant-management @R5
 Feature: Tenant Management API
 
   Background:

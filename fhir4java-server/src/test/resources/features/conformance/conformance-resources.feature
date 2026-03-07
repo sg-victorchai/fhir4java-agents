@@ -1,3 +1,4 @@
+@conformance @R5
 Feature: FHIR Conformance Resources
   As a FHIR API consumer
   I want to query conformance resources (StructureDefinition, SearchParameter, OperationDefinition)

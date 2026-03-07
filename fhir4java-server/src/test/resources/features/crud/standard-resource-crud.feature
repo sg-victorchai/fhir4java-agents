@@ -1,4 +1,4 @@
-@crud
+@crud @R5
 Feature: Standard Resource CRUD Lifecycle
   As a FHIR API consumer
   I want to perform CRUD operations on standard FHIR resources

@@ -1,4 +1,4 @@
-@validation @http-422 @phase4
+@validation @http-422 @phase4 @R5
 Feature: HTTP 422 Validation Error Handling
   As a FHIR API client
   I want validation errors to return HTTP 422 Unprocessable Entity

@@ -1,4 +1,4 @@
-@http
+@http @R5
 Feature: Content Negotiation
   As a FHIR API consumer
   I want the server to respect Accept headers

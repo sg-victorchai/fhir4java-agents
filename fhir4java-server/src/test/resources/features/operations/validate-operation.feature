@@ -1,3 +1,4 @@
+@operations @R5
 Feature: $validate Operation
   As a FHIR client
   I want to validate FHIR resources

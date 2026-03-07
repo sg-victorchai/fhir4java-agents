@@ -1,4 +1,4 @@
-@search
+@search @R5
 Feature: Patient Search with Allowlist Enforcement
   As a FHIR API consumer
   I want to search for Patient resources using allowlisted parameters

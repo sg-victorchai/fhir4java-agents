@@ -1,4 +1,4 @@
-@validation @profile-validator @phase1
+@validation @profile-validator @phase1 @R5
 Feature: Profile Validator Initialization
   As a FHIR server operator
   I want the ProfileValidator to initialize correctly with all dependencies

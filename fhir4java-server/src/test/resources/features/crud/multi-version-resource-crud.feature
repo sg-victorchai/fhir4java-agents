@@ -9,6 +9,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
 
   # ========== CREATE ==========
 
+  @R5
   Scenario Outline: Create a multi-version resource via R5 path
     When I create a <resourceType> resource via version "r5"
     Then the response status should be 201
@@ -19,6 +20,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
       | CarePlan     |
       | Procedure    |
 
+  @R4B
   Scenario Outline: Create a multi-version resource via R4B path
     When I create a <resourceType> resource via version "r4b"
     Then the response status should be 201
@@ -29,6 +31,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
       | CarePlan     |
       | Procedure    |
 
+  @R5
   Scenario Outline: Create multi-version resource with data profile variants
     When I create a "<profile>" <resourceType> resource
     Then the response status should be 201
@@ -45,6 +48,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
 
   # ========== READ ==========
 
+  @R5
   Scenario Outline: Read a multi-version resource by ID
     Given a <resourceType> resource exists
     When I read the <resourceType> resource by its ID
@@ -58,6 +62,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
 
   # ========== VREAD ==========
 
+  @R5
   Scenario Outline: Version-specific read of a multi-version resource
     Given a <resourceType> resource exists
     When I vread the <resourceType> resource at version 1
@@ -71,6 +76,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
 
   # ========== UPDATE ==========
 
+  @R5
   Scenario Outline: Update a multi-version resource
     Given a <resourceType> resource exists
     When I update the <resourceType> resource
@@ -84,6 +90,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
 
   # ========== PATCH not supported for CarePlan or Procedure ==========
 
+  @R5
   Scenario Outline: Patch a non-PATCH multi-version resource returns 405
     Given a <resourceType> resource exists
     When I patch the <resourceType> resource
@@ -96,6 +103,7 @@ Feature: Multi-Version Resource CRUD Lifecycle
 
   # ========== DELETE not supported for CarePlan or Procedure ==========
 
+  @R5
   Scenario Outline: Delete a non-DELETE multi-version resource returns 405
     Given a <resourceType> resource exists
     When I delete the <resourceType> resource

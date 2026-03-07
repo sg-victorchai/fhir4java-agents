@@ -1,4 +1,4 @@
-@tenancy
+@tenancy @R5
 Feature: Multi-Tenant Resource Isolation
 
   Background:

@@ -1,4 +1,4 @@
-@validation @metrics @phase3
+@validation @metrics @phase3 @R5
 Feature: Profile Validator Metrics
   As a FHIR server operator
   I want validation metrics collected and exposed via Spring Boot Actuator

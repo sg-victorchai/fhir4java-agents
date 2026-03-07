@@ -1,4 +1,4 @@
-@operations
+@operations @R5
 Feature: Operation Routing
   As a FHIR client
   I want to receive appropriate errors for unregistered operations

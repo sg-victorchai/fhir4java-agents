@@ -1,4 +1,4 @@
-@http
+@http @R5
 Feature: FHIR Response Headers
   As a FHIR API consumer
   I want proper HTTP headers on FHIR responses

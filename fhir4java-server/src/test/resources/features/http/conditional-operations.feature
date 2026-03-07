@@ -1,4 +1,4 @@
-@http
+@http @R5
 Feature: Conditional Operations
   As a FHIR API consumer
   I want to use If-Match and If-None-Match headers

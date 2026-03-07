@@ -49,12 +49,14 @@ public class DedicatedSchemaRepository {
             entity.setId(UUID.randomUUID());
         }
 
+        // Note: Using plain ? instead of ?::jsonb for H2 compatibility
+        // PostgreSQL will auto-cast text to JSONB, H2 stores as CLOB
         String sql = String.format("""
             INSERT INTO %s.fhir_resource (
                 id, resource_type, resource_id, fhir_version, version_id,
                 is_current, is_deleted, content, last_updated, created_at,
                 source_uri, tenant_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, schemaName);
 
         Instant now = Instant.now();

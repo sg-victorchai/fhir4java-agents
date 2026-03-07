@@ -1,4 +1,4 @@
-@search
+@search @R5
 Feature: Observation Search with Denylist Enforcement
   As a FHIR API consumer
   I want to search for Observation resources respecting the denylist

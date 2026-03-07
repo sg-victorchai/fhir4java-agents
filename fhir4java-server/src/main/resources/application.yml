@@ -160,17 +160,17 @@ fhir4java:
     business-logic:
       fail-on-error: true # Fail the request if a business logic plugin errors
     # Sample Patient CREATE plugin settings
-    patient-create:
-      enabled: true
-      require-family-name: true # Reject Patient without family name
-      auto-generate-mrn: true # Auto-generate MRN identifier if missing
-      mrn-system: 'urn:fhir4java:patient:mrn' # Identifier system URI for auto-generated MRN
-      add-creation-timestamp: true # Add creation timestamp extension
-      creation-timestamp-url: 'http://fhir4java.org/StructureDefinition/creation-timestamp' # Extension URL for creation timestamp
-      duplicate-check-enabled: true # Check for duplicate identifiers before creating
-      duplicate-check-systems: # Identifier systems to check for duplicates (empty = all)
-        - 'urn:fhir4java:patient:mrn'
-        - 'http://hl7.org/fhir/sid/us-ssn'
+    #patient-create:
+    #  enabled: true
+    #  require-family-name: true # Reject Patient without family name
+    #  auto-generate-mrn: true # Auto-generate MRN identifier if missing
+    #  mrn-system: 'urn:fhir4java:patient:mrn' # Identifier system URI for auto-generated MRN
+    #  add-creation-timestamp: true # Add creation timestamp extension
+    #  creation-timestamp-url: 'http://fhir4java.org/StructureDefinition/creation-timestamp' # Extension URL for creation timestamp
+    #  duplicate-check-enabled: true # Check for duplicate identifiers before creating
+    #  duplicate-check-systems: # Identifier systems to check for duplicates (empty = all)
+    #    - 'urn:fhir4java:patient:mrn'
+    #    - 'http://hl7.org/fhir/sid/us-ssn'
 
   # Multi-tenancy
   tenant:
@@ -237,7 +237,8 @@ spring:
       on-profile: test
 
   datasource:
-    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE SCHEMA IF NOT EXISTS CAREPLAN\;CREATE ALIAS IF NOT EXISTS jsonb_extract_path_text FOR "org.fhirframework.persistence.h2.H2JsonFunctions.jsonb_extract_path_text"\;CREATE ALIAS IF NOT EXISTS to_number FOR "org.fhirframework.persistence.h2.H2JsonFunctions.to_number"
+    # H2 INIT: Only create schemas. Function aliases are registered by H2FunctionInitializer @PostConstruct
+    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE SCHEMA IF NOT EXISTS CAREPLAN
     driver-class-name: org.h2.Driver
     username: fhir4java
     password: fhir4java

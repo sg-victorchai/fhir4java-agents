@@ -1,4 +1,4 @@
-@search @custom
+@search @custom @R5
 Feature: Custom Resource Search
   As a FHIR API consumer
   I want to search for custom resources using allowlisted parameters

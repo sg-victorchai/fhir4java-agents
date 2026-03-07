@@ -1,4 +1,4 @@
-@http
+@http @R5
 Feature: Error Responses
   As a FHIR API consumer
   I want proper OperationOutcome error responses

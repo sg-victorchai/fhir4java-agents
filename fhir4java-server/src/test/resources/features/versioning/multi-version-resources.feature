@@ -9,6 +9,7 @@ Feature: Multi-Version Resource Access
 
   # ========== CarePlan version paths ==========
 
+  @R5
   Scenario: Create CarePlan via R5 path and read via R5
     When I create a CarePlan resource via version "r5"
     Then the response status should be 201
@@ -16,6 +17,7 @@ Feature: Multi-Version Resource Access
     Then the response status should be 200
     And the response should contain resourceType "CarePlan"
 
+  @R4B
   Scenario: Create CarePlan via R4B path and read via R4B
     When I create a CarePlan resource via version "r4b"
     Then the response status should be 201
@@ -23,6 +25,7 @@ Feature: Multi-Version Resource Access
     Then the response status should be 200
     And the response should contain resourceType "CarePlan"
 
+  @R5
   Scenario: Create CarePlan via R5 path and read via unversioned path
     When I create a CarePlan resource via version "r5"
     Then the response status should be 201
@@ -32,6 +35,7 @@ Feature: Multi-Version Resource Access
 
   # ========== Procedure version paths ==========
 
+  @R5
   Scenario: Create Procedure via R5 path and read via R5
     When I create a Procedure resource via version "r5"
     Then the response status should be 201
@@ -39,6 +43,7 @@ Feature: Multi-Version Resource Access
     Then the response status should be 200
     And the response should contain resourceType "Procedure"
 
+  @R4B
   Scenario: Create Procedure via R4B path and read via R4B
     When I create a Procedure resource via version "r4b"
     Then the response status should be 201
@@ -46,6 +51,7 @@ Feature: Multi-Version Resource Access
     Then the response status should be 200
     And the response should contain resourceType "Procedure"
 
+  @R4B
   Scenario: Create Procedure via R4B path and read via unversioned path
     When I create a Procedure resource via version "r4b"
     Then the response status should be 201
@@ -55,12 +61,14 @@ Feature: Multi-Version Resource Access
 
   # ========== Search across versions ==========
 
+  @R5
   Scenario: Search CarePlan via R5 path returns results
     Given a CarePlan resource exists
     When I search via version "r5" for "CarePlan"
     Then the response status should be 200
     And the response should be a search Bundle
 
+  @R4B
   Scenario: Search Procedure via R4B path returns results
     Given a Procedure resource exists
     When I search via version "r4b" for "Procedure"
@@ -69,12 +77,14 @@ Feature: Multi-Version Resource Access
 
   # ========== Version header validation ==========
 
+  @R5
   Scenario: R5 path returns R5 version header for CarePlan
     Given a CarePlan resource exists
     When I read the created resource via version "r5" for "CarePlan"
     Then the response status should be 200
     And the response should have header "X-FHIR-Version" with value "5.0.0"
 
+  @R4B
   Scenario: R4B path returns R4B version header for Procedure
     Given a Procedure resource exists
     When I read the created resource via version "r4b" for "Procedure"

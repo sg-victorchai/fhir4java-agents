@@ -137,6 +137,45 @@ docker compose up -d
 
 # Server will be available at http://localhost:8080/fhir/r5
 ```
+
+### Build from Source
+
+The project includes a Maven plugin module (`fhir4java-codegen`) that must be installed before building other modules. Use one of the following approaches:
+
+**Option 1: Using module exclusion (recommended)**
+```bash
+# Install the codegen plugin first
+./mvnw clean install -pl fhir4java-codegen
+
+# Build remaining modules (excluding codegen from reactor)
+./mvnw clean compile -pl !fhir4java-codegen
+```
+
+**Option 2: Using the skip-codegen-module profile**
+```bash
+# Install the codegen plugin first
+./mvnw clean install -pl fhir4java-codegen
+
+# Build using the profile
+./mvnw clean compile -P skip-codegen-module
+```
+
+**Option 3: Incremental builds (after initial setup)**
+```bash
+# After codegen is installed, regular compile works
+./mvnw compile
+```
+
+**Skip code generation entirely**
+```bash
+./mvnw clean compile -Dfhir.codegen.skip=true -pl !fhir4java-codegen
+```
+
+**Run BDD tests**
+```bash
+./mvnw verify -f fhir4java-server/pom.xml -Dtest=CucumberIT -Dfailsafe.useFile=false
+```
+
 ### Sample Test Data Generation
 
 

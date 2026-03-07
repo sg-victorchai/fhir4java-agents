@@ -1,3 +1,4 @@
+@operations @R5
 Feature: $everything Operation
   As a FHIR client
   I want to retrieve all resources related to a Patient

@@ -1,6 +1,6 @@
 {
   "resourceType": "Course",
-  "status": "completed",
-  "code": {"coding": [{"system": "http://example.org/training", "code": "BLS-101", "display": "Basic Life Support"}]},
+  "status": "distinued",
+  "code": "BLS-101",
   "title": "Basic Life Support Certification"
 }

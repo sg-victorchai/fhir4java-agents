@@ -38,10 +38,16 @@ public class H2FunctionInitializer {
             stmt.execute("CREATE ALIAS IF NOT EXISTS jsonb_extract_path_text FOR "
                     + "\"org.fhirframework.persistence.h2.H2JsonFunctions.jsonb_extract_path_text\"");
 
+            stmt.execute("CREATE ALIAS IF NOT EXISTS jsonb_extract_path FOR "
+                    + "\"org.fhirframework.persistence.h2.H2JsonFunctions.jsonb_extract_path\"");
+
+            stmt.execute("CREATE ALIAS IF NOT EXISTS jsonb_contains FOR "
+                    + "\"org.fhirframework.persistence.h2.H2JsonFunctions.jsonb_contains\"");
+
             stmt.execute("CREATE ALIAS IF NOT EXISTS to_number FOR "
                     + "\"org.fhirframework.persistence.h2.H2JsonFunctions.to_number\"");
 
-            log.info("Registered H2 function aliases: jsonb_extract_path_text, to_number");
+            log.info("Registered H2 function aliases: jsonb_extract_path_text, jsonb_extract_path, jsonb_contains, to_number");
         } catch (Exception e) {
             log.warn("Could not register H2 function aliases (not H2?): {}", e.getMessage());
         }

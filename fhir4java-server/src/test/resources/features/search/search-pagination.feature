@@ -1,4 +1,4 @@
-@search
+@search @R5
 Feature: Search Pagination
   As a FHIR API consumer
   I want to control search result pagination with _count

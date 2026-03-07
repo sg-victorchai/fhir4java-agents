@@ -60,6 +60,9 @@
 
         <!-- Plugin Versions -->
         <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
+
+        <!-- Code Generation -->
+        <fhir.codegen.skip>false</fhir.codegen.skip>
         <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
         <maven-failsafe-plugin.version>3.5.2</maven-failsafe-plugin.version>
     </properties>
@@ -275,4 +278,18 @@
             <url>https://repo.maven.apache.org/maven2</url>
         </repository>
     </repositories>
+
+    <profiles>
+        <!-- Profile for building without codegen module (use after codegen is installed) -->
+        <profile>
+            <id>skip-codegen-module</id>
+            <modules>
+                <module>fhir4java-core</module>
+                <module>fhir4java-persistence</module>
+                <module>fhir4java-plugin</module>
+                <module>fhir4java-api</module>
+                <module>fhir4java-server</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>

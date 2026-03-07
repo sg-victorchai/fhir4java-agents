@@ -1,4 +1,4 @@
-@validation @health @phase2
+@validation @health @phase2 @R5
 Feature: Profile Validator Health Indicator
   As a FHIR server operator
   I want to monitor ProfileValidator health via Spring Boot Actuator

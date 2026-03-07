@@ -1,4 +1,4 @@
-@search
+@search @R5
 Feature: Standard Resource Search Smoke Tests
   As a FHIR API consumer
   I want to search for resources with unrestricted search parameters

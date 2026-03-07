@@ -1,3 +1,4 @@
+@operations @R5
 Feature: JSON Patch (PATCH) Operation
   As a FHIR client
   I want to partially update resources using JSON Patch

@@ -1,4 +1,4 @@
-@validation @integration
+@validation @integration @R5
 Feature: Profile Validation Integration
   As a FHIR API consumer
   I want validation integrated seamlessly with CRUD operations
