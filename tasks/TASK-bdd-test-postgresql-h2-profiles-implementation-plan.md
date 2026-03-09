@@ -282,8 +282,136 @@ Update failsafe plugin:
 
 ---
 
+## Troubleshooting: macOS Docker Socket Issues
+
+### Problem: "operation not supported" Error
+
+When running PostgreSQL tests with TestContainers on macOS, you may encounter:
+
+```
+com.github.dockerjava.api.exception.InternalServerErrorException: Status 500:
+{"message":"error while creating mount source path '/Users/.../docker.raw.sock':
+mkdir /Users/.../docker.raw.sock: operation not supported"}
+```
+
+### Root Cause
+
+Docker Desktop on macOS stores the Docker socket at a user-specific path (`~/.docker/run/docker.sock`) rather than the standard `/var/run/docker.sock`. TestContainers' Ryuk container tries to mount this socket but fails due to path resolution issues.
+
+### Solution Options
+
+#### Option 1: Enable Docker Desktop Socket Symlink (Recommended)
+
+1. Open **Docker Desktop** → **Settings** → **Advanced**
+2. Enable **"Allow the default Docker socket to be used (requires password)"**
+3. Enter your macOS password when prompted
+4. Restart Docker Desktop
+
+This creates a symlink at `/var/run/docker.sock` pointing to the actual socket.
+
+#### Option 2: Manual Socket Configuration
+
+Create/update `~/.testcontainers.properties`:
+
+```properties
+# Force standard Docker socket path
+docker.host=unix:///var/run/docker.sock
+
+# Use Unix socket strategy explicitly
+docker.client.strategy=org.testcontainers.dockerclient.UnixSocketClientProviderStrategy
+
+# Disable Ryuk (the container cleanup process that causes mount issues)
+ryuk.disabled=true
+
+# Disable startup checks
+checks.disable=true
+```
+
+#### Option 3: Create Socket Symlink Manually
+
+```bash
+# Create symlink from standard path to Docker Desktop socket
+sudo ln -sf ~/.docker/run/docker.sock /var/run/docker.sock
+
+# Verify the symlink works
+docker ps
+```
+
+#### Option 4: Environment Variable Override
+
+```bash
+# Set before running tests
+export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+
+# Then run tests
+./mvnw test -pl fhir4java-server -Dtest=CucumberIT -Ptest-postgres
+```
+
+#### Option 5: Force Docker API Version
+
+If you see API version compatibility errors, create `~/.docker-java.properties`:
+
+```properties
+api.version=1.44
+```
+
+### Verification Steps
+
+1. **Check Docker socket exists:**
+   ```bash
+   ls -la /var/run/docker.sock
+   # Should show a symlink or socket file
+   ```
+
+2. **Verify Docker is accessible:**
+   ```bash
+   docker info
+   # Should show Docker daemon information
+   ```
+
+3. **Check DOCKER_HOST environment:**
+   ```bash
+   echo $DOCKER_HOST
+   # Should be empty (uses default) or set to unix:///var/run/docker.sock
+   ```
+
+4. **Unset conflicting variables:**
+   ```bash
+   unset DOCKER_HOST
+   unset TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE
+   ```
+
+### Known Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `docker.raw.sock: operation not supported` | Ryuk mount failure | Enable Docker Desktop socket symlink or disable Ryuk |
+| `client version X.XX is too old` | API version mismatch | Set `api.version=1.44` in docker-java.properties |
+| `Could not find a valid Docker environment` | Socket not accessible | Check Docker Desktop is running, enable socket symlink |
+
+### Alternative: Use Colima or Rancher Desktop
+
+If Docker Desktop issues persist, consider using [Colima](https://github.com/abiosoft/colima) or [Rancher Desktop](https://rancherdesktop.io/) which have better TestContainers compatibility on macOS:
+
+```bash
+# Install Colima
+brew install colima docker
+
+# Start Colima with Docker runtime
+colima start --runtime docker
+
+# The socket will be at the standard path
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+```
+
+---
+
 ## References
 
 - [TestContainers Docker 29 Issue #11210](https://github.com/testcontainers/testcontainers-java/issues/11210)
+- [TestContainers 2.0.3 macOS Issue #11419](https://github.com/testcontainers/testcontainers-java/issues/11419)
+- [TestContainers Mount Path Issue #8170](https://github.com/testcontainers/testcontainers-java/issues/8170)
 - [TestContainers Releases](https://github.com/testcontainers/testcontainers-java/releases)
 - [Spring Boot TestContainers Docs](https://docs.spring.io/spring-boot/reference/testing/testcontainers.html)
+- [TestContainers Supported Docker Environments](https://java.testcontainers.org/supported_docker_environment/)

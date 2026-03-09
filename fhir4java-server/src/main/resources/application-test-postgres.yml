@@ -1,0 +1,43 @@
+# PostgreSQL Test Profile - Uses TestContainers for real PostgreSQL database
+# Activate with: -Ptest-postgres or -Dspring.profiles.active=test-postgres
+spring:
+  config:
+    activate:
+      on-profile: test-postgres
+
+  # DataSource - overridden by TestContainers @ServiceConnection
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fhir4java_test
+    driver-class-name: org.postgresql.Driver
+    username: fhir4java
+    password: fhir4java
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: fhir
+
+  # Use Flyway for schema management with PostgreSQL
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    schemas: fhir
+
+  # Disable Redis for tests
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+  # Use simple cache instead of Redis
+  cache:
+    type: simple
+
+# Disable profile validator for faster test startup
+fhir4java:
+  validation:
+    profile-validator-enabled: false

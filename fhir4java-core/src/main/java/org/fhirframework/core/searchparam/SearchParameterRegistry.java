@@ -87,7 +87,7 @@ public class SearchParameterRegistry {
         try {
             String pattern = versionPath + "SearchParameter-*.json";
             Resource[] files = resourceResolver.getResources(pattern);
-            log.debug("Found {} search parameter files for version {}", files.length, version);
+            log.trace("Found {} search parameter files for version {}", files.length, version);
 
             FhirContext fhirContext = contextFactory.getContext(version);
             IParser parser = fhirContext.newJsonParser();
@@ -312,7 +312,7 @@ public class SearchParameterRegistry {
         // Check resource-specific first
         String key = resourceType + ":" + paramName;
         Map<String, SearchParameter> lookup = parameterLookup.get(version);
-        log.debug("Looking up search parameter key '{}', lookup map has {} entries",
+        log.trace("Looking up search parameter key '{}', lookup map has {} entries",
                 key, lookup != null ? lookup.size() : 0);
         if (lookup != null && lookup.containsKey(key)) {
             log.debug("Found search parameter '{}' for resource '{}'", paramName, resourceType);
