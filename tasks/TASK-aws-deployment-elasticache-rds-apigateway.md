@@ -5,7 +5,9 @@
 This plan outlines the implementation strategy for deploying FHIR4Java to AWS production environment using:
 - **Amazon ElastiCache (Redis/Valkey)** as cache provider
 - **Amazon RDS PostgreSQL** as database provider
-- **Amazon API Gateway** for API exposure
+- **Amazon API Gateway (Private)** for API management
+- **ECS Fargate or EKS Fargate** as compute platform (configurable)
+- **Multi-service architecture** with 4 isolated services for security and scaling
 
 The implementation maintains backward compatibility with local development using embedded Redis and PostgreSQL containers.
 
@@ -82,64 +84,155 @@ The implementation maintains backward compatibility with local development using
 ### 2.1 Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              AWS Cloud                                       │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                           VPC (10.0.0.0/16)                            │ │
-│  │                                                                         │ │
-│  │  ┌─────────────┐     ┌─────────────────────────────────────────────┐   │ │
-│  │  │   Public    │     │              Private Subnets                │   │ │
-│  │  │   Subnets   │     │                                             │   │ │
-│  │  │             │     │  ┌─────────────┐    ┌─────────────────────┐ │   │ │
-│  │  │ ┌─────────┐ │     │  │   ECS/EKS   │    │   Amazon RDS        │ │   │ │
-│  │  │ │   NAT   │ │     │  │   Fargate   │    │   PostgreSQL        │ │   │ │
-│  │  │ │ Gateway │ │     │  │             │    │   (Multi-AZ)        │ │   │ │
-│  │  │ └─────────┘ │     │  │ ┌─────────┐ │    │                     │ │   │ │
-│  │  │             │     │  │ │FHIR4Java│ │───▶│ ┌─────────────────┐ │ │   │ │
-│  │  └─────────────┘     │  │ │  App    │ │    │ │ fhir4java_prod  │ │ │   │ │
-│  │                      │  │ └─────────┘ │    │ └─────────────────┘ │ │   │ │
-│  │                      │  └──────┬──────┘    └─────────────────────┘ │   │ │
-│  │                      │         │                                   │   │ │
-│  │                      │         ▼                                   │   │ │
-│  │                      │  ┌─────────────────────────────────────┐    │   │ │
-│  │                      │  │      Amazon ElastiCache             │    │   │ │
-│  │                      │  │      (Redis/Valkey Cluster)         │    │   │ │
-│  │                      │  │                                     │    │   │ │
-│  │                      │  │  Primary ◄──► Replica (Multi-AZ)    │    │   │ │
-│  │                      │  └─────────────────────────────────────┘    │   │ │
-│  │                      └─────────────────────────────────────────────┘   │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                      ▲                                       │
-│                                      │                                       │
-│  ┌───────────────────────────────────┴───────────────────────────────────┐  │
-│  │                     Amazon API Gateway                                 │  │
-│  │                     (REST API / HTTP API)                              │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │  │
-│  │  │   /fhir/*   │  │  /metadata  │  │  /actuator  │  │ /api/admin  │   │  │
-│  │  │   (proxy)   │  │   (proxy)   │  │  (internal) │  │  (private)  │   │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                      ▲                                       │
-└──────────────────────────────────────┼───────────────────────────────────────┘
-                                       │
-                              ┌────────┴────────┐
-                              │   Clients       │
-                              │   (HTTPS)       │
-                              └─────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                                    AWS Cloud                                          │
+│                                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │                              Route 53                                            │ │
+│  │  ┌─────────────────────────────────────────────────────────────────────────┐    │ │
+│  │  │  fhir.example.com ────────────────────► Public ALB                      │    │ │
+│  │  │  fhir-admin.internal.example.com ─────► Internal ALB (Admin)           │    │ │
+│  │  └─────────────────────────────────────────────────────────────────────────┘    │ │
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                         │                                             │
+│  ┌──────────────────────────────────────┼──────────────────────────────────────────┐ │
+│  │                              Public Subnets                                      │ │
+│  │                                      │                                           │ │
+│  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
+│  │  │                    Public ALB (Internet-facing)                            │  │ │
+│  │  │                    + AWS WAF (OWASP, Rate Limiting, Geo-blocking)          │  │ │
+│  │  │                    + ACM Certificate (TLS 1.3)                             │  │ │
+│  │  │                    Target: VPC Endpoint ENI IPs (IP type, HTTPS:443)       │  │ │
+│  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
+│  │                                      │                                           │ │
+│  │  ┌─────────────┐                     │                                           │ │
+│  │  │ NAT Gateway │                     │                                           │ │
+│  │  └─────────────┘                     │                                           │ │
+│  └──────────────────────────────────────┼──────────────────────────────────────────┘ │
+│                                         │                                             │
+│  ┌──────────────────────────────────────┼──────────────────────────────────────────┐ │
+│  │                             Private Subnets                                      │ │
+│  │                                      │                                           │ │
+│  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
+│  │  │              API Gateway VPC Endpoint (Interface)                          │  │ │
+│  │  │              ENIs: 10.0.11.x, 10.0.12.x, 10.0.13.x                         │  │ │
+│  │  │              (Managed by IP Change Automation Lambda)                      │  │ │
+│  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
+│  │                                      │                                           │ │
+│  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
+│  │  │                    Private API Gateway (HTTP API)                          │  │ │
+│  │  │                    Custom Domain: fhir.example.com                         │  │ │
+│  │  │                    Routes:                                                 │  │ │
+│  │  │                      /fhir/{version}/metadata → fhir-metadata service      │  │ │
+│  │  │                      /fhir/{proxy+}          → fhir-api service            │  │ │
+│  │  │                    Features: Throttling, Request Validation, API Keys      │  │ │
+│  │  │                    VPC Link Target: NLB                                    │  │ │
+│  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
+│  │                                      │                                           │ │
+│  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
+│  │  │                         NLB (Internal)                                     │  │ │
+│  │  │                         Static IPs, Cross-zone LB enabled                  │  │ │
+│  │  │                         Target: ALB Ingress IPs                            │  │ │
+│  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
+│  │                                      │                                           │ │
+│  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
+│  │  │                    ALB Ingress Controller (Internal ALB)                   │  │ │
+│  │  │                    Path-based routing to services:                         │  │ │
+│  │  │                      /fhir/*/metadata → fhir-metadata (1-2 tasks)          │  │ │
+│  │  │                      /fhir/*          → fhir-api (2-10 tasks)              │  │ │
+│  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
+│  │                                      │                                           │ │
+│  │          ┌───────────────────────────┼───────────────────────────────┐          │ │
+│  │          │                           │                               │          │ │
+│  │          ▼                           ▼                               ▼          │ │
+│  │  ┌──────────────┐           ┌──────────────┐                ┌──────────────┐   │ │
+│  │  │  fhir-api    │           │fhir-metadata │                │fhir-actuator │   │ │
+│  │  │  (2-10)      │           │   (1-2)      │                │    (1)       │   │ │
+│  │  │  /fhir/*     │           │  /metadata   │                │  /actuator/* │   │ │
+│  │  └──────────────┘           └──────────────┘                └──────────────┘   │ │
+│  │                                                                                 │ │
+│  │  ┌──────────────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                    Internal ALB (Admin/Ops - VPN Only)                    │  │ │
+│  │  │                    fhir-admin.internal.example.com                        │  │ │
+│  │  │                    Routes: /actuator/*, /api/admin/*                      │  │ │
+│  │  └───────────────────────────────────┬──────────────────────────────────────┘  │ │
+│  │                                      │                                          │ │
+│  │                               ┌──────┴──────┐                                   │ │
+│  │                               ▼             ▼                                   │ │
+│  │                        ┌────────────┐ ┌────────────┐                           │ │
+│  │                        │fhir-admin  │ │fhir-actuator│                          │ │
+│  │                        │   (1)      │ │   (1)       │                          │ │
+│  │                        │/api/admin/*│ │ /actuator/* │                          │ │
+│  │                        └────────────┘ └─────────────┘                          │ │
+│  │                                                                                 │ │
+│  │                    ECS Fargate or EKS Fargate (Configurable)                   │ │
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │                           Database Subnets (Isolated)                           │ │
+│  │                                                                                  │ │
+│  │  ┌──────────────────────────────┐    ┌──────────────────────────────┐          │ │
+│  │  │      RDS PostgreSQL          │    │      Amazon ElastiCache      │          │ │
+│  │  │      (Multi-AZ)              │    │      (Redis/Valkey Cluster)  │          │ │
+│  │  │      db.r6g.large            │    │      cache.r6g.large         │          │ │
+│  │  │      Auth: IAM or Secrets    │    │      2 shards, 1 replica     │          │ │
+│  │  └──────────────────────────────┘    └──────────────────────────────┘          │ │
+│  │                                                                                  │ │
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                       │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 Component Overview
 
 | Component | AWS Service | Configuration |
 |-----------|-------------|---------------|
-| API Gateway | Amazon API Gateway (HTTP API) | Regional, with VPC Link |
-| Compute | ECS Fargate or EKS | Auto-scaling, Multi-AZ |
-| Database | Amazon RDS PostgreSQL | Multi-AZ, db.r6g.large |
+| Edge Protection | Public ALB + AWS WAF | Internet-facing, OWASP rules |
+| API Gateway | Amazon API Gateway (Private HTTP API) | Custom domain, VPC Link to NLB |
+| Load Balancer (API GW) | NLB (Internal) | Static IPs, VPC Link target |
+| Load Balancer (Services) | ALB Ingress (Internal) | Path-based routing |
+| Compute | ECS Fargate or EKS Fargate | Toggle via CDK parameter |
+| Database | Amazon RDS PostgreSQL | Multi-AZ, IAM auth or Secrets Manager |
 | Cache | Amazon ElastiCache (Valkey/Redis) | Cluster Mode, r6g.large |
 | Secrets | AWS Secrets Manager | Auto-rotation enabled |
-| DNS | Amazon Route 53 | Custom domain |
-| CDN | Amazon CloudFront (optional) | Edge caching for static |
+| DNS | Amazon Route 53 | Custom domains |
 | Monitoring | CloudWatch, X-Ray | Full observability |
+
+### 2.3 Multi-Service Architecture
+
+Single Docker image deployed as 4 isolated services with endpoint filtering:
+
+| Service | Endpoints | Network Access | Scaling | Purpose |
+|---------|-----------|----------------|---------|---------|
+| `fhir-api` | `/fhir/*` | Public (via API GW) | 2-10 tasks | Main FHIR CRUD operations |
+| `fhir-metadata` | `/fhir/*/metadata` | Public (via API GW) | 1-2 tasks | CapabilityStatement |
+| `fhir-actuator` | `/actuator/*` | Private (VPN only) | 1 task | Health, metrics, prometheus |
+| `fhir-admin` | `/api/admin/*` | Private (VPN only) | 1 task | Admin operations |
+
+**Benefits:**
+- **Security isolation**: Admin/actuator never exposed publicly
+- **Independent scaling**: Scale FHIR API separately from metadata
+- **Blast radius reduction**: Service failure doesn't affect others
+- **Single codebase**: Same image, different runtime configurations
+
+### 2.4 Compute Platform Toggle (ECS vs EKS)
+
+CDK parameter allows choosing compute platform at deployment time:
+
+```typescript
+// CDK context parameter
+const computePlatform = this.node.tryGetContext('computePlatform') || 'ecs';
+// Values: 'ecs' | 'eks'
+```
+
+| Aspect | ECS Fargate | EKS Fargate |
+|--------|-------------|-------------|
+| Complexity | Lower | Higher |
+| Kubernetes ecosystem | No | Yes |
+| Service mesh | AWS App Mesh (optional) | Istio, Linkerd, etc. |
+| Ingress | ALB via target groups | AWS Load Balancer Controller |
+| Config management | Task definitions | Kubernetes manifests |
+| Best for | Simpler deployments | K8s-native teams |
 
 ---
 
@@ -150,18 +243,17 @@ The implementation maintains backward compatibility with local development using
 #### 3.1.1 VPC Configuration
 
 ```yaml
-# CDK/Terraform Pseudo-configuration
 VPC:
   cidr: 10.0.0.0/16
   azs: [us-east-1a, us-east-1b, us-east-1c]
 
   publicSubnets:
-    - 10.0.1.0/24  # NAT Gateway, ALB
+    - 10.0.1.0/24  # NAT Gateway, Public ALB
     - 10.0.2.0/24
     - 10.0.3.0/24
 
   privateSubnets:
-    - 10.0.11.0/24  # ECS/EKS
+    - 10.0.11.0/24  # ECS/EKS, NLB, Internal ALB, VPC Endpoints
     - 10.0.12.0/24
     - 10.0.13.0/24
 
@@ -175,8 +267,12 @@ VPC:
 
 | Security Group | Inbound Rules | Outbound Rules |
 |----------------|---------------|----------------|
-| `sg-api-gateway` | HTTPS (443) from Internet | All to VPC |
-| `sg-ecs-tasks` | HTTP (8080) from `sg-api-gateway` | All to VPC |
+| `sg-public-alb` | HTTPS (443) from Internet | HTTPS (443) to `sg-vpc-endpoint` |
+| `sg-vpc-endpoint` | HTTPS (443) from `sg-public-alb` | All to VPC |
+| `sg-nlb` | TCP (80/443) from API Gateway | TCP (80/443) to `sg-internal-alb` |
+| `sg-internal-alb` | HTTP (80) from `sg-nlb`, `sg-admin-alb` | HTTP (8080) to `sg-ecs-tasks` |
+| `sg-admin-alb` | HTTPS (443) from VPN CIDR only | HTTP (8080) to `sg-ecs-tasks` |
+| `sg-ecs-tasks` | HTTP (8080) from `sg-internal-alb` | All to VPC |
 | `sg-rds` | PostgreSQL (5432) from `sg-ecs-tasks` | None |
 | `sg-elasticache` | Redis (6379) from `sg-ecs-tasks` | None |
 
@@ -201,6 +297,9 @@ RDS:
   deletionProtection: true
   storageEncrypted: true
 
+  # Security: Enable IAM authentication
+  iamDatabaseAuthenticationEnabled: true
+
   database:
     name: fhir4java_prod
     port: 5432
@@ -213,7 +312,6 @@ RDS:
     preferredWindow: "Sun:04:00-Sun:05:00"
 
   parameters:
-    # PostgreSQL parameters
     shared_buffers: "{DBInstanceClassMemory/4}"
     max_connections: "200"
     work_mem: "64MB"
@@ -222,31 +320,24 @@ RDS:
     random_page_cost: "1.1"
 ```
 
-#### 3.2.2 Database Initialization Script
+#### 3.2.2 RDS Authentication Options
 
-```sql
--- Execute after RDS creation via Lambda or bastion host
+**Option A: IAM Database Authentication (Recommended)**
 
--- Create required extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+```yaml
+# No stored passwords, short-lived tokens (15 min), CloudTrail audit
+RDS:
+  iamDatabaseAuthenticationEnabled: true
 
--- Create schemas
-CREATE SCHEMA IF NOT EXISTS fhir;
-CREATE SCHEMA IF NOT EXISTS careplan;
-
--- Create application user (credentials in Secrets Manager)
-CREATE USER fhir4java_app WITH PASSWORD '<from-secrets-manager>';
-GRANT USAGE ON SCHEMA fhir, careplan TO fhir4java_app;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir, careplan TO fhir4java_app;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA fhir, careplan TO fhir4java_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir, careplan
-    GRANT ALL PRIVILEGES ON TABLES TO fhir4java_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir, careplan
-    GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java_app;
+# IAM Policy for ECS Task Role
+{
+  "Effect": "Allow",
+  "Action": "rds-db:connect",
+  "Resource": "arn:aws:rds-db:us-east-1:*:dbuser:*/fhir4java_app"
+}
 ```
 
-#### 3.2.3 Secrets Manager Configuration
+**Option B: Secrets Manager with Auto-Rotation**
 
 ```json
 {
@@ -266,6 +357,35 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA fhir, careplan
 }
 ```
 
+#### 3.2.3 Database Initialization Script
+
+```sql
+-- Execute after RDS creation via Lambda or bastion host
+
+-- Create required extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+
+-- Create schemas
+CREATE SCHEMA IF NOT EXISTS fhir;
+CREATE SCHEMA IF NOT EXISTS careplan;
+
+-- Create application user
+CREATE USER fhir4java_app WITH LOGIN;
+
+-- For IAM auth: Grant rds_iam role
+GRANT rds_iam TO fhir4java_app;
+
+-- Grant permissions
+GRANT USAGE ON SCHEMA fhir, careplan TO fhir4java_app;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir, careplan TO fhir4java_app;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA fhir, careplan TO fhir4java_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir, careplan
+    GRANT ALL PRIVILEGES ON TABLES TO fhir4java_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fhir, careplan
+    GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java_app;
+```
+
 ### 3.3 Amazon ElastiCache Setup
 
 #### 3.3.1 ElastiCache Cluster Configuration
@@ -275,16 +395,7 @@ ElastiCache:
   engine: valkey  # or redis
   engineVersion: "7.2"
 
-  # Option 1: Serverless (recommended for variable workloads)
-  serverless:
-    cacheUsageLimits:
-      dataStorage:
-        maximum: 10  # GB
-        unit: GB
-      ecpuPerSecond:
-        maximum: 15000
-
-  # Option 2: Cluster Mode (recommended for predictable workloads)
+  # Cluster Mode (recommended for production)
   clusterMode:
     enabled: true
     nodeType: cache.r6g.large
@@ -321,95 +432,408 @@ ElastiCache:
 }
 ```
 
-### 3.4 Amazon API Gateway Setup
+### 3.4 Private API Gateway Setup
 
-#### 3.4.1 API Gateway Configuration (HTTP API - Recommended)
+#### 3.4.1 Private API Gateway with Custom Domain
 
 ```yaml
 APIGateway:
-  type: HTTP_API  # Preferred over REST API for lower latency/cost
+  type: HTTP_API
+  endpointType: PRIVATE  # Private API Gateway
 
-  # VPC Link for private integration
+  # Custom Domain (enables Host header matching)
+  customDomain:
+    domainName: fhir.example.com
+    certificateArn: arn:aws:acm:us-east-1:xxx:certificate/xxx
+    securityPolicy: TLS_1_2
+
+  # VPC Endpoint for private access
+  vpcEndpoint:
+    service: execute-api
+    privateDnsEnabled: true
+    subnets: [private-subnet-1, private-subnet-2, private-subnet-3]
+
+  # VPC Link to NLB
   vpcLink:
     name: fhir4java-vpc-link
-    targetArns:
-      - arn:aws:elasticloadbalancing:...:targetgroup/fhir4java-tg/xxx
+    targetArn: arn:aws:elasticloadbalancing:...:loadbalancer/net/fhir4java-nlb/xxx
 
   # Routes
   routes:
+    - path: "/fhir/{version}/metadata"
+      method: GET
+      integration:
+        type: HTTP_PROXY
+        connectionType: VPC_LINK
+        uri: "http://${NLB_DNS}/fhir/{version}/metadata"
+
     - path: "/fhir/{proxy+}"
       method: ANY
       integration:
         type: HTTP_PROXY
         connectionType: VPC_LINK
-        uri: "http://${ALB_DNS}/fhir/{proxy}"
+        uri: "http://${NLB_DNS}/fhir/{proxy}"
 
     - path: "/fhir"
       method: ANY
       integration:
         type: HTTP_PROXY
         connectionType: VPC_LINK
-        uri: "http://${ALB_DNS}/fhir"
-
-    - path: "/{proxy+}"
-      method: ANY
-      integration:
-        type: HTTP_PROXY
-        connectionType: VPC_LINK
-        uri: "http://${ALB_DNS}/{proxy}"
+        uri: "http://${NLB_DNS}/fhir"
 
   # CORS
   corsConfiguration:
     allowOrigins:
       - "https://your-frontend-domain.com"
-    allowMethods:
-      - GET
-      - POST
-      - PUT
-      - PATCH
-      - DELETE
-      - OPTIONS
-    allowHeaders:
-      - Content-Type
-      - Authorization
-      - X-Tenant-ID
-      - X-Request-Id
-    exposeHeaders:
-      - ETag
-      - Location
-      - Content-Location
-      - X-FHIR-Version
+    allowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    allowHeaders: [Content-Type, Authorization, X-Tenant-ID, X-Request-Id]
+    exposeHeaders: [ETag, Location, Content-Location, X-FHIR-Version]
     maxAge: 3600
 
   # Throttling
   throttlingBurstLimit: 1000
-  throttlingRateLimit: 500  # requests per second
+  throttlingRateLimit: 500
 
   # Access Logging
   accessLogSettings:
     destinationArn: arn:aws:logs:...:log-group:api-gateway-logs
     format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","path":"$context.path","status":"$context.status","responseLength":"$context.responseLength"}'
-
-  # Custom Domain
-  domainName: api.fhir4java.example.com
-  certificateArn: arn:aws:acm:...:certificate/xxx
 ```
 
-#### 3.4.2 API Gateway Authorizer (Optional - Cognito)
+#### 3.4.2 VPC Endpoint IP Change Automation
+
+Since VPC Endpoint ENI IPs can change, automation is required to keep ALB targets updated.
+
+**Lambda Function:**
+
+```python
+# update_alb_targets.py
+import boto3
+import os
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+ec2 = boto3.client('ec2')
+elbv2 = boto3.client('elbv2')
+
+VPC_ENDPOINT_ID = os.environ['VPC_ENDPOINT_ID']
+TARGET_GROUP_ARN = os.environ['TARGET_GROUP_ARN']
+TARGET_PORT = int(os.environ.get('TARGET_PORT', '443'))
+
+
+def handler(event, context):
+    logger.info(f"Received event: {event}")
+
+    # Step 1: Get VPC Endpoint details
+    response = ec2.describe_vpc_endpoints(
+        VpcEndpointIds=[VPC_ENDPOINT_ID]
+    )
+
+    if not response['VpcEndpoints']:
+        logger.error(f"VPC Endpoint {VPC_ENDPOINT_ID} not found")
+        return {'statusCode': 404, 'body': 'VPC Endpoint not found'}
+
+    vpc_endpoint = response['VpcEndpoints'][0]
+    eni_ids = vpc_endpoint.get('NetworkInterfaceIds', [])
+
+    if not eni_ids:
+        logger.error("No ENIs found for VPC Endpoint")
+        return {'statusCode': 404, 'body': 'No ENIs found'}
+
+    # Step 2: Get ENI private IPs
+    enis_response = ec2.describe_network_interfaces(
+        NetworkInterfaceIds=eni_ids
+    )
+
+    new_ips = []
+    for eni in enis_response['NetworkInterfaces']:
+        private_ip = eni['PrivateIpAddress']
+        new_ips.append(private_ip)
+        logger.info(f"Found ENI {eni['NetworkInterfaceId']} with IP {private_ip}")
+
+    # Step 3: Get current targets in ALB target group
+    current_targets_response = elbv2.describe_target_health(
+        TargetGroupArn=TARGET_GROUP_ARN
+    )
+
+    current_ips = set()
+    for target in current_targets_response['TargetHealthDescriptions']:
+        current_ips.add(target['Target']['Id'])
+
+    new_ips_set = set(new_ips)
+
+    # Step 4: Calculate IPs to add and remove
+    ips_to_add = new_ips_set - current_ips
+    ips_to_remove = current_ips - new_ips_set
+
+    logger.info(f"Current IPs: {current_ips}")
+    logger.info(f"New IPs: {new_ips_set}")
+    logger.info(f"IPs to add: {ips_to_add}")
+    logger.info(f"IPs to remove: {ips_to_remove}")
+
+    # Step 5: Deregister old IPs
+    if ips_to_remove:
+        elbv2.deregister_targets(
+            TargetGroupArn=TARGET_GROUP_ARN,
+            Targets=[{'Id': ip, 'Port': TARGET_PORT} for ip in ips_to_remove]
+        )
+        logger.info(f"Deregistered IPs: {ips_to_remove}")
+
+    # Step 6: Register new IPs
+    if ips_to_add:
+        elbv2.register_targets(
+            TargetGroupArn=TARGET_GROUP_ARN,
+            Targets=[{'Id': ip, 'Port': TARGET_PORT} for ip in ips_to_add]
+        )
+        logger.info(f"Registered IPs: {ips_to_add}")
+
+    return {
+        'statusCode': 200,
+        'body': f"Updated targets. Added: {ips_to_add}, Removed: {ips_to_remove}"
+    }
+```
+
+**EventBridge Rule:**
+
+```json
+{
+  "source": ["aws.ec2"],
+  "detail-type": ["AWS API Call via CloudTrail"],
+  "detail": {
+    "eventSource": ["ec2.amazonaws.com"],
+    "eventName": [
+      "CreateVpcEndpoint",
+      "ModifyVpcEndpoint",
+      "DeleteVpcEndpoint"
+    ]
+  }
+}
+```
+
+**CDK Implementation:**
+
+```typescript
+// Lambda function
+const updateTargetsLambda = new lambda.Function(this, 'UpdateTargetsLambda', {
+  runtime: lambda.Runtime.PYTHON_3_12,
+  handler: 'update_alb_targets.handler',
+  code: lambda.Code.fromAsset('lambda/update-targets'),
+  environment: {
+    VPC_ENDPOINT_ID: vpcEndpoint.vpcEndpointId,
+    TARGET_GROUP_ARN: apiGwTargetGroup.targetGroupArn,
+    TARGET_PORT: '443',
+  },
+  timeout: cdk.Duration.seconds(30),
+});
+
+// Grant permissions
+updateTargetsLambda.addToRolePolicy(new iam.PolicyStatement({
+  actions: [
+    'ec2:DescribeVpcEndpoints',
+    'ec2:DescribeNetworkInterfaces',
+  ],
+  resources: ['*'],
+}));
+
+updateTargetsLambda.addToRolePolicy(new iam.PolicyStatement({
+  actions: [
+    'elasticloadbalancing:DescribeTargetHealth',
+    'elasticloadbalancing:RegisterTargets',
+    'elasticloadbalancing:DeregisterTargets',
+  ],
+  resources: [apiGwTargetGroup.targetGroupArn],
+}));
+
+// EventBridge rule
+const rule = new events.Rule(this, 'VpcEndpointChangeRule', {
+  eventPattern: {
+    source: ['aws.ec2'],
+    detailType: ['AWS API Call via CloudTrail'],
+    detail: {
+      eventSource: ['ec2.amazonaws.com'],
+      eventName: ['CreateVpcEndpoint', 'ModifyVpcEndpoint'],
+    },
+  },
+});
+
+rule.addTarget(new targets.LambdaFunction(updateTargetsLambda));
+
+// Initialize targets on stack deployment
+const initTargets = new cr.AwsCustomResource(this, 'InitTargets', {
+  onCreate: {
+    service: 'Lambda',
+    action: 'invoke',
+    parameters: {
+      FunctionName: updateTargetsLambda.functionName,
+      Payload: JSON.stringify({ init: true }),
+    },
+    physicalResourceId: cr.PhysicalResourceId.of('InitTargets'),
+  },
+  policy: cr.AwsCustomResourcePolicy.fromStatements([
+    new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [updateTargetsLambda.functionArn],
+    }),
+  ]),
+});
+```
+
+### 3.5 Load Balancer Configuration
+
+#### 3.5.1 Public ALB (Internet-facing)
 
 ```yaml
-Authorizer:
-  type: JWT
-  identitySource: "$request.header.Authorization"
-  jwtConfiguration:
-    audience:
-      - "fhir4java-api"
-    issuer: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxxxx"
+PublicALB:
+  scheme: internet-facing
+  securityGroups: [sg-public-alb]
+  subnets: [public-subnet-1, public-subnet-2, public-subnet-3]
+
+  # WAF Integration
+  webAclArn: arn:aws:wafv2:...:webacl/fhir4java-waf/xxx
+
+  listeners:
+    - port: 443
+      protocol: HTTPS
+      certificate: arn:aws:acm:...:certificate/xxx
+      defaultAction:
+        type: forward
+        targetGroup: api-gw-vpc-endpoint-tg
+
+  targetGroups:
+    - name: api-gw-vpc-endpoint-tg
+      targetType: ip
+      protocol: HTTPS
+      port: 443
+      healthCheck:
+        protocol: HTTPS
+        path: /fhir/r5/metadata
+        matcher: "200"
+        interval: 30
+        timeout: 5
+      # Targets managed by Lambda automation
 ```
 
-### 3.5 Infrastructure as Code (AWS CDK)
+#### 3.5.2 NLB (VPC Link Target)
 
-#### 3.5.1 CDK Project Structure
+```yaml
+NLB:
+  scheme: internal
+  type: network
+  crossZoneLoadBalancing: true
+  subnets: [private-subnet-1, private-subnet-2, private-subnet-3]
+
+  listeners:
+    - port: 80
+      protocol: TCP
+      defaultAction:
+        type: forward
+        targetGroup: alb-ingress-tg
+
+  targetGroups:
+    - name: alb-ingress-tg
+      targetType: alb  # ALB as target
+      protocol: TCP
+      port: 80
+      target: internal-alb-arn
+```
+
+#### 3.5.3 Internal ALB (Service Routing)
+
+```yaml
+InternalALB:
+  scheme: internal
+  securityGroups: [sg-internal-alb]
+  subnets: [private-subnet-1, private-subnet-2, private-subnet-3]
+
+  listeners:
+    - port: 80
+      protocol: HTTP
+      rules:
+        - priority: 10
+          conditions:
+            - pathPattern: /fhir/*/metadata
+          action:
+            type: forward
+            targetGroup: fhir-metadata-tg
+
+        - priority: 20
+          conditions:
+            - pathPattern: /fhir/*
+          action:
+            type: forward
+            targetGroup: fhir-api-tg
+
+        - priority: 100
+          conditions:
+            - pathPattern: /*
+          action:
+            type: fixed-response
+            statusCode: 404
+
+  targetGroups:
+    - name: fhir-api-tg
+      targetType: ip
+      protocol: HTTP
+      port: 8080
+      healthCheck:
+        path: /actuator/health/liveness
+
+    - name: fhir-metadata-tg
+      targetType: ip
+      protocol: HTTP
+      port: 8080
+      healthCheck:
+        path: /actuator/health/liveness
+```
+
+#### 3.5.4 Admin ALB (VPN Only)
+
+```yaml
+AdminALB:
+  scheme: internal
+  securityGroups: [sg-admin-alb]
+  subnets: [private-subnet-1, private-subnet-2, private-subnet-3]
+
+  listeners:
+    - port: 443
+      protocol: HTTPS
+      certificate: arn:aws:acm:...:certificate/xxx
+      rules:
+        - priority: 10
+          conditions:
+            - pathPattern: /actuator/*
+          action:
+            type: forward
+            targetGroup: fhir-actuator-tg
+
+        - priority: 20
+          conditions:
+            - pathPattern: /api/admin/*
+          action:
+            type: forward
+            targetGroup: fhir-admin-tg
+
+  targetGroups:
+    - name: fhir-actuator-tg
+      targetType: ip
+      protocol: HTTP
+      port: 8080
+      healthCheck:
+        path: /actuator/health/liveness
+
+    - name: fhir-admin-tg
+      targetType: ip
+      protocol: HTTP
+      port: 8080
+      healthCheck:
+        path: /actuator/health/liveness
+```
+
+### 3.6 Infrastructure as Code (AWS CDK)
+
+#### 3.6.1 CDK Project Structure
 
 ```
 infrastructure/
@@ -419,94 +843,73 @@ infrastructure/
 ├── bin/
 │   └── fhir4java-infra.ts
 ├── lib/
-│   ├── fhir4java-stack.ts           # Main stack
+│   ├── fhir4java-stack.ts              # Main stack
 │   ├── constructs/
-│   │   ├── vpc-construct.ts         # VPC, subnets, NAT
-│   │   ├── rds-construct.ts         # RDS PostgreSQL
-│   │   ├── elasticache-construct.ts # ElastiCache cluster
-│   │   ├── api-gateway-construct.ts # API Gateway
-│   │   └── ecs-construct.ts         # ECS Fargate service
+│   │   ├── vpc-construct.ts            # VPC, subnets, NAT
+│   │   ├── rds-construct.ts            # RDS PostgreSQL
+│   │   ├── elasticache-construct.ts    # ElastiCache cluster
+│   │   ├── api-gateway-construct.ts    # Private API Gateway
+│   │   ├── load-balancer-construct.ts  # ALB, NLB configuration
+│   │   ├── compute-construct.ts        # ECS/EKS abstraction
+│   │   ├── ecs-construct.ts            # ECS Fargate services
+│   │   ├── eks-construct.ts            # EKS Fargate services
+│   │   └── vpc-endpoint-automation.ts  # IP change Lambda
 │   └── config/
 │       ├── dev.ts
 │       ├── staging.ts
 │       └── prod.ts
+├── lambda/
+│   └── update-targets/
+│       └── update_alb_targets.py
 └── test/
     └── fhir4java-stack.test.ts
 ```
 
-#### 3.5.2 CDK Stack Example
+#### 3.6.2 Compute Platform Abstraction
 
 ```typescript
-// lib/fhir4java-stack.ts
+// lib/constructs/compute-construct.ts
 import * as cdk from 'aws-cdk-lib';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as rds from 'aws-cdk-lib/aws-rds';
-import * as elasticache from 'aws-cdk-lib/aws-elasticache';
-import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Construct } from 'constructs';
+import { EcsConstruct } from './ecs-construct';
+import { EksConstruct } from './eks-construct';
 
-export class Fhir4JavaStack extends cdk.Stack {
-  constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
+export interface ComputeConstructProps {
+  vpc: ec2.IVpc;
+  platform: 'ecs' | 'eks';
+  services: ServiceDefinition[];
+}
 
-    // VPC
-    const vpc = new ec2.Vpc(this, 'Fhir4JavaVpc', {
-      maxAzs: 3,
-      natGateways: 1,
-      subnetConfiguration: [
-        { name: 'public', subnetType: ec2.SubnetType.PUBLIC },
-        { name: 'private', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        { name: 'database', subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-      ],
-    });
+export interface ServiceDefinition {
+  name: string;
+  enabledEndpoints: string;
+  desiredCount: number;
+  minCount: number;
+  maxCount: number;
+  cpu: number;
+  memory: number;
+  targetGroup: elbv2.IApplicationTargetGroup;
+}
 
-    // RDS PostgreSQL
-    const dbSecret = new secretsmanager.Secret(this, 'DbSecret', {
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: 'fhir4java_app' }),
-        generateStringKey: 'password',
-        excludeCharacters: '/@"\\',
-      },
-    });
+export class ComputeConstruct extends Construct {
+  public readonly services: Map<string, any>;
 
-    const database = new rds.DatabaseInstance(this, 'Database', {
-      engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_16_4,
-      }),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.R6G, ec2.InstanceSize.LARGE),
-      vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-      credentials: rds.Credentials.fromSecret(dbSecret),
-      databaseName: 'fhir4java_prod',
-      multiAz: true,
-      storageEncrypted: true,
-      deletionProtection: true,
-    });
+  constructor(scope: Construct, id: string, props: ComputeConstructProps) {
+    super(scope, id);
 
-    // ElastiCache (Valkey/Redis)
-    const cacheSubnetGroup = new elasticache.CfnSubnetGroup(this, 'CacheSubnetGroup', {
-      description: 'FHIR4Java Cache Subnet Group',
-      subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }).subnetIds,
-    });
-
-    const cacheCluster = new elasticache.CfnReplicationGroup(this, 'CacheCluster', {
-      replicationGroupDescription: 'FHIR4Java ElastiCache Cluster',
-      engine: 'valkey',
-      cacheNodeType: 'cache.r6g.large',
-      numNodeGroups: 2,
-      replicasPerNodeGroup: 1,
-      cacheSubnetGroupName: cacheSubnetGroup.ref,
-      transitEncryptionEnabled: true,
-      atRestEncryptionEnabled: true,
-    });
-
-    // Outputs
-    new cdk.CfnOutput(this, 'DatabaseEndpoint', {
-      value: database.dbInstanceEndpointAddress,
-    });
-    new cdk.CfnOutput(this, 'CacheEndpoint', {
-      value: cacheCluster.attrPrimaryEndPointAddress,
-    });
+    if (props.platform === 'ecs') {
+      const ecs = new EcsConstruct(this, 'ECS', {
+        vpc: props.vpc,
+        services: props.services,
+      });
+      this.services = ecs.services;
+    } else {
+      const eks = new EksConstruct(this, 'EKS', {
+        vpc: props.vpc,
+        services: props.services,
+      });
+      this.services = eks.services;
+    }
   }
 }
 ```
@@ -544,17 +947,23 @@ export class Fhir4JavaStack extends cdk.Stack {
 
 ```xml
 <dependencies>
-    <!-- AWS Secrets Manager JDBC Driver -->
+    <!-- AWS Secrets Manager JDBC Driver (for Secrets Manager auth) -->
     <dependency>
         <groupId>com.amazonaws.secretsmanager</groupId>
         <artifactId>aws-secretsmanager-jdbc</artifactId>
         <version>${aws-secretsmanager-jdbc.version}</version>
     </dependency>
 
-    <!-- AWS SDK for Secrets Manager (ElastiCache auth token) -->
+    <!-- AWS SDK for Secrets Manager -->
     <dependency>
         <groupId>software.amazon.awssdk</groupId>
         <artifactId>secretsmanager</artifactId>
+    </dependency>
+
+    <!-- AWS SDK for RDS (for IAM auth) -->
+    <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>rds</artifactId>
     </dependency>
 
     <!-- AWS SDK for STS (assume role) -->
@@ -565,29 +974,95 @@ export class Fhir4JavaStack extends cdk.Stack {
 </dependencies>
 ```
 
-### 4.2 Application Profiles
+### 4.2 Endpoint Filtering Configuration
 
-#### 4.2.1 application-aws.yml (New File)
+#### 4.2.1 EndpointFilterConfiguration.java (New File)
+
+```java
+package org.fhirframework.server.config;
+
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.io.IOException;
+import java.util.Set;
+
+@Configuration
+public class EndpointFilterConfiguration {
+
+    @Value("${fhir4java.endpoints.enabled:all}")
+    private String enabledEndpoints;
+
+    @Bean
+    public FilterRegistrationBean<EndpointFilter> endpointFilter() {
+        FilterRegistrationBean<EndpointFilter> registration = new FilterRegistrationBean<>();
+        registration.setFilter(new EndpointFilter(enabledEndpoints));
+        registration.addUrlPatterns("/*");
+        registration.setOrder(1);
+        return registration;
+    }
+
+    public static class EndpointFilter implements Filter {
+        private final String enabledEndpoints;
+        private final Set<String> allowedPrefixes;
+
+        public EndpointFilter(String enabledEndpoints) {
+            this.enabledEndpoints = enabledEndpoints;
+            this.allowedPrefixes = switch (enabledEndpoints) {
+                case "fhir" -> Set.of("/fhir");
+                case "metadata" -> Set.of("/fhir/r4b/metadata", "/fhir/r5/metadata");
+                case "actuator" -> Set.of("/actuator");
+                case "admin" -> Set.of("/api/admin");
+                case "all" -> Set.of("/");
+                default -> Set.of("/");
+            };
+        }
+
+        @Override
+        public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+                throws IOException, ServletException {
+
+            HttpServletRequest httpRequest = (HttpServletRequest) request;
+            HttpServletResponse httpResponse = (HttpServletResponse) response;
+            String path = httpRequest.getRequestURI();
+
+            // Always allow health checks
+            if (path.startsWith("/actuator/health")) {
+                chain.doFilter(request, response);
+                return;
+            }
+
+            // Check if path is allowed for this service
+            if ("all".equals(enabledEndpoints) || isPathAllowed(path)) {
+                chain.doFilter(request, response);
+            } else {
+                httpResponse.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                httpResponse.getWriter().write("Endpoint not available on this service");
+            }
+        }
+
+        private boolean isPathAllowed(String path) {
+            return allowedPrefixes.stream().anyMatch(path::startsWith);
+        }
+    }
+}
+```
+
+### 4.3 Application Profiles
+
+#### 4.3.1 application-aws.yml (AWS Base Profile)
 
 ```yaml
-# AWS Production Profile
+# AWS Base Profile
 spring:
   config:
     activate:
       on-profile: aws
-
-  # RDS PostgreSQL with Secrets Manager
-  datasource:
-    url: jdbc-secretsmanager:postgresql://${RDS_ENDPOINT}:${RDS_PORT:5432}/${RDS_DATABASE:fhir4java_prod}
-    driver-class-name: com.amazonaws.secretsmanager.sql.AWSSecretsManagerPostgreSQLDriver
-    username: ${RDS_SECRET_NAME}  # Secret name, not actual username
-    hikari:
-      pool-name: fhir4java-aws-pool
-      minimum-idle: 5
-      maximum-pool-size: 20
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
 
   jpa:
     hibernate:
@@ -628,19 +1103,22 @@ spring:
       time-to-live: 3600000
       cache-null-values: false
 
-# FHIR4Java AWS-specific settings
+# FHIR4Java settings
 fhir4java:
   server:
     base-url: https://${API_GATEWAY_DOMAIN}/fhir
 
+  endpoints:
+    enabled: ${FHIR4JAVA_ENDPOINTS_ENABLED:all}
+
   validation:
-    profile-validator-enabled: false  # Enable after initial deployment
+    profile-validator-enabled: false
 
   plugins:
     authentication:
-      enabled: true  # Enable for production
+      enabled: true
     authorization:
-      enabled: true  # Enable for production
+      enabled: true
     audit:
       enabled: true
     telemetry:
@@ -651,7 +1129,7 @@ fhir4java:
     default-tenant-id: default
     header-name: X-Tenant-ID
 
-# Actuator for health checks
+# Actuator
 management:
   endpoints:
     web:
@@ -668,7 +1146,7 @@ management:
     readinessstate:
       enabled: true
 
-# Logging for AWS CloudWatch
+# Logging (JSON for CloudWatch)
 logging:
   pattern:
     console: '{"timestamp":"%d{ISO8601}","level":"%level","logger":"%logger","message":"%msg","thread":"%thread"}%n'
@@ -678,41 +1156,129 @@ logging:
     org.hibernate.SQL: WARN
 ```
 
-#### 4.2.2 application-aws-dev.yml (AWS Development)
+#### 4.3.2 application-aws-iam.yml (IAM Database Auth)
 
 ```yaml
-# AWS Development Profile (smaller instances, relaxed security)
+# AWS with IAM Database Authentication
 spring:
   config:
     activate:
-      on-profile: aws-dev
+      on-profile: aws-iam
 
   datasource:
+    url: jdbc:postgresql://${RDS_ENDPOINT}:${RDS_PORT:5432}/${RDS_DATABASE:fhir4java_prod}
+    username: ${RDS_USERNAME:fhir4java_app}
+    # Password generated dynamically via IAM token
     hikari:
-      minimum-idle: 2
-      maximum-pool-size: 5
-
-fhir4java:
-  validation:
-    profile-validator-enabled: false
-  plugins:
-    authentication:
-      enabled: false
-    authorization:
-      enabled: false
+      pool-name: fhir4java-iam-pool
+      minimum-idle: 5
+      maximum-pool-size: 20
+      connection-timeout: 30000
+      # Token refresh before expiry (tokens last 15 min)
+      max-lifetime: 840000  # 14 minutes
 ```
 
-### 4.3 ElastiCache Configuration Class
+#### 4.3.3 application-aws-secrets.yml (Secrets Manager Auth)
 
-#### 4.3.1 ElastiCacheConfig.java (New File)
+```yaml
+# AWS with Secrets Manager Authentication
+spring:
+  config:
+    activate:
+      on-profile: aws-secrets
+
+  datasource:
+    url: jdbc-secretsmanager:postgresql://${RDS_ENDPOINT}:${RDS_PORT:5432}/${RDS_DATABASE:fhir4java_prod}
+    driver-class-name: com.amazonaws.secretsmanager.sql.AWSSecretsManagerPostgreSQLDriver
+    username: ${RDS_SECRET_NAME}  # Secret name, not actual username
+    hikari:
+      pool-name: fhir4java-secrets-pool
+      minimum-idle: 5
+      maximum-pool-size: 20
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+```
+
+### 4.4 IAM Database Authentication
+
+#### 4.4.1 RdsIamAuthConfig.java (New File)
 
 ```java
 package org.fhirframework.server.config;
 
-import io.lettuce.core.ClientOptions;
-import io.lettuce.core.SocketOptions;
+import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.rds.RdsUtilities;
+import software.amazon.awssdk.services.rds.model.GenerateAuthenticationTokenRequest;
+
+import javax.sql.DataSource;
+
+@Configuration
+@Profile("aws-iam")
+public class RdsIamAuthConfig {
+
+    @Value("${RDS_ENDPOINT}")
+    private String rdsEndpoint;
+
+    @Value("${RDS_PORT:5432}")
+    private int rdsPort;
+
+    @Value("${RDS_USERNAME:fhir4java_app}")
+    private String rdsUsername;
+
+    @Value("${AWS_REGION:us-east-1}")
+    private String awsRegion;
+
+    @Bean
+    public DataSource dataSource(DataSourceProperties properties) {
+        HikariDataSource dataSource = properties.initializeDataSourceBuilder()
+                .type(HikariDataSource.class)
+                .build();
+
+        // Generate initial IAM auth token
+        String authToken = generateAuthToken();
+        dataSource.setPassword(authToken);
+
+        // Set up token refresh
+        dataSource.setConnectionInitSql("SELECT 1");
+
+        return new IamAuthDataSourceWrapper(dataSource, this::generateAuthToken);
+    }
+
+    private String generateAuthToken() {
+        RdsUtilities rdsUtilities = RdsUtilities.builder()
+                .region(Region.of(awsRegion))
+                .credentialsProvider(DefaultCredentialsProvider.create())
+                .build();
+
+        GenerateAuthenticationTokenRequest request = GenerateAuthenticationTokenRequest.builder()
+                .hostname(rdsEndpoint)
+                .port(rdsPort)
+                .username(rdsUsername)
+                .build();
+
+        return rdsUtilities.generateAuthenticationToken(request);
+    }
+}
+```
+
+### 4.5 ElastiCache Configuration
+
+#### 4.5.1 ElastiCacheConfig.java
+
+```java
+package org.fhirframework.server.config;
+
 import io.lettuce.core.cluster.ClusterClientOptions;
 import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
+import io.lettuce.core.SocketOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -743,13 +1309,11 @@ public class ElastiCacheConfig {
 
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {
-        // Cluster configuration for ElastiCache
         RedisClusterConfiguration clusterConfig = new RedisClusterConfiguration(
             Collections.singletonList(redisHost + ":" + redisPort)
         );
         clusterConfig.setPassword(redisPassword);
 
-        // Topology refresh for cluster mode
         ClusterTopologyRefreshOptions topologyRefreshOptions = ClusterTopologyRefreshOptions.builder()
             .enableAdaptiveRefreshTrigger(
                 ClusterTopologyRefreshOptions.RefreshTrigger.MOVED_REDIRECT,
@@ -788,118 +1352,182 @@ public class ElastiCacheConfig {
 }
 ```
 
-### 4.4 Secrets Manager Integration
-
-#### 4.4.1 SecretsManagerConfig.java (New File)
-
-```java
-package org.fhirframework.server.config;
-
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
-
-@Configuration
-@Profile("aws")
-public class SecretsManagerConfig {
-
-    @Bean
-    public SecretsManagerClient secretsManagerClient() {
-        return SecretsManagerClient.builder()
-            .region(Region.of(System.getenv("AWS_REGION")))
-            .build();
-    }
-}
-```
-
-### 4.5 Health Check Enhancements
-
-#### 4.5.1 ElastiCacheHealthIndicator.java (New File)
-
-```java
-package org.fhirframework.server.health;
-
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.context.annotation.Profile;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.stereotype.Component;
-
-@Component
-@Profile("aws")
-public class ElastiCacheHealthIndicator implements HealthIndicator {
-
-    private final RedisConnectionFactory connectionFactory;
-
-    public ElastiCacheHealthIndicator(RedisConnectionFactory connectionFactory) {
-        this.connectionFactory = connectionFactory;
-    }
-
-    @Override
-    public Health health() {
-        try {
-            connectionFactory.getConnection().ping();
-            return Health.up()
-                .withDetail("type", "ElastiCache")
-                .withDetail("cluster", "available")
-                .build();
-        } catch (Exception e) {
-            return Health.down()
-                .withDetail("type", "ElastiCache")
-                .withException(e)
-                .build();
-        }
-    }
-}
-```
-
 ---
 
 ## 5. Security Configuration
 
-### 5.1 IAM Roles and Policies
+### 5.1 Container Security Hardening
 
-#### 5.1.1 ECS Task Role
+#### 5.1.1 Security Requirements
+
+| Control | Implementation |
+|---------|---------------|
+| Immutable containers | Read-only root filesystem |
+| Non-root execution | Run as UID 1001, drop all capabilities |
+| No privilege escalation | `allowPrivilegeEscalation: false` |
+| Minimal base image | `gcr.io/distroless/java21-debian12` |
+| No secrets in images | All secrets via Secrets Manager/IAM |
+| Image scanning | ECR scan-on-push enabled |
+| Signed images | AWS Signer (optional) |
+
+#### 5.1.2 Hardened Dockerfile
+
+```dockerfile
+# Multi-stage build for FHIR4Java
+FROM eclipse-temurin:25-jdk-alpine AS builder
+
+WORKDIR /app
+
+# Copy Maven wrapper and pom files
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+COPY fhir4java-core/pom.xml fhir4java-core/
+COPY fhir4java-persistence/pom.xml fhir4java-persistence/
+COPY fhir4java-plugin/pom.xml fhir4java-plugin/
+COPY fhir4java-api/pom.xml fhir4java-api/
+COPY fhir4java-server/pom.xml fhir4java-server/
+
+# Download dependencies (cached layer)
+RUN ./mvnw dependency:go-offline -B
+
+# Copy source and build
+COPY . .
+RUN ./mvnw clean package -DskipTests -pl fhir4java-server -am
+
+# Extract layers for better caching
+RUN java -Djarmode=layertools -jar fhir4java-server/target/fhir4java-server-*.jar extract
+
+# Runtime stage - Distroless for minimal attack surface
+FROM gcr.io/distroless/java21-debian12:nonroot
+
+WORKDIR /app
+
+# Copy extracted layers
+COPY --from=builder /app/dependencies/ ./
+COPY --from=builder /app/spring-boot-loader/ ./
+COPY --from=builder /app/snapshot-dependencies/ ./
+COPY --from=builder /app/application/ ./
+
+# Run as non-root user (UID 65532 in distroless)
+USER nonroot:nonroot
+
+# JVM options for container
+ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
+```
+
+#### 5.1.3 ECS Task Security Context
+
+```json
+{
+  "containerDefinitions": [
+    {
+      "name": "fhir4java",
+      "readonlyRootFilesystem": true,
+      "user": "65532:65532",
+      "linuxParameters": {
+        "capabilities": {
+          "drop": ["ALL"]
+        },
+        "initProcessEnabled": true
+      },
+      "mountPoints": [
+        {
+          "sourceVolume": "tmp",
+          "containerPath": "/tmp",
+          "readOnly": false
+        }
+      ]
+    }
+  ],
+  "volumes": [
+    {
+      "name": "tmp",
+      "host": {}
+    }
+  ]
+}
+```
+
+#### 5.1.4 EKS Pod Security Context
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: fhir4java
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}
+```
+
+### 5.2 IAM Roles and Policies
+
+#### 5.2.1 ECS Task Role (Least Privilege)
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "SecretsManagerAccess",
       "Effect": "Allow",
       "Action": [
         "secretsmanager:GetSecretValue",
         "secretsmanager:DescribeSecret"
       ],
       "Resource": [
-        "arn:aws:secretsmanager:*:*:secret:fhir4java/*"
+        "arn:aws:secretsmanager:us-east-1:*:secret:fhir4java/prod/*"
       ]
     },
     {
+      "Sid": "RdsIamAuth",
       "Effect": "Allow",
-      "Action": [
-        "kms:Decrypt"
-      ],
-      "Resource": [
-        "arn:aws:kms:*:*:key/*"
-      ],
+      "Action": "rds-db:connect",
+      "Resource": "arn:aws:rds-db:us-east-1:*:dbuser:*/fhir4java_app"
+    },
+    {
+      "Sid": "KmsDecrypt",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:us-east-1:*:key/*",
       "Condition": {
         "StringEquals": {
-          "kms:ViaService": "secretsmanager.*.amazonaws.com"
+          "kms:ViaService": "secretsmanager.us-east-1.amazonaws.com"
         }
       }
     },
     {
+      "Sid": "CloudWatchLogs",
       "Effect": "Allow",
       "Action": [
         "logs:CreateLogStream",
         "logs:PutLogEvents"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:logs:us-east-1:*:log-group:/ecs/fhir4java:*"
     },
     {
+      "Sid": "XRayTracing",
       "Effect": "Allow",
       "Action": [
         "xray:PutTraceSegments",
@@ -911,7 +1539,7 @@ public class ElastiCacheHealthIndicator implements HealthIndicator {
 }
 ```
 
-#### 5.1.2 API Gateway Resource Policy
+#### 5.2.2 ECS Execution Role
 
 ```json
 {
@@ -919,31 +1547,45 @@ public class ElastiCacheHealthIndicator implements HealthIndicator {
   "Statement": [
     {
       "Effect": "Allow",
-      "Principal": "*",
-      "Action": "execute-api:Invoke",
-      "Resource": "arn:aws:execute-api:*:*:*/*/*/*"
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
     },
     {
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "execute-api:Invoke",
-      "Resource": "arn:aws:execute-api:*:*:*/*/GET/actuator/*",
-      "Condition": {
-        "NotIpAddress": {
-          "aws:SourceIp": ["10.0.0.0/16"]
-        }
-      }
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:*:log-group:/ecs/fhir4java:*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:us-east-1:*:secret:fhir4java/prod/elasticache*"
+      ]
     }
   ]
 }
 ```
 
-### 5.2 Network Security
+### 5.3 Network Security
 
-#### 5.2.1 VPC Endpoints (Recommended)
+#### 5.3.1 VPC Endpoints (Recommended)
 
 ```yaml
 VPCEndpoints:
+  - service: execute-api  # For Private API Gateway
+    type: Interface
+    privateDnsEnabled: true
+
   - service: secretsmanager
     type: Interface
     privateDnsEnabled: true
@@ -968,76 +1610,29 @@ VPCEndpoints:
     type: Gateway
 ```
 
-### 5.3 Encryption
+### 5.4 Encryption
 
 | Resource | Encryption Type | Key Management |
 |----------|-----------------|----------------|
 | RDS | At-rest (AES-256) | AWS KMS CMK |
 | ElastiCache | At-rest + In-transit | AWS KMS CMK |
 | Secrets Manager | At-rest (AES-256) | AWS KMS CMK |
+| ALB | TLS 1.3 | ACM Certificate |
 | API Gateway | TLS 1.2+ | ACM Certificate |
 | ECS Task | In-transit (TLS) | N/A |
+| ECR Images | At-rest | AWS KMS |
 
 ---
 
 ## 6. Deployment Strategy
 
-### 6.1 Container Image
+### 6.1 Multi-Service ECS Task Definitions
 
-#### 6.1.1 Dockerfile
-
-```dockerfile
-# Multi-stage build for FHIR4Java
-FROM eclipse-temurin:25-jdk-alpine AS builder
-
-WORKDIR /app
-COPY pom.xml .
-COPY fhir4java-core/pom.xml fhir4java-core/
-COPY fhir4java-persistence/pom.xml fhir4java-persistence/
-COPY fhir4java-plugin/pom.xml fhir4java-plugin/
-COPY fhir4java-api/pom.xml fhir4java-api/
-COPY fhir4java-server/pom.xml fhir4java-server/
-
-# Download dependencies
-RUN ./mvnw dependency:go-offline -B
-
-# Copy source and build
-COPY . .
-RUN ./mvnw clean package -DskipTests -pl fhir4java-server -am
-
-# Runtime stage
-FROM eclipse-temurin:25-jre-alpine
-
-WORKDIR /app
-
-# Install curl for health checks
-RUN apk add --no-cache curl
-
-# Copy JAR
-COPY --from=builder /app/fhir4java-server/target/fhir4java-server-*.jar app.jar
-
-# Non-root user
-RUN addgroup -g 1001 fhir4java && \
-    adduser -u 1001 -G fhir4java -D fhir4java
-USER fhir4java
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/actuator/health/liveness || exit 1
-
-# JVM options for container
-ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
-
-EXPOSE 8080
-
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
-```
-
-### 6.2 ECS Task Definition
+#### 6.1.1 fhir-api Service
 
 ```json
 {
-  "family": "fhir4java",
+  "family": "fhir-api",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "1024",
@@ -1046,9 +1641,11 @@ ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
   "taskRoleArn": "arn:aws:iam::xxx:role/fhir4java-task-role",
   "containerDefinitions": [
     {
-      "name": "fhir4java",
+      "name": "fhir-api",
       "image": "xxx.dkr.ecr.us-east-1.amazonaws.com/fhir4java:latest",
       "essential": true,
+      "readonlyRootFilesystem": true,
+      "user": "65532:65532",
       "portMappings": [
         {
           "containerPort": 8080,
@@ -1056,14 +1653,15 @@ ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
         }
       ],
       "environment": [
-        {"name": "SPRING_PROFILES_ACTIVE", "value": "aws"},
+        {"name": "SPRING_PROFILES_ACTIVE", "value": "aws,aws-iam"},
+        {"name": "FHIR4JAVA_ENDPOINTS_ENABLED", "value": "fhir"},
         {"name": "RDS_ENDPOINT", "value": "fhir4java-prod.xxx.rds.amazonaws.com"},
         {"name": "RDS_PORT", "value": "5432"},
         {"name": "RDS_DATABASE", "value": "fhir4java_prod"},
-        {"name": "RDS_SECRET_NAME", "value": "fhir4java/prod/rds"},
+        {"name": "RDS_USERNAME", "value": "fhir4java_app"},
         {"name": "ELASTICACHE_ENDPOINT", "value": "fhir4java-cache.xxx.cache.amazonaws.com"},
         {"name": "ELASTICACHE_PORT", "value": "6379"},
-        {"name": "API_GATEWAY_DOMAIN", "value": "api.fhir4java.example.com"},
+        {"name": "API_GATEWAY_DOMAIN", "value": "fhir.example.com"},
         {"name": "AWS_REGION", "value": "us-east-1"}
       ],
       "secrets": [
@@ -1072,24 +1670,168 @@ ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
           "valueFrom": "arn:aws:secretsmanager:us-east-1:xxx:secret:fhir4java/prod/elasticache:authToken::"
         }
       ],
+      "linuxParameters": {
+        "capabilities": {
+          "drop": ["ALL"]
+        },
+        "initProcessEnabled": true
+      },
+      "mountPoints": [
+        {
+          "sourceVolume": "tmp",
+          "containerPath": "/tmp",
+          "readOnly": false
+        }
+      ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "/ecs/fhir4java",
           "awslogs-region": "us-east-1",
-          "awslogs-stream-prefix": "ecs"
+          "awslogs-stream-prefix": "fhir-api"
         }
       },
       "healthCheck": {
-        "command": ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health/liveness || exit 1"],
+        "command": ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health/liveness || exit 1"],
         "interval": 30,
         "timeout": 10,
         "retries": 3,
         "startPeriod": 60
       }
     }
+  ],
+  "volumes": [
+    {
+      "name": "tmp",
+      "host": {}
+    }
   ]
 }
+```
+
+#### 6.1.2 Service-Specific Environment Variables
+
+| Service | `FHIR4JAVA_ENDPOINTS_ENABLED` | Target Group |
+|---------|-------------------------------|--------------|
+| fhir-api | `fhir` | fhir-api-tg |
+| fhir-metadata | `metadata` | fhir-metadata-tg |
+| fhir-actuator | `actuator` | fhir-actuator-tg |
+| fhir-admin | `admin` | fhir-admin-tg |
+
+### 6.2 EKS Kubernetes Manifests
+
+#### 6.2.1 Deployment (fhir-api)
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fhir-api
+  namespace: fhir4java
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fhir-api
+  template:
+    metadata:
+      labels:
+        app: fhir-api
+    spec:
+      serviceAccountName: fhir4java-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fhir-api
+          image: xxx.dkr.ecr.us-east-1.amazonaws.com/fhir4java:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "aws,aws-iam"
+            - name: FHIR4JAVA_ENDPOINTS_ENABLED
+              value: "fhir"
+          envFrom:
+            - configMapRef:
+                name: fhir4java-config
+            - secretRef:
+                name: fhir4java-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
+```
+
+#### 6.2.2 Ingress (AWS Load Balancer Controller)
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fhir-ingress
+  namespace: fhir4java
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/liveness
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /fhir/r4b/metadata
+            pathType: Exact
+            backend:
+              service:
+                name: fhir-metadata
+                port:
+                  number: 8080
+          - path: /fhir/r5/metadata
+            pathType: Exact
+            backend:
+              service:
+                name: fhir-metadata
+                port:
+                  number: 8080
+          - path: /fhir
+            pathType: Prefix
+            backend:
+              service:
+                name: fhir-api
+                port:
+                  number: 8080
 ```
 
 ### 6.3 CI/CD Pipeline
@@ -1109,11 +1851,12 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: fhir4java
   ECS_CLUSTER: fhir4java-cluster
-  ECS_SERVICE: fhir4java-service
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
 
     steps:
       - uses: actions/checkout@v4
@@ -1148,11 +1891,32 @@ jobs:
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Deploy to ECS
+      - name: Scan image for vulnerabilities
+        run: |
+          aws ecr start-image-scan \
+            --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [fhir-api, fhir-metadata, fhir-actuator, fhir-admin]
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy ${{ matrix.service }} to ECS
         run: |
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
+            --service ${{ matrix.service }} \
             --force-new-deployment
 ```
 
@@ -1189,7 +1953,6 @@ spring:
 
   datasource:
     url: jdbc:postgresql://localhost:5432/fhir4java_test
-    # Standard driver for LocalStack (no Secrets Manager)
     driver-class-name: org.postgresql.Driver
     username: fhir4java
     password: fhir4java
@@ -1217,12 +1980,11 @@ spring:
     activate:
       on-profile: integration-test
 
-  # Use TestContainers for RDS-like PostgreSQL
-  # Use TestContainers for Redis
-
 fhir4java:
   validation:
     profile-validator-enabled: false
+  endpoints:
+    enabled: all
 ```
 
 ---
@@ -1241,6 +2003,7 @@ fhir4java:
 | Cache Memory | ElastiCache | > 80% |
 | API Latency | API Gateway | > 2000ms p99 |
 | API 5xx Errors | API Gateway | > 1% |
+| ALB Target Health | ALB | < 2 healthy targets |
 
 ### 8.2 CloudWatch Dashboard
 
@@ -1254,6 +2017,16 @@ fhir4java:
         "metrics": [
           ["AWS/ApiGateway", "Latency", "ApiId", "xxx", {"stat": "p99"}],
           ["...", {"stat": "Average"}]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Service Health",
+        "metrics": [
+          ["AWS/ECS", "CPUUtilization", "ServiceName", "fhir-api", "ClusterName", "fhir4java-cluster"],
+          [".", "MemoryUtilization", ".", ".", ".", "."]
         ]
       }
     },
@@ -1284,7 +2057,6 @@ fhir4java:
 ### 8.3 X-Ray Tracing
 
 ```java
-// Add to application for distributed tracing
 @Configuration
 @Profile("aws")
 public class XRayConfig {
@@ -1306,12 +2078,15 @@ public class XRayConfig {
 |---------|---------------|---------------------|
 | RDS PostgreSQL | db.r6g.large, Multi-AZ, 100GB | ~$350 |
 | ElastiCache | cache.r6g.large, 2 shards, 1 replica | ~$400 |
-| ECS Fargate | 2 tasks, 1 vCPU, 2GB | ~$100 |
+| ECS Fargate | 6 tasks total (all services), 1 vCPU, 2GB each | ~$200 |
+| Public ALB | Internet-facing, WAF | ~$50 |
+| NLB | Internal | ~$25 |
+| Internal ALBs | 2x Internal | ~$50 |
 | API Gateway | HTTP API, 10M requests | ~$10 |
 | NAT Gateway | 1 NAT, 100GB data | ~$50 |
 | CloudWatch | Logs, Metrics, Alarms | ~$30 |
-| Secrets Manager | 2 secrets | ~$1 |
-| **Total** | | **~$940/month** |
+| Secrets Manager | 3 secrets | ~$2 |
+| **Total** | | **~$1,170/month** |
 
 ### 9.2 Cost Optimization Options
 
@@ -1319,9 +2094,9 @@ public class XRayConfig {
 |--------------|---------|-----------|
 | Reserved Instances (1yr) | ~30% | Commitment |
 | Savings Plans (1yr) | ~25% | Commitment |
-| ElastiCache Serverless | Variable | Pay-per-use |
 | Single-AZ RDS (dev) | ~50% | No HA |
 | Smaller instance classes | ~40% | Performance |
+| Combine services (dev) | ~50% on compute | Less isolation |
 
 ---
 
@@ -1333,50 +2108,53 @@ public class XRayConfig {
 |------|-------|-------------|
 | Create AWS CDK project | DevOps | CDK stack skeleton |
 | Deploy VPC and networking | DevOps | VPC, subnets, security groups |
-| Deploy RDS PostgreSQL | DevOps | RDS instance + Secrets Manager |
+| Deploy RDS PostgreSQL | DevOps | RDS instance + IAM auth enabled |
 | Deploy ElastiCache cluster | DevOps | ElastiCache + auth token |
 | Create IAM roles/policies | DevOps | Task role, execution role |
+| Deploy VPC Endpoints | DevOps | execute-api, secretsmanager, etc. |
 
 ### Phase 2: Application Integration (Week 3-4)
 
 | Task | Owner | Deliverable |
 |------|-------|-------------|
 | Add AWS SDK dependencies | Backend | Updated pom.xml |
-| Create aws profile | Backend | application-aws.yml |
+| Implement endpoint filtering | Backend | EndpointFilterConfiguration.java |
+| Create AWS profiles | Backend | application-aws*.yml |
+| Implement IAM DB auth | Backend | RdsIamAuthConfig.java |
 | Implement ElastiCache config | Backend | ElastiCacheConfig.java |
-| Implement Secrets Manager integration | Backend | SecretsManagerConfig.java |
-| Add health indicators | Backend | ElastiCacheHealthIndicator.java |
-| Update Dockerfile | Backend | Production Dockerfile |
+| Update Dockerfile (hardened) | Backend | Distroless Dockerfile |
 
-### Phase 3: API Gateway Setup (Week 5)
+### Phase 3: Load Balancer & API Gateway Setup (Week 5-6)
 
 | Task | Owner | Deliverable |
 |------|-------|-------------|
-| Deploy API Gateway | DevOps | HTTP API with VPC Link |
-| Configure routes | DevOps | /fhir/* proxy routes |
-| Set up custom domain | DevOps | Route 53 + ACM |
-| Configure throttling | DevOps | Rate limits |
-| Set up access logging | DevOps | CloudWatch log group |
+| Deploy Public ALB + WAF | DevOps | Internet-facing ALB |
+| Deploy Private API Gateway | DevOps | HTTP API with custom domain |
+| Deploy NLB (VPC Link) | DevOps | Internal NLB |
+| Deploy Internal ALBs | DevOps | Service routing ALB, Admin ALB |
+| Implement VPC Endpoint IP automation | DevOps | Lambda + EventBridge |
+| Configure Route 53 | DevOps | DNS records |
 
-### Phase 4: CI/CD and Monitoring (Week 6)
+### Phase 4: Multi-Service Deployment (Week 7-8)
 
 | Task | Owner | Deliverable |
 |------|-------|-------------|
 | Create ECR repository | DevOps | Container registry |
-| Deploy ECS cluster | DevOps | Fargate cluster + service |
+| Deploy ECS cluster | DevOps | Fargate cluster |
+| Deploy 4 ECS services | DevOps | fhir-api, fhir-metadata, fhir-actuator, fhir-admin |
+| Configure auto-scaling | DevOps | Scaling policies |
 | Create GitHub Actions workflow | DevOps | CI/CD pipeline |
-| Set up CloudWatch dashboard | DevOps | Monitoring dashboard |
-| Configure alarms | DevOps | Alert rules |
 
-### Phase 5: Testing and Validation (Week 7-8)
+### Phase 5: Testing and Validation (Week 9-10)
 
 | Task | Owner | Deliverable |
 |------|-------|-------------|
 | Run Flyway migrations | Backend | Database schema |
-| Smoke test endpoints | QA | Test results |
+| Smoke test all endpoints | QA | Test results |
+| Security scan (images, endpoints) | Security | Vulnerability report |
 | Load testing | QA | Performance baseline |
-| Security scan | Security | Vulnerability report |
-| Documentation | All | Runbook, architecture docs |
+| Set up CloudWatch dashboard | DevOps | Monitoring dashboard |
+| Configure alarms | DevOps | Alert rules |
 
 ---
 
@@ -1384,13 +2162,15 @@ public class XRayConfig {
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| Cold start latency | Medium | Low | Pre-warm containers, connection pooling |
+| VPC Endpoint IP change breaks routing | High | Low | Lambda automation with EventBridge |
+| Cold start latency | Medium | Low | Pre-warm containers, keep-alive |
+| IAM token refresh failure | High | Low | Connection retry with exponential backoff |
 | Secrets rotation failure | High | Low | Monitor rotation, alert on failure |
 | ElastiCache failover | Medium | Low | Multi-AZ, automatic failover |
 | RDS failover delay | High | Low | Multi-AZ, connection retry logic |
 | API Gateway throttling | Medium | Medium | Request proper limits, implement backoff |
 | Cost overrun | Medium | Medium | Set billing alarms, right-size instances |
-| Network connectivity | High | Low | VPC endpoints, proper security groups |
+| Service isolation breach | High | Low | Strict security groups, endpoint filtering |
 
 ---
 
@@ -1400,14 +2180,15 @@ public class XRayConfig {
 - [Amazon ElastiCache Best Practices](https://aws.amazon.com/blogs/database/best-practices-valkey-redis-oss-clients-and-amazon-elasticache/)
 - [Spring Boot with ElastiCache](https://aws.amazon.com/blogs/database/integrate-your-spring-boot-application-with-amazon-elasticache/)
 - [AWS Secrets Manager JDBC](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_jdbc.html)
-- [Spring Boot with RDS](https://aws.amazon.com/blogs/opensource/using-a-postgresql-database-with-amazon-rds-and-spring-boot/)
-- [API Gateway HTTP APIs](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api.html)
+- [RDS IAM Database Authentication](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html)
+- [Private API Gateway](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-private-apis.html)
 - [AWS CDK Best Practices](https://docs.aws.amazon.com/cdk/v2/guide/best-practices.html)
+- [Distroless Container Images](https://github.com/GoogleContainerTools/distroless)
 
 ### Community Resources
-- [RDS Authentication with Spring Boot - Secrets Manager](https://chariotsolutions.com/blog/post/rds-database-authentication-with-spring-boot-part-1-secrets-manager/)
+- [RDS Authentication with Spring Boot - IAM Auth](https://chariotsolutions.com/blog/post/rds-database-authentication-with-spring-boot-part-2-iam-authentication/)
 - [Spring Cloud AWS Redis](https://reflectoring.io/spring-cloud-aws-redis/)
-- [Spring Boot AWS Secrets Manager Integration](https://www.baeldung.com/spring-boot-integrate-aws-secrets-manager)
+- [EKS Security Best Practices](https://aws.github.io/aws-eks-best-practices/security/docs/)
 
 ### Internal References
 - [CLAUDE.md](../CLAUDE.md) - Project context
@@ -1419,15 +2200,17 @@ public class XRayConfig {
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `SPRING_PROFILES_ACTIVE` | Active Spring profile | `aws` |
+| `SPRING_PROFILES_ACTIVE` | Active Spring profiles | `aws,aws-iam` |
+| `FHIR4JAVA_ENDPOINTS_ENABLED` | Endpoint filter | `fhir`, `metadata`, `actuator`, `admin`, `all` |
 | `RDS_ENDPOINT` | RDS instance endpoint | `fhir4java.xxx.rds.amazonaws.com` |
 | `RDS_PORT` | RDS port | `5432` |
 | `RDS_DATABASE` | Database name | `fhir4java_prod` |
-| `RDS_SECRET_NAME` | Secrets Manager secret name | `fhir4java/prod/rds` |
+| `RDS_USERNAME` | Database user (IAM auth) | `fhir4java_app` |
+| `RDS_SECRET_NAME` | Secrets Manager secret (Secrets auth) | `fhir4java/prod/rds` |
 | `ELASTICACHE_ENDPOINT` | ElastiCache primary endpoint | `fhir4java.xxx.cache.amazonaws.com` |
 | `ELASTICACHE_PORT` | ElastiCache port | `6379` |
-| `ELASTICACHE_AUTH_TOKEN` | ElastiCache auth token (from Secrets Manager) | `<secret>` |
-| `API_GATEWAY_DOMAIN` | Custom domain for API Gateway | `api.fhir4java.example.com` |
+| `ELASTICACHE_AUTH_TOKEN` | ElastiCache auth token | `<from-secrets>` |
+| `API_GATEWAY_DOMAIN` | Custom domain | `fhir.example.com` |
 | `AWS_REGION` | AWS region | `us-east-1` |
 
 ---
@@ -1438,15 +2221,22 @@ public class XRayConfig {
 
 - [ ] VPC and subnets created
 - [ ] Security groups configured
-- [ ] RDS PostgreSQL deployed and accessible
-- [ ] ElastiCache cluster deployed and accessible
+- [ ] VPC Endpoints deployed (execute-api, secretsmanager, etc.)
+- [ ] RDS PostgreSQL deployed with IAM auth enabled
+- [ ] ElastiCache cluster deployed
 - [ ] Secrets Manager secrets created
-- [ ] IAM roles and policies created
-- [ ] ECR repository created
-- [ ] Container image built and pushed
-- [ ] ECS cluster and service deployed
-- [ ] API Gateway configured
-- [ ] Custom domain and SSL certificate
+- [ ] IAM roles and policies created (least privilege)
+- [ ] VPC Endpoint IP automation Lambda deployed
+- [ ] Public ALB + WAF deployed
+- [ ] Private API Gateway with custom domain configured
+- [ ] NLB (VPC Link target) deployed
+- [ ] Internal ALBs deployed (service routing, admin)
+- [ ] Route 53 DNS records configured
+- [ ] ECR repository created with scan-on-push
+- [ ] Container image built and pushed (distroless)
+- [ ] ECS cluster created
+- [ ] All 4 ECS services deployed
+- [ ] Auto-scaling policies configured
 - [ ] CloudWatch alarms configured
 - [ ] Flyway migrations executed
 - [ ] Smoke tests passed
@@ -1454,10 +2244,14 @@ public class XRayConfig {
 ### Post-Deployment Checklist
 
 - [ ] All health checks passing
-- [ ] API endpoints responding correctly
-- [ ] Database connections stable
+- [ ] fhir-api endpoints responding via public URL
+- [ ] fhir-metadata endpoints responding
+- [ ] fhir-actuator accessible only via VPN
+- [ ] fhir-admin accessible only via VPN
+- [ ] Database connections stable (IAM tokens refreshing)
 - [ ] Cache operations working
 - [ ] Logs flowing to CloudWatch
 - [ ] Metrics visible in dashboard
-- [ ] Alarms tested
+- [ ] Alarms tested and working
+- [ ] Security scan passed (no critical vulnerabilities)
 - [ ] Documentation updated
