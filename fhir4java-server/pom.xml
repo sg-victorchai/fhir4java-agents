@@ -56,6 +56,31 @@
             <artifactId>spring-boot-starter-cache</artifactId>
         </dependency>
 
+        <!-- AWS Secrets Manager JDBC Driver -->
+        <dependency>
+            <groupId>com.amazonaws.secretsmanager</groupId>
+            <artifactId>aws-secretsmanager-jdbc</artifactId>
+            <version>${aws-secretsmanager-jdbc.version}</version>
+        </dependency>
+
+        <!-- AWS SDK for Secrets Manager -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>secretsmanager</artifactId>
+        </dependency>
+
+        <!-- AWS SDK for RDS (IAM auth) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>rds</artifactId>
+        </dependency>
+
+        <!-- AWS SDK for STS -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
+        </dependency>
+
         <!-- Development -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
