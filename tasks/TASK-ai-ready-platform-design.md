@@ -425,6 +425,132 @@ This compensates for the lack of per-resource schema validation by providing dis
 ### Goal
 Enable AI agents to fully understand what the server can do at runtime, without prior knowledge.
 
+### Why Not Just Use FHIR CapabilityStatement?
+
+FHIR already defines a `CapabilityStatement` resource (served at `/metadata`) that describes server capabilities. A reasonable question is: **why do we need a separate Discovery API if FHIR already has one?**
+
+The answer is that CapabilityStatement was designed for **FHIR-aware systems and human developers**, not for **general-purpose AI agents**. There are five specific gaps that make it insufficient for AI agent consumption:
+
+#### Gap 1: CapabilityStatement Is Verbose, Not Actionable
+
+A typical CapabilityStatement is **5,000-15,000+ tokens** of deeply nested FHIR JSON. It exhaustively describes conformance — what the server *could* do — but provides no guidance on *how* to do it. An AI agent parsing a CapabilityStatement must:
+
+1. Understand FHIR resource structure (`rest[0].resource[*].type`)
+2. Decode interaction codes (`read`, `vread`, `search-type`) into HTTP methods and URL patterns
+3. Map `searchParam` entries to actual query string syntax with correct modifiers
+4. Resolve `profile` and `operationDefinition` canonical URLs to understand constraints
+
+Compare a CapabilityStatement search parameter entry vs. a Discovery API entry:
+
+```json
+// CapabilityStatement (what agents get today)
+{
+  "name": "family",
+  "type": "string",
+  "documentation": "A portion of the family name of the patient"
+}
+// → Agent doesn't know: What modifiers are supported? What's the query syntax?
+//   What are valid values? How does :exact differ from default?
+
+// Discovery API (what agents need)
+{
+  "name": "family",
+  "type": "string",
+  "description": "A portion of the family name of the patient",
+  "modifiers": [":exact", ":contains", ":missing"],
+  "examples": ["family=Smith", "family:exact=O'Brien", "family:contains=smi"],
+  "queryFormat": "?family={value}",
+  "notes": "Default behavior is case-insensitive starts-with matching"
+}
+// → Agent can construct correct queries immediately
+```
+
+#### Gap 2: No Examples or Usage Patterns
+
+CapabilityStatement declares *what exists* but never shows *how to use it*. AI agents perform dramatically better when given concrete examples. The Discovery API includes:
+
+- **Example queries** for every search parameter (with modifiers)
+- **Example payloads** for create/update operations
+- **Typical workflows** (e.g., "search Patient, then use $everything")
+- **Related resources** (e.g., "Observation is commonly searched with patient reference")
+
+This is the difference between handing an agent a specification document vs. a cookbook.
+
+#### Gap 3: CapabilityStatement Doesn't Cover Non-FHIR Capabilities
+
+FHIR4Java exposes capabilities beyond the FHIR specification:
+
+| Capability | In CapabilityStatement? | In Discovery API? |
+|------------|:-----------------------:|:-----------------:|
+| FHIR resource CRUD | Yes | Yes |
+| Search parameters | Partially (no modifiers/examples) | Yes (full detail) |
+| Extended operations | Yes (as references) | Yes (with parameter schemas) |
+| Plugin hooks & pipeline | No | Yes |
+| Tenant configuration | No | Yes |
+| MCP tool definitions | No | Yes |
+| Bulk export status | No | Yes |
+| Event/subscription topics | Partially | Yes |
+| Server-specific settings | No | Yes |
+| API rate limits | No | Yes |
+
+An AI agent that only reads CapabilityStatement has no way to learn about the plugin system, tenant model, or any platform-specific features.
+
+#### Gap 4: CapabilityStatement Assumes FHIR Expertise
+
+CapabilityStatement uses FHIR-specific terminology and structure that requires domain knowledge to interpret:
+
+- `rest[0].resource[*].interaction[*].code` — requires knowing that `search-type` means `GET /Resource?params`
+- `searchParam[*].type` = `token` — requires knowing the `system|code` syntax
+- `operation[*].definition` = `http://hl7.org/fhir/OperationDefinition/Patient-everything` — requires resolving a canonical URL to understand parameters
+
+A general-purpose AI agent (Claude, GPT, or a custom agent) may not have deep FHIR expertise. The Discovery API translates FHIR concepts into universal REST API concepts:
+
+```json
+// Discovery API: no FHIR expertise needed
+{
+  "name": "$everything",
+  "description": "Return all resources related to this patient",
+  "method": "GET",
+  "url": "/fhir/r5/Patient/{id}/$everything",
+  "parameters": [
+    {
+      "name": "_count",
+      "type": "integer",
+      "in": "query",
+      "description": "Maximum number of resources to return"
+    }
+  ],
+  "exampleRequest": "GET /fhir/r5/Patient/123/$everything?_count=50",
+  "exampleResponse": { "resourceType": "Bundle", "type": "searchset", "..." : "..." }
+}
+```
+
+#### Gap 5: No Granular, Filtered Access
+
+CapabilityStatement is an all-or-nothing document. An agent cannot ask "what can I do with Patient resources?" — it must download the entire CapabilityStatement and extract the relevant section. The Discovery API supports:
+
+- **Per-resource queries**: `GET /api/discovery/resources/Patient`
+- **Per-topic filtering**: `GET /api/discovery/search-parameters/Observation`
+- **Tenant-scoped discovery**: Responses filtered to what the agent's tenant can access
+- **Scope-aware responses**: Only show capabilities the agent is authorized to use
+
+This is critical for the Hybrid B2+ tool design — the `fhir_discover` MCP tool calls the Discovery API with targeted queries, keeping responses small and relevant rather than dumping the entire CapabilityStatement into context.
+
+#### Summary: CapabilityStatement + Discovery API Are Complementary
+
+| Aspect | CapabilityStatement | Discovery API |
+|--------|:-------------------:|:-------------:|
+| **Audience** | FHIR-aware systems, EHR integrations | AI agents, general-purpose consumers |
+| **Format** | FHIR resource (deep nesting) | Flat REST JSON (LLM-optimized) |
+| **Content** | FHIR conformance declaration | Actionable usage guide with examples |
+| **Scope** | FHIR standard capabilities only | All platform capabilities |
+| **Granularity** | All-or-nothing document | Per-resource, per-topic queries |
+| **Size** | 5,000-15,000+ tokens | 200-500 tokens per targeted query |
+| **Examples** | None | Per-parameter examples and workflows |
+| **Standard** | HL7 FHIR R4B/R5 | FHIR4Java-specific (backed by CapabilityStatement data) |
+
+We keep CapabilityStatement for FHIR-to-FHIR interoperability (it's required by the spec). The Discovery API is an **agent-optimized view** of the same data, enriched with examples, platform-specific capabilities, and granular access — and it powers the `fhir_discover` MCP tool.
+
 ### 2.1 OpenAPI 3.1 Specification
 
 Add `springdoc-openapi` to auto-generate OpenAPI specs from controllers:
