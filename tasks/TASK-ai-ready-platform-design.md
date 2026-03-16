@@ -36,6 +36,22 @@ This document proposes the enhancements needed to transform FHIR4Java from a tra
 ### Goal
 Expose FHIR4Java as an **MCP (Model Context Protocol) server** so that any MCP-compatible AI agent (Claude, GPT, custom agents) can discover and invoke FHIR operations as tools.
 
+### Tool Design: Hybrid B2+ (3 Unified Tools)
+
+#### Design Rationale
+
+A "many tools" approach (auto-generating per-resource, per-interaction tools) would produce **50-90+ tools** for the current configuration (11 resources x 8 interaction types + 64 operations), growing linearly as resources are added. This causes:
+- **Massive token overhead** — ~10,000-18,000 tokens of tool definitions injected into every LLM turn
+- **Degraded tool selection accuracy** — LLM research shows accuracy drops significantly at 50+ tools
+- **Poor scalability** — enabling all 453 FHIR resource types would explode to thousands of tools
+
+Instead, we use a **Hybrid B2+** approach: **3 unified tools** that handle all FHIR interactions. This mirrors FHIR's own design — a unified REST API with `resourceType` as a parameter — and keeps tool definitions constant regardless of how many resources are configured.
+
+| Approach | Tool Count | Tokens per Turn | Scales With Resources? |
+|----------|-----------|-----------------|----------------------|
+| Many tools (per-resource) | 50-90+ | ~10,000-18,000 | No (linear growth) |
+| **Hybrid B2+ (chosen)** | **3** | **~600-900** | **Yes (constant)** |
+
 ### Architecture
 
 ```
@@ -43,14 +59,15 @@ Expose FHIR4Java as an **MCP (Model Context Protocol) server** so that any MCP-c
 │  AI Agent (Claude, GPT, Custom)                              │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │  MCP Client                                            │  │
+│  │  Uses 3 tools: fhir_discover → fhir_query → fhir_mutate│  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 └─────────────────────────┼────────────────────────────────────┘
-                          │ MCP Protocol (stdio / SSE / HTTP)
+                          │ MCP Protocol (Streamable HTTP / SSE / stdio)
 ┌─────────────────────────┼────────────────────────────────────┐
 │  FHIR4Java MCP Server Layer (NEW)                            │
 │  ┌──────────────────────┴─────────────────────────────────┐  │
 │  │  McpServerEndpoint                                     │  │
-│  │  ├── Tool Registry (auto-generated from config)        │  │
+│  │  ├── 3 Tools (discover, query, mutate)                 │  │
 │  │  ├── Resource Provider (FHIR resources as MCP resources)│  │
 │  │  └── Prompt Templates (clinical query templates)       │  │
 │  └────────────────────────────────────────────────────────┘  │
@@ -63,53 +80,289 @@ Expose FHIR4Java as an **MCP (Model Context Protocol) server** so that any MCP-c
 
 ### New Module: `fhir4java-mcp`
 
-#### 1.1 Auto-Generated Tool Definitions
+#### 1.1 The Three MCP Tools
 
-Tools are generated dynamically from the existing `ResourceRegistry` and operation configurations:
+##### Tool 1: `fhir_discover` — Capability & Schema Discovery
 
-```java
-// Generates MCP tools from ResourceRegistry configuration
-public class FhirToolGenerator {
+Solves the main weakness of unified tools: agents can learn what resources, search parameters, and operations are available before making calls.
 
-    // For each enabled resource, generate CRUD tools:
-    // - fhir_create_{resourceType}  (e.g., fhir_create_patient)
-    // - fhir_read_{resourceType}
-    // - fhir_search_{resourceType}
-    // - fhir_update_{resourceType}
-    // - fhir_delete_{resourceType}
-
-    // For each enabled operation, generate operation tools:
-    // - fhir_operation_{resourceType}_{operation}  (e.g., fhir_operation_patient_everything)
-
-    // Tool input schemas derived from:
-    // - Search parameters (from SearchParameterRegistry)
-    // - Operation parameter definitions (from operation YAML configs)
-    // - Resource structure definitions
-}
-```
-
-**Example auto-generated tool:**
 ```json
 {
-  "name": "fhir_search_patient",
-  "description": "Search for Patient resources in the FHIR server. Supports standard FHIR search parameters.",
+  "name": "fhir_discover",
+  "description": "Discover available FHIR resources, search parameters, operations, and their usage. Call this first to learn what the server supports before querying or mutating data.",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "family": { "type": "string", "description": "Patient family name" },
-      "given": { "type": "string", "description": "Patient given name" },
-      "identifier": { "type": "string", "description": "Patient identifier (system|value)" },
-      "birthdate": { "type": "string", "description": "Patient birth date (YYYY-MM-DD, supports prefixes: eq, ne, lt, gt, le, ge)" },
-      "_count": { "type": "integer", "description": "Number of results per page", "default": 20 },
-      "fhirVersion": { "type": "string", "enum": ["R5", "R4B"], "default": "R5" }
+      "topic": {
+        "type": "string",
+        "enum": ["resources", "searchParams", "operations", "all"],
+        "description": "What to discover. 'resources' lists all resource types and their enabled interactions. 'searchParams' lists search parameters for a resource type with types, modifiers, and examples. 'operations' lists available extended operations. 'all' returns a complete summary.",
+        "default": "all"
+      },
+      "resourceType": {
+        "type": "string",
+        "description": "Filter discovery to a specific resource type (e.g., 'Patient', 'Observation'). If omitted, returns info for all resource types."
+      },
+      "fhirVersion": {
+        "type": "string",
+        "enum": ["R5", "R4B"],
+        "description": "FHIR version context. Defaults to the server's default version.",
+        "default": "R5"
+      }
     }
   }
 }
 ```
 
-#### 1.2 FHIR Resources as MCP Resources
+**Example interaction:**
+```
+Agent calls: fhir_discover(topic: "searchParams", resourceType: "Patient")
 
-Expose FHIR data as MCP resources that agents can read:
+Response:
+{
+  "resourceType": "Patient",
+  "fhirVersion": "R5",
+  "searchParameters": [
+    {
+      "name": "family",
+      "type": "string",
+      "description": "A portion of the family name of the patient",
+      "modifiers": [":exact", ":contains", ":missing"],
+      "examples": ["family=Smith", "family:exact=O'Brien", "family:contains=smi"]
+    },
+    {
+      "name": "birthdate",
+      "type": "date",
+      "description": "The patient's date of birth",
+      "prefixes": ["eq", "ne", "lt", "gt", "le", "ge", "sa", "eb", "ap"],
+      "examples": ["birthdate=1990-01-01", "birthdate=ge1980-01-01", "birthdate=le2000-12-31"]
+    },
+    {
+      "name": "identifier",
+      "type": "token",
+      "description": "A patient identifier",
+      "modifiers": [":exact", ":text", ":not", ":missing"],
+      "examples": ["identifier=http://hospital.org|12345", "identifier=12345"]
+    }
+  ],
+  "interactions": ["read", "vread", "create", "update", "patch", "search", "history"],
+  "operations": [
+    {
+      "name": "$everything",
+      "scope": ["type", "instance"],
+      "description": "Return all resources related to this patient"
+    },
+    {
+      "name": "$merge",
+      "scope": ["type", "instance"],
+      "description": "Merge duplicate patient records"
+    }
+  ],
+  "hint": "Use fhir_query to search or read Patient resources. Use fhir_mutate to create or update."
+}
+```
+
+##### Tool 2: `fhir_query` — Read-Only Operations
+
+Handles all non-mutating FHIR interactions: read, vread, search, history, and read-only extended operations.
+
+```json
+{
+  "name": "fhir_query",
+  "description": "Query FHIR data. Supports read (by ID), vread (specific version), search (with parameters), history, and read-only operations like $everything. Use fhir_discover first to learn available search parameters and operations for a resource type.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["action", "resourceType"],
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["read", "vread", "search", "history", "operation"],
+        "description": "The query action to perform"
+      },
+      "resourceType": {
+        "type": "string",
+        "description": "FHIR resource type (e.g., 'Patient', 'Observation', 'Condition')"
+      },
+      "id": {
+        "type": "string",
+        "description": "Resource ID. Required for read, vread, history, and instance-level operations."
+      },
+      "versionId": {
+        "type": "string",
+        "description": "Specific version to read (vread only)"
+      },
+      "searchParams": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Search parameters as key-value pairs. Use fhir_discover to learn valid parameters. Examples: {\"family\": \"Smith\", \"birthdate\": \"ge1980-01-01\"}"
+      },
+      "operation": {
+        "type": "string",
+        "description": "Extended operation name without $ prefix (e.g., 'everything', 'validate'). For read-only operations."
+      },
+      "operationParams": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Parameters for the extended operation"
+      },
+      "fhirVersion": {
+        "type": "string",
+        "enum": ["R5", "R4B"],
+        "default": "R5"
+      },
+      "_count": {
+        "type": "integer",
+        "description": "Maximum number of results per page (search only)",
+        "default": 20
+      },
+      "_offset": {
+        "type": "integer",
+        "description": "Starting offset for pagination (search only)",
+        "default": 0
+      }
+    }
+  }
+}
+```
+
+**Example interactions:**
+```
+# Read a patient
+fhir_query(action: "read", resourceType: "Patient", id: "123")
+
+# Search for patients
+fhir_query(action: "search", resourceType: "Patient",
+           searchParams: {"family": "Smith", "birthdate": "ge1980-01-01"})
+
+# Get patient's full record
+fhir_query(action: "operation", resourceType: "Patient", id: "123",
+           operation: "everything")
+
+# Search observations with token search
+fhir_query(action: "search", resourceType: "Observation",
+           searchParams: {"patient": "Patient/123", "code": "http://loinc.org|2339-0"})
+```
+
+##### Tool 3: `fhir_mutate` — Write Operations
+
+Handles all state-changing FHIR interactions: create, update, patch, delete, and write operations.
+
+```json
+{
+  "name": "fhir_mutate",
+  "description": "Create, update, patch, or delete FHIR resources, and execute write operations like $merge. Returns the resulting resource or operation outcome.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["action", "resourceType"],
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["create", "update", "patch", "delete", "operation"],
+        "description": "The mutation to perform"
+      },
+      "resourceType": {
+        "type": "string",
+        "description": "FHIR resource type (e.g., 'Patient', 'Observation')"
+      },
+      "id": {
+        "type": "string",
+        "description": "Resource ID. Required for update, patch, delete, and instance-level operations."
+      },
+      "body": {
+        "type": "object",
+        "description": "The FHIR resource JSON body (for create, update) or JSON Patch array (for patch)"
+      },
+      "operation": {
+        "type": "string",
+        "description": "Extended operation name without $ prefix (e.g., 'merge', 'validate')"
+      },
+      "operationParams": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Parameters for the extended operation"
+      },
+      "fhirVersion": {
+        "type": "string",
+        "enum": ["R5", "R4B"],
+        "default": "R5"
+      }
+    }
+  }
+}
+```
+
+**Example interactions:**
+```
+# Create a patient
+fhir_mutate(action: "create", resourceType: "Patient",
+            body: {"resourceType": "Patient", "name": [{"family": "Smith", "given": ["John"]}]})
+
+# Update a patient
+fhir_mutate(action: "update", resourceType: "Patient", id: "123",
+            body: {"resourceType": "Patient", "id": "123", "name": [{"family": "Smith", "given": ["Jane"]}]})
+
+# Delete a resource
+fhir_mutate(action: "delete", resourceType: "Observation", id: "obs-456")
+
+# Merge patients
+fhir_mutate(action: "operation", resourceType: "Patient",
+            operation: "merge",
+            operationParams: {"source": "Patient/456", "target": "Patient/123"})
+```
+
+#### 1.2 Agent Workflow: Discover → Query → Mutate
+
+A typical agent session follows this pattern:
+
+```
+Step 1: Agent connects via MCP, receives 3 tool definitions (~600 tokens)
+
+Step 2: Agent calls fhir_discover(topic: "all")
+        → Learns: 11 resource types, their search params, operations
+
+Step 3: Agent calls fhir_discover(resourceType: "Patient", topic: "searchParams")
+        → Learns: Patient has family, given, birthdate, identifier, etc.
+
+Step 4: Agent calls fhir_query(action: "search", resourceType: "Patient",
+                               searchParams: {"family": "Smith"})
+        → Gets search results
+
+Step 5: Agent calls fhir_query(action: "operation", resourceType: "Patient",
+                               id: "123", operation: "everything")
+        → Gets full patient record
+
+Step 6: Agent calls fhir_mutate(action: "create", resourceType: "Observation",
+                                body: {...})
+        → Creates new observation
+```
+
+#### 1.3 Smart Response Enrichment
+
+Tool responses include contextual hints to guide the agent's next action, reducing the need for repeated discovery calls:
+
+```json
+{
+  "result": { "resourceType": "Patient", "id": "123", "..." : "..." },
+  "_meta": {
+    "action": "read",
+    "fhirVersion": "R5",
+    "versionId": 3,
+    "lastUpdated": "2026-03-16T10:30:00Z"
+  },
+  "_hints": {
+    "availableActions": ["update", "patch", "delete", "history"],
+    "relatedOperations": ["$everything", "$merge"],
+    "relatedSearches": {
+      "observations": "fhir_query(action:'search', resourceType:'Observation', searchParams:{patient:'Patient/123'})",
+      "conditions": "fhir_query(action:'search', resourceType:'Condition', searchParams:{patient:'Patient/123'})"
+    }
+  }
+}
+```
+
+#### 1.4 FHIR Resources as MCP Resources
+
+Expose FHIR data as MCP resources that agents can read directly:
 
 ```json
 {
@@ -129,7 +382,7 @@ Support resource templates for parameterized access:
 }
 ```
 
-#### 1.3 Prompt Templates for Clinical Workflows
+#### 1.5 Prompt Templates for Clinical Workflows
 
 Pre-built prompt templates for common healthcare AI tasks:
 
@@ -141,7 +394,7 @@ Pre-built prompt templates for common healthcare AI tasks:
 | `care_gap_analysis` | Identify gaps in preventive care |
 | `clinical_timeline` | Build chronological timeline of encounters |
 
-#### 1.4 Transport Support
+#### 1.6 Transport Support
 
 | Transport | Use Case | Priority |
 |-----------|----------|----------|
@@ -149,8 +402,21 @@ Pre-built prompt templates for common healthcare AI tasks:
 | **SSE** | Legacy MCP clients, real-time streaming | P1 |
 | **stdio** | Local development, CLI-based agents | P1 |
 
-### Key Design Decision
-Tools are **auto-generated from existing configuration** (resource YAMLs, search parameter JSONs, operation definitions). When a new resource is configured via YAML, its MCP tools appear automatically without code changes.
+#### 1.7 Validation & Error Handling
+
+Since unified tools have a broader input surface, the tool executor performs runtime validation and returns clear, actionable error messages:
+
+```json
+{
+  "error": true,
+  "code": "INVALID_SEARCH_PARAM",
+  "message": "Search parameter 'family' is not valid for resource type 'Observation'.",
+  "suggestion": "Valid search parameters for Observation include: patient, code, category, date, status, value-quantity. Use fhir_discover(resourceType: 'Observation', topic: 'searchParams') for the full list.",
+  "validParams": ["patient", "code", "category", "date", "status", "value-quantity", "..."]
+}
+```
+
+This compensates for the lack of per-resource schema validation by providing discovery-guided error recovery.
 
 ---
 
@@ -181,7 +447,7 @@ springdoc-openapi-starter-webmvc-api: 2.8+
 
 ### 2.2 Discovery API (`/api/discovery/*`)
 
-A dedicated REST API for capability introspection, designed for programmatic consumption by AI agents:
+A dedicated REST API for capability introspection, designed for programmatic consumption by AI agents. This powers the `fhir_discover` MCP tool but is also available as a standalone REST API:
 
 ```
 GET /api/discovery/resources
@@ -204,9 +470,6 @@ GET /api/discovery/plugins
 
 GET /api/discovery/tenants
   → Available tenants (admin only)
-
-GET /api/discovery/mcp-tools
-  → MCP tool definitions (same as MCP tools/list but via REST)
 
 GET /api/discovery/capabilities
   → Aggregated capability summary (superset of /metadata)
@@ -707,12 +970,15 @@ Benefits for agents:
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
-| MCP server module | fhir4java-mcp (NEW) | P0 | 2 weeks |
-| Auto-generated tool definitions | fhir4java-mcp | P0 | 1 week |
-| MCP resource providers | fhir4java-mcp | P1 | 1 week |
+| MCP server module (3 unified tools) | fhir4java-mcp (NEW) | P0 | 2 weeks |
+| `fhir_discover` tool (backed by Discovery API) | fhir4java-mcp | P0 | 3 days |
+| `fhir_query` tool (read/search/history/ops) | fhir4java-mcp | P0 | 1 week |
+| `fhir_mutate` tool (create/update/patch/delete/ops) | fhir4java-mcp | P0 | 1 week |
+| Smart response enrichment (hints) | fhir4java-mcp | P1 | 3 days |
+| MCP resource providers | fhir4java-mcp | P1 | 3 days |
 | Prompt templates | fhir4java-mcp | P2 | 3 days |
 
-**Outcome:** AI agents can connect via MCP and use FHIR operations as native tools.
+**Outcome:** AI agents can connect via MCP and use 3 tools to discover, query, and mutate any FHIR resource.
 
 ### Phase 3: Real-Time (Weeks 9-12) - "Agents Can React"
 
@@ -765,11 +1031,11 @@ fhir4java-agents/
 │   │       │   ├── McpTransportConfig.java          # Transport configuration
 │   │       │   └── McpSessionManager.java           # Session lifecycle
 │   │       ├── tools/
-│   │       │   ├── FhirToolGenerator.java           # Auto-generates tools from config
-│   │       │   ├── FhirToolExecutor.java            # Executes tools via services
-│   │       │   ├── CrudToolProvider.java             # CRUD operation tools
-│   │       │   ├── SearchToolProvider.java           # Search tools with params
-│   │       │   └── OperationToolProvider.java        # Extended operation tools
+│   │       │   ├── FhirDiscoverTool.java            # fhir_discover implementation
+│   │       │   ├── FhirQueryTool.java               # fhir_query implementation
+│   │       │   ├── FhirMutateTool.java              # fhir_mutate implementation
+│   │       │   ├── ToolResponseEnricher.java         # Smart hints in responses
+│   │       │   └── ToolInputValidator.java           # Runtime input validation
 │   │       ├── resources/
 │   │       │   ├── FhirResourceProvider.java         # FHIR resources as MCP resources
 │   │       │   └── ResourceTemplateProvider.java     # URI templates
@@ -831,9 +1097,10 @@ fhir4java:
         enabled: true
         path: /mcp/sse
     tools:
-      auto-generate: true           # Generate tools from ResourceRegistry
-      include-operations: true       # Include extended operations as tools
-      include-search: true           # Include search as tools
+      # Hybrid B2+ design: 3 unified tools (fhir_discover, fhir_query, fhir_mutate)
+      # No per-resource tool generation needed
+      response-hints: true           # Include contextual hints in tool responses
+      max-results-per-query: 100     # Max resources returned per fhir_query call
     resources:
       expose-fhir-resources: true    # Expose FHIR resources as MCP resources
     prompts:
@@ -897,7 +1164,7 @@ fhir4java:
 
 1. **Everything is opt-in** - All AI features are disabled by default. Enable what you need via configuration. The server remains a standard FHIR server unless you turn on AI features.
 
-2. **Auto-generation over manual wiring** - MCP tools, OpenAPI specs, and discovery responses are generated from the existing `ResourceRegistry` and config files. No duplication.
+2. **Minimal tool surface, maximum capability** - 3 MCP tools cover all FHIR interactions. The `fhir_discover` tool enables agents to learn capabilities at runtime, compensating for the generic schemas of `fhir_query` and `fhir_mutate`.
 
 3. **Plugin-first extensibility** - New AI capabilities (embeddings, subscriptions, NL search) are implemented as plugins that hook into the existing `PluginOrchestrator` lifecycle.
 
@@ -926,17 +1193,20 @@ fhir4java:
 
 | Metric | Target | How to Measure |
 |--------|--------|----------------|
-| Tool discovery time | < 2 seconds | Time from MCP connect to tools/list response |
+| Tool count | Exactly 3 | MCP tools/list response |
+| Token overhead per turn | < 1,000 tokens | Tool definitions size in system prompt |
+| Tool selection accuracy | > 99% | Agent picks correct tool on first try |
+| Discovery-to-first-query | < 2 tool calls | Agent can query data after 1 discover + 1 query call |
 | Agent onboarding | < 5 minutes | Time for a new agent to make its first FHIR query via MCP |
 | Search accuracy (NL) | > 85% | NL queries correctly translated to FHIR search |
 | Event delivery latency | < 500ms | Time from resource change to SSE/webhook delivery |
 | Embedding throughput | > 100 resources/sec | Resources embedded per second |
-| Zero-config tools | 100% | Percentage of configured resources with auto-generated MCP tools |
+| Scales with resources | Constant tools | Adding resources does not increase tool count |
 
 ---
 
 ## Summary
 
-This design transforms FHIR4Java from a **FHIR server that agents can call** into a **FHIR platform that agents natively integrate with**. The key differentiator is that AI capabilities are **generated from the existing configuration** rather than manually coded — when you define a new resource in YAML, it automatically becomes an MCP tool, appears in OpenAPI docs, gets discovery endpoints, supports subscriptions, and can be semantically searched.
+This design transforms FHIR4Java from a **FHIR server that agents can call** into a **FHIR platform that agents natively integrate with**. The Hybrid B2+ tool design (3 unified tools: discover, query, mutate) keeps the MCP interface lean and scalable while the `fhir_discover` tool ensures agents can learn capabilities at runtime. Combined with the Discovery API, event streaming, semantic search, and agent-friendly auth, this creates a platform where AI agents are first-class consumers of clinical data.
 
 The phased approach ensures the server remains production-stable while incrementally adding AI capabilities, with each phase delivering standalone value.
