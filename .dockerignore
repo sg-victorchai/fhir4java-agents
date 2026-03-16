@@ -21,6 +21,11 @@ target/
 # Documentation
 *.md
 !README.md
+docs/
+tasks/
+
+# Infrastructure (CDK)
+infrastructure/
 
 # Docker files (prevent recursive copying)
 docker-compose.yml
