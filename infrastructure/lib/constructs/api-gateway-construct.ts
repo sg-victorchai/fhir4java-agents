@@ -8,7 +8,7 @@ import { Construct } from 'constructs';
 
 export interface ApiGatewayConstructProps {
   vpc: ec2.IVpc;
-  nlb: elbv2.INetworkLoadBalancer;
+  nlbListener: elbv2.INetworkListener;
   domainName: string;
   certificateArn: string;
 }
@@ -50,7 +50,7 @@ export class ApiGatewayConstruct extends Construct {
     // NLB integration
     const nlbIntegration = new apigatewayv2_integrations.HttpNlbIntegration(
       'NlbIntegration',
-      props.nlb.listeners[0],
+      props.nlbListener,
       { vpcLink: this.vpcLink }
     );
 
