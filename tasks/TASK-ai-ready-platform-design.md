@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document proposes the enhancements needed to transform FHIR4Java from a traditional FHIR server into a **fully AI-ready data and API platform** that natively integrates within AI agent ecosystems. The design covers seven pillars: MCP Server exposure, AI-native API discovery, event-driven architecture, semantic search, agent-friendly auth, observability for agents, and an AI orchestration layer.
+This document proposes the enhancements needed to transform FHIR4Java from a traditional FHIR server into a **fully AI-ready data and API platform** that natively integrates within AI agent ecosystems. The design covers seven pillars: MCP Server exposure (Hybrid B2+ with 3 unified tools), API discovery (OpenAPI + enhanced CapabilityStatement), event-driven architecture, semantic search, agent-friendly auth, bulk data processing, and an AI orchestration layer.
 
 ---
 
@@ -420,136 +420,71 @@ This compensates for the lack of per-resource schema validation by providing dis
 
 ---
 
-## Pillar 2: AI-Native API Discovery
+## Pillar 2: API Discovery (OpenAPI + Enhanced CapabilityStatement)
 
 ### Goal
-Enable AI agents to fully understand what the server can do at runtime, without prior knowledge.
+Ensure all consumers — FHIR-aware systems, human developers, and non-MCP agents — can discover and understand the server's capabilities through standard protocols.
 
-### Why Not Just Use FHIR CapabilityStatement?
+### Relationship to `fhir_discover` (Pillar 1)
 
-FHIR already defines a `CapabilityStatement` resource (served at `/metadata`) that describes server capabilities. A reasonable question is: **why do we need a separate Discovery API if FHIR already has one?**
+The Hybrid B2+ design in Pillar 1 introduces `fhir_discover` as a dedicated MCP tool for AI agent discovery. This raises a valid question: **does Pillar 2 still need a separate Discovery API?**
 
-The answer is that CapabilityStatement was designed for **FHIR-aware systems and human developers**, not for **general-purpose AI agents**. There are five specific gaps that make it insufficient for AI agent consumption:
+The short answer is: **no, not as originally designed.** The `fhir_discover` tool absorbs the core agent-discovery use case. Here's the overlap analysis:
 
-#### Gap 1: CapabilityStatement Is Verbose, Not Actionable
+#### What `fhir_discover` Already Covers
 
-A typical CapabilityStatement is **5,000-15,000+ tokens** of deeply nested FHIR JSON. It exhaustively describes conformance — what the server *could* do — but provides no guidance on *how* to do it. An AI agent parsing a CapabilityStatement must:
+| Original Discovery API Endpoint | `fhir_discover` Equivalent | Status |
+|--------------------------------|---------------------------|--------|
+| `GET /api/discovery/resources` | `fhir_discover(topic: "resources")` | **Absorbed** |
+| `GET /api/discovery/resources/{type}` | `fhir_discover(topic: "all", resourceType: "Patient")` | **Absorbed** |
+| `GET /api/discovery/operations` | `fhir_discover(topic: "operations")` | **Absorbed** |
+| `GET /api/discovery/operations/{type}/{name}` | `fhir_discover(topic: "operations", resourceType: "Patient")` | **Absorbed** |
+| `GET /api/discovery/search-parameters/{type}` | `fhir_discover(topic: "searchParams", resourceType: "...")` | **Absorbed** |
+| `GET /api/discovery/capabilities` | `fhir_discover(topic: "all")` | **Absorbed** |
+| `GET /api/discovery/plugins` | N/A — platform internals, not agent-facing | **Dropped** |
+| `GET /api/discovery/tenants` | N/A — admin concern, not discovery | **Dropped** |
 
-1. Understand FHIR resource structure (`rest[0].resource[*].type`)
-2. Decode interaction codes (`read`, `vread`, `search-type`) into HTTP methods and URL patterns
-3. Map `searchParam` entries to actual query string syntax with correct modifiers
-4. Resolve `profile` and `operationDefinition` canonical URLs to understand constraints
+For MCP-connected agents, `fhir_discover` provides everything the Discovery API would have — with the advantage of being a native MCP tool that doesn't require the agent to know REST endpoints.
 
-Compare a CapabilityStatement search parameter entry vs. a Discovery API entry:
+#### What CapabilityStatement Already Covers
 
-```json
-// CapabilityStatement (what agents get today)
-{
-  "name": "family",
-  "type": "string",
-  "documentation": "A portion of the family name of the patient"
-}
-// → Agent doesn't know: What modifiers are supported? What's the query syntax?
-//   What are valid values? How does :exact differ from default?
+FHIR's `CapabilityStatement` (served at `/metadata`) is the standard mechanism for FHIR-to-FHIR interoperability. It declares:
 
-// Discovery API (what agents need)
-{
-  "name": "family",
-  "type": "string",
-  "description": "A portion of the family name of the patient",
-  "modifiers": [":exact", ":contains", ":missing"],
-  "examples": ["family=Smith", "family:exact=O'Brien", "family:contains=smi"],
-  "queryFormat": "?family={value}",
-  "notes": "Default behavior is case-insensitive starts-with matching"
-}
-// → Agent can construct correct queries immediately
-```
+- Supported resource types and their interactions (CRUD)
+- Search parameters per resource type (name, type, documentation)
+- Extended operations (as canonical URL references)
+- Supported FHIR versions
+- Security/auth declarations
 
-#### Gap 2: No Examples or Usage Patterns
+For **FHIR-aware consumers** (EHR systems, FHIR clients, interoperability engines), CapabilityStatement is the correct and sufficient discovery mechanism. These systems already understand FHIR's interaction model, search parameter types, and operation definitions.
 
-CapabilityStatement declares *what exists* but never shows *how to use it*. AI agents perform dramatically better when given concrete examples. The Discovery API includes:
+#### Remaining Gaps: What Neither Covers for Non-MCP Consumers
 
-- **Example queries** for every search parameter (with modifiers)
-- **Example payloads** for create/update operations
-- **Typical workflows** (e.g., "search Patient, then use $everything")
-- **Related resources** (e.g., "Observation is commonly searched with patient reference")
+There is one consumer category not served by `fhir_discover` or CapabilityStatement:
 
-This is the difference between handing an agent a specification document vs. a cookbook.
+**Non-MCP programmatic consumers** — REST API clients, integration scripts, human developers, and AI agents that connect via HTTP rather than MCP. These consumers need:
 
-#### Gap 3: CapabilityStatement Doesn't Cover Non-FHIR Capabilities
+1. **Machine-readable API specification** — What endpoints exist? What are the request/response schemas?
+2. **Interactive documentation** — How do I try out an API call?
+3. **Code generation support** — Can I auto-generate a client SDK?
 
-FHIR4Java exposes capabilities beyond the FHIR specification:
+This is the standard role of **OpenAPI**, not a custom Discovery API.
 
-| Capability | In CapabilityStatement? | In Discovery API? |
-|------------|:-----------------------:|:-----------------:|
-| FHIR resource CRUD | Yes | Yes |
-| Search parameters | Partially (no modifiers/examples) | Yes (full detail) |
-| Extended operations | Yes (as references) | Yes (with parameter schemas) |
-| Plugin hooks & pipeline | No | Yes |
-| Tenant configuration | No | Yes |
-| MCP tool definitions | No | Yes |
-| Bulk export status | No | Yes |
-| Event/subscription topics | Partially | Yes |
-| Server-specific settings | No | Yes |
-| API rate limits | No | Yes |
+### Revised Pillar 2 Scope
 
-An AI agent that only reads CapabilityStatement has no way to learn about the plugin system, tenant model, or any platform-specific features.
+Given the above analysis, Pillar 2 is **reduced and refocused** to two components:
 
-#### Gap 4: CapabilityStatement Assumes FHIR Expertise
+| Component | Audience | Purpose |
+|-----------|----------|---------|
+| **OpenAPI 3.1** | Human developers, REST clients, non-MCP agents | Standard machine-readable API spec with interactive docs |
+| **Enhanced CapabilityStatement** | FHIR-aware systems, EHR integrations | Richer conformance declaration (the spec requires it) |
 
-CapabilityStatement uses FHIR-specific terminology and structure that requires domain knowledge to interpret:
+The custom Discovery REST API (`/api/discovery/*`) is **removed as a standalone pillar**. Its functionality is either:
+- Absorbed by `fhir_discover` MCP tool (for AI agents)
+- Already covered by CapabilityStatement (for FHIR systems)
+- Better served by OpenAPI (for REST developers)
 
-- `rest[0].resource[*].interaction[*].code` — requires knowing that `search-type` means `GET /Resource?params`
-- `searchParam[*].type` = `token` — requires knowing the `system|code` syntax
-- `operation[*].definition` = `http://hl7.org/fhir/OperationDefinition/Patient-everything` — requires resolving a canonical URL to understand parameters
-
-A general-purpose AI agent (Claude, GPT, or a custom agent) may not have deep FHIR expertise. The Discovery API translates FHIR concepts into universal REST API concepts:
-
-```json
-// Discovery API: no FHIR expertise needed
-{
-  "name": "$everything",
-  "description": "Return all resources related to this patient",
-  "method": "GET",
-  "url": "/fhir/r5/Patient/{id}/$everything",
-  "parameters": [
-    {
-      "name": "_count",
-      "type": "integer",
-      "in": "query",
-      "description": "Maximum number of resources to return"
-    }
-  ],
-  "exampleRequest": "GET /fhir/r5/Patient/123/$everything?_count=50",
-  "exampleResponse": { "resourceType": "Bundle", "type": "searchset", "..." : "..." }
-}
-```
-
-#### Gap 5: No Granular, Filtered Access
-
-CapabilityStatement is an all-or-nothing document. An agent cannot ask "what can I do with Patient resources?" — it must download the entire CapabilityStatement and extract the relevant section. The Discovery API supports:
-
-- **Per-resource queries**: `GET /api/discovery/resources/Patient`
-- **Per-topic filtering**: `GET /api/discovery/search-parameters/Observation`
-- **Tenant-scoped discovery**: Responses filtered to what the agent's tenant can access
-- **Scope-aware responses**: Only show capabilities the agent is authorized to use
-
-This is critical for the Hybrid B2+ tool design — the `fhir_discover` MCP tool calls the Discovery API with targeted queries, keeping responses small and relevant rather than dumping the entire CapabilityStatement into context.
-
-#### Summary: CapabilityStatement + Discovery API Are Complementary
-
-| Aspect | CapabilityStatement | Discovery API |
-|--------|:-------------------:|:-------------:|
-| **Audience** | FHIR-aware systems, EHR integrations | AI agents, general-purpose consumers |
-| **Format** | FHIR resource (deep nesting) | Flat REST JSON (LLM-optimized) |
-| **Content** | FHIR conformance declaration | Actionable usage guide with examples |
-| **Scope** | FHIR standard capabilities only | All platform capabilities |
-| **Granularity** | All-or-nothing document | Per-resource, per-topic queries |
-| **Size** | 5,000-15,000+ tokens | 200-500 tokens per targeted query |
-| **Examples** | None | Per-parameter examples and workflows |
-| **Standard** | HL7 FHIR R4B/R5 | FHIR4Java-specific (backed by CapabilityStatement data) |
-
-We keep CapabilityStatement for FHIR-to-FHIR interoperability (it's required by the spec). The Discovery API is an **agent-optimized view** of the same data, enriched with examples, platform-specific capabilities, and granular access — and it powers the `fhir_discover` MCP tool.
+What remains is a **DiscoveryService** — an internal service class that powers the `fhir_discover` tool's responses by reading from `ResourceRegistry`, `SearchParameterRegistry`, and operation configs. This is an implementation detail of Pillar 1, not a separate API surface.
 
 ### 2.1 OpenAPI 3.1 Specification
 
@@ -565,83 +500,125 @@ springdoc-openapi-starter-webmvc-api: 2.8+
 - `GET /v3/api-docs.yaml` - Full OpenAPI YAML spec
 - `GET /swagger-ui.html` - Interactive API documentation
 
+**Why OpenAPI and not the custom Discovery API?**
+
+OpenAPI is the industry standard for REST API documentation with a massive ecosystem:
+- Clients can auto-generate SDKs in any language
+- Tools like Swagger UI provide interactive try-it-out documentation
+- CI/CD pipelines can validate API contract conformance
+- Non-MCP AI agents (e.g., OpenAI function calling, LangChain) can ingest OpenAPI specs directly
+
+A custom `/api/discovery/*` API would require every consumer to learn a proprietary schema. OpenAPI gives us all the same benefits with zero adoption friction.
+
 **Enhancements beyond default Spring generation:**
-- Custom `OpenApiCustomizer` that reads `ResourceRegistry` to generate per-resource path documentation
-- Include search parameter descriptions, modifiers, and examples
-- Document all custom operations with parameter schemas
-- Include FHIR-specific media types (`application/fhir+json`)
 
-### 2.2 Discovery API (`/api/discovery/*`)
+The default `springdoc-openapi` output describes Spring controllers generically. We enhance it with FHIR-specific detail by reading from existing configuration:
 
-A dedicated REST API for capability introspection, designed for programmatic consumption by AI agents. This powers the `fhir_discover` MCP tool but is also available as a standalone REST API:
+```java
+@Component
+public class FhirOpenApiCustomizer implements OpenApiCustomizer {
 
-```
-GET /api/discovery/resources
-  → List all enabled resources with their interactions, versions, search params
+    @Autowired
+    private ResourceRegistry resourceRegistry;
 
-GET /api/discovery/resources/{type}
-  → Detailed info for one resource type
+    @Autowired
+    private SearchParameterRegistry searchParameterRegistry;
 
-GET /api/discovery/operations
-  → All available operations with parameter schemas
-
-GET /api/discovery/operations/{type}/{name}
-  → Detailed operation definition
-
-GET /api/discovery/search-parameters/{type}
-  → Search parameters with types, modifiers, examples
-
-GET /api/discovery/plugins
-  → Loaded plugins, their hooks, priorities
-
-GET /api/discovery/tenants
-  → Available tenants (admin only)
-
-GET /api/discovery/capabilities
-  → Aggregated capability summary (superset of /metadata)
-```
-
-**Response format designed for LLM consumption:**
-```json
-{
-  "resourceType": "Patient",
-  "description": "Demographics and administrative information about a person receiving healthcare",
-  "fhirVersions": ["R5", "R4B"],
-  "defaultVersion": "R5",
-  "interactions": {
-    "create": { "enabled": true, "description": "Create a new Patient" },
-    "read": { "enabled": true, "description": "Read Patient by ID" },
-    "search": {
-      "enabled": true,
-      "parameters": [
-        {
-          "name": "family",
-          "type": "string",
-          "description": "Patient family/last name",
-          "modifiers": [":exact", ":contains", ":missing"],
-          "examples": ["family=Smith", "family:exact=O'Brien"]
-        }
-      ]
+    @Override
+    public void customise(OpenAPI openApi) {
+        // For each enabled resource in ResourceRegistry:
+        // 1. Generate per-resource path docs (/fhir/r5/Patient, /fhir/r5/Observation, etc.)
+        // 2. Add search parameters with types, modifiers, and examples to query params
+        // 3. Document extended operations with parameter schemas
+        // 4. Include FHIR-specific media types (application/fhir+json)
+        // 5. Add resource JSON schemas from StructureDefinitions
     }
-  },
-  "operations": [
-    {
-      "name": "$everything",
-      "description": "Return all resources related to this patient",
-      "method": "GET",
-      "url": "/fhir/r5/Patient/{id}/$everything"
-    }
-  ]
 }
 ```
 
-### 2.3 FHIR-Native Discovery Enhancements
+This means OpenAPI documentation stays in sync with `ResourceRegistry` configuration automatically — same principle as `fhir_discover`, just a different output format.
 
-Enhance the existing `MetadataController` CapabilityStatement:
-- Add `TerminologyCapabilities` endpoint (`/fhir/r5/metadata?mode=terminology`)
-- Add operation definitions as contained resources
-- Include security/auth capability declarations
-- Add implementation guide references
+**Example generated OpenAPI path (for Patient search):**
+```yaml
+/fhir/r5/Patient:
+  get:
+    summary: Search Patient resources
+    operationId: searchPatient
+    tags: [Patient]
+    parameters:
+      - name: family
+        in: query
+        description: "A portion of the family name. Modifiers: :exact, :contains, :missing"
+        schema:
+          type: string
+        examples:
+          default: { value: "Smith" }
+          exact: { value: "family:exact=O'Brien" }
+      - name: birthdate
+        in: query
+        description: "Patient birth date. Prefixes: eq, ne, lt, gt, le, ge, sa, eb, ap"
+        schema:
+          type: string
+        examples:
+          exact: { value: "1990-01-01" }
+          range: { value: "ge1980-01-01" }
+      - name: identifier
+        in: query
+        description: "Patient identifier (system|value or value). Modifiers: :exact, :text, :not"
+        schema:
+          type: string
+        examples:
+          with_system: { value: "http://hospital.org|12345" }
+          value_only: { value: "12345" }
+    responses:
+      200:
+        description: Search results as FHIR Bundle
+        content:
+          application/fhir+json:
+            schema:
+              $ref: '#/components/schemas/Bundle'
+```
+
+### 2.2 Enhanced CapabilityStatement
+
+The existing `MetadataController` already generates a CapabilityStatement. We enhance it to be more complete, which benefits both FHIR-aware systems and serves as the authoritative conformance declaration:
+
+- **Add `TerminologyCapabilities`** endpoint (`/fhir/r5/metadata?mode=terminology`)
+- **Inline operation definitions** as contained resources (so consumers don't need to resolve canonical URLs)
+- **Include security/auth declarations** — advertise OAuth2/SMART endpoints, supported scopes
+- **Declare MCP support** via extension element (non-standard but useful):
+  ```json
+  {
+    "url": "http://fhir4java.org/StructureDefinition/mcp-support",
+    "valueBoolean": true
+  }
+  ```
+- **Add implementation guide references** for supported profiles
+
+This ensures CapabilityStatement remains the single source of truth for FHIR conformance, while OpenAPI serves REST developers and `fhir_discover` serves MCP agents.
+
+### 2.3 Discovery Architecture Summary
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Discovery Sources (Internal)                   │
+│  ResourceRegistry │ SearchParameterRegistry │ OperationConfigs   │
+└────────┬─────────────────────┬──────────────────────┬────────────┘
+         │                     │                      │
+         ▼                     ▼                      ▼
+┌─────────────────┐  ┌─────────────────┐  ┌───────────────────────┐
+│ fhir_discover   │  │ OpenAPI 3.1     │  │ CapabilityStatement   │
+│ (MCP Tool)      │  │ (/v3/api-docs)  │  │ (/fhir/r5/metadata)  │
+│                 │  │                 │  │                       │
+│ For: AI agents  │  │ For: REST devs, │  │ For: FHIR systems,   │
+│ via MCP         │  │ non-MCP agents, │  │ EHR integrations,    │
+│                 │  │ code generators │  │ conformance testing   │
+│ Format: MCP     │  │ Format: OpenAPI │  │ Format: FHIR JSON    │
+│ tool response   │  │ 3.1 JSON/YAML  │  │ (CapabilityStatement)│
+└─────────────────┘  └─────────────────┘  └───────────────────────┘
+```
+
+Three discovery surfaces, each serving a distinct audience, all generated from the same source configuration. No custom `/api/discovery/*` REST API needed.
 
 ---
 
@@ -768,7 +745,7 @@ Natural Language Query
         ▼
 ┌─────────────────────────┐
 │  Query Decomposer       │  Break into sub-queries
-│  (uses Discovery API)   │  per resource type
+│  (uses DiscoveryService)│  per resource type
 └───────────┬─────────────┘
             ▼
 ┌─────────────────────────┐
@@ -1085,12 +1062,13 @@ Benefits for agents:
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
-| OpenAPI 3.1 generation | fhir4java-api | P0 | 1 week |
-| Discovery API endpoints | fhir4java-api | P0 | 1 week |
+| OpenAPI 3.1 generation (with FHIR customizer) | fhir4java-api | P0 | 1 week |
+| DiscoveryService (internal, powers `fhir_discover`) | fhir4java-core | P0 | 1 week |
+| Enhanced CapabilityStatement | fhir4java-api | P1 | 3 days |
 | OAuth2 resource server | fhir4java-server | P0 | 1 week |
 | Agent API key auth | fhir4java-plugin | P1 | 1 week |
 
-**Outcome:** Agents can discover all capabilities, authenticate, and make standard REST calls.
+**Outcome:** REST developers have OpenAPI docs, FHIR systems have enhanced CapabilityStatement, and DiscoveryService is ready to back the `fhir_discover` MCP tool in Phase 2.
 
 ### Phase 2: MCP Integration (Weeks 5-8) - "Agents Can Use Tools"
 
@@ -1144,9 +1122,9 @@ Benefits for agents:
 
 ```
 fhir4java-agents/
-├── fhir4java-core/              # (existing) + NL search, subscription topics
+├── fhir4java-core/              # (existing) + DiscoveryService, NL search, subscription topics
 ├── fhir4java-persistence/       # (existing) + vector embeddings, bulk export
-├── fhir4java-api/               # (existing) + discovery, SSE, webhooks, GraphQL
+├── fhir4java-api/               # (existing) + OpenAPI customizer, SSE, webhooks, GraphQL
 ├── fhir4java-plugin/            # (existing) + embedding plugin, subscription plugin
 ├── fhir4java-mcp/               # NEW - MCP server implementation
 │   ├── src/main/java/
@@ -1333,6 +1311,6 @@ fhir4java:
 
 ## Summary
 
-This design transforms FHIR4Java from a **FHIR server that agents can call** into a **FHIR platform that agents natively integrate with**. The Hybrid B2+ tool design (3 unified tools: discover, query, mutate) keeps the MCP interface lean and scalable while the `fhir_discover` tool ensures agents can learn capabilities at runtime. Combined with the Discovery API, event streaming, semantic search, and agent-friendly auth, this creates a platform where AI agents are first-class consumers of clinical data.
+This design transforms FHIR4Java from a **FHIR server that agents can call** into a **FHIR platform that agents natively integrate with**. The Hybrid B2+ tool design (3 unified tools: discover, query, mutate) keeps the MCP interface lean and scalable while the `fhir_discover` tool ensures agents can learn capabilities at runtime. Combined with OpenAPI for REST consumers, enhanced CapabilityStatement for FHIR interoperability, event streaming, semantic search, and agent-friendly auth, this creates a platform where AI agents are first-class consumers of clinical data.
 
 The phased approach ensures the server remains production-stable while incrementally adding AI capabilities, with each phase delivering standalone value.
