@@ -1,0 +1,96 @@
+# AWS Base Profile
+spring:
+  config:
+    activate:
+      on-profile: aws
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: fhir
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    schemas: fhir
+
+  # ElastiCache Redis/Valkey
+  data:
+    redis:
+      host: ${ELASTICACHE_ENDPOINT}
+      port: ${ELASTICACHE_PORT:6379}
+      password: ${ELASTICACHE_AUTH_TOKEN}
+      ssl:
+        enabled: true
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 4
+        cluster:
+          refresh:
+            adaptive: true
+            period: 30s
+
+  cache:
+    type: redis
+    redis:
+      time-to-live: 3600000
+      cache-null-values: false
+
+# FHIR4Java settings
+fhir4java:
+  server:
+    base-url: https://${API_GATEWAY_DOMAIN}/fhir
+
+  endpoints:
+    enabled: ${FHIR4JAVA_ENDPOINTS_ENABLED:all}
+
+  validation:
+    profile-validator-enabled: false
+
+  plugins:
+    authentication:
+      enabled: true
+    authorization:
+      enabled: true
+    audit:
+      enabled: true
+    telemetry:
+      enabled: true
+
+  tenant:
+    enabled: true
+    default-tenant-id: default
+    header-name: X-Tenant-ID
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+# Logging (JSON for CloudWatch)
+logging:
+  pattern:
+    console: '{"timestamp":"%d{ISO8601}","level":"%level","logger":"%logger","message":"%msg","thread":"%thread"}%n'
+  level:
+    root: INFO
+    org.fhirframework: INFO
+    org.hibernate.SQL: WARN

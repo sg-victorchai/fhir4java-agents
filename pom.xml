@@ -58,6 +58,10 @@
         <lombok.version>1.18.42</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
 
+        <!-- AWS SDK -->
+        <aws-sdk.version>2.29.0</aws-sdk.version>
+        <aws-secretsmanager-jdbc.version>1.0.12</aws-secretsmanager-jdbc.version>
+
         <!-- Plugin Versions -->
         <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
 
@@ -177,6 +181,15 @@
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- AWS SDK BOM -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

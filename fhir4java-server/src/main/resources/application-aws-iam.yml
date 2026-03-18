@@ -1,0 +1,16 @@
+# AWS with IAM Database Authentication
+spring:
+  config:
+    activate:
+      on-profile: aws-iam
+
+  datasource:
+    url: jdbc:postgresql://${RDS_ENDPOINT}:${RDS_PORT:5432}/${RDS_DATABASE:fhir4java_prod}
+    username: ${RDS_USERNAME:fhir4java_app}
+    hikari:
+      pool-name: fhir4java-iam-pool
+      minimum-idle: 5
+      maximum-pool-size: 20
+      connection-timeout: 30000
+      # Token refresh before expiry (tokens last 15 min)
+      max-lifetime: 840000

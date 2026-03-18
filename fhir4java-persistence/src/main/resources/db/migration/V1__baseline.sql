@@ -1,0 +1,37 @@
+-- ============================================================================
+-- FHIR4Java Database Migration V1 - Baseline
+-- ============================================================================
+-- This is a baseline migration file. The actual database schema is created by
+-- the Docker initialization script (db/init/01-init-schema.sql).
+--
+-- Flyway requires at least one migration to track schema history. This empty
+-- migration serves as the baseline for all future migrations.
+--
+-- Schema Overview (created by init script):
+-- ============================================================================
+-- SCHEMAS:
+--   - fhir: Default schema for core tables and cross-cutting concerns
+--   - careplan: Dedicated schema for CarePlan resources
+--   - masterdata: Shared schema for Patient, Practitioner, Organization
+--   - patientdata: Shared schema for Observation, Condition, Procedure
+--   - operationdata: Shared schema for Course, MedicationInventory
+--
+-- TABLES PER SCHEMA:
+--   - fhir_resource: Core FHIR resource storage (JSONB)
+--   - fhir_resource_history: Version history tracking
+--   - fhir_search_index: Pre-computed search parameter indexes
+--   - fhir_resource_tag: Tags, security labels, profiles
+--   - fhir_compartment: Compartment membership
+--
+-- FHIR SCHEMA ONLY:
+--   - fhir_audit_log: Cross-cutting audit logging
+--   - fhir_tenant: Multi-tenancy tenant mapping
+--
+-- HELPER FUNCTIONS:
+--   - update_last_updated(): Auto-update last_updated timestamp
+--   - get_next_version(): Get next version number for a resource
+--   - create_fhir_schema(): Create a new FHIR schema with all tables
+-- ============================================================================
+
+-- No-op: Schema already created by Docker init script
+SELECT 1;

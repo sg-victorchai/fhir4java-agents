@@ -53,6 +53,7 @@ out/
 .project
 .settings/
 bin/
+!infrastructure/bin/
 
 # IDE - VS Code
 .vscode/

@@ -1,0 +1,91 @@
+import * as cdk from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { Construct } from 'constructs';
+
+export interface InternalAlbConstructProps {
+  resourcePrefix: string;
+  vpc: ec2.IVpc;
+}
+
+export class InternalAlbConstruct extends Construct {
+  public readonly alb: elbv2.ApplicationLoadBalancer;
+  public readonly listener: elbv2.ApplicationListener;
+  public readonly fhirApiTargetGroup: elbv2.ApplicationTargetGroup;
+  public readonly fhirMetadataTargetGroup: elbv2.ApplicationTargetGroup;
+  public readonly securityGroup: ec2.SecurityGroup;
+
+  constructor(scope: Construct, id: string, props: InternalAlbConstructProps) {
+    super(scope, id);
+
+    const prefix = props.resourcePrefix;
+
+    this.securityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
+      vpc: props.vpc,
+      securityGroupName: `${prefix}-internal-alb-sg`,
+      description: `Security group for ${prefix} Internal ALB`,
+      allowAllOutbound: true,
+    });
+
+    this.alb = new elbv2.ApplicationLoadBalancer(this, 'InternalAlb', {
+      loadBalancerName: `${prefix}-internal-alb`,
+      vpc: props.vpc,
+      internetFacing: false,
+      securityGroup: this.securityGroup,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+    });
+
+    // Target groups for ECS services
+    this.fhirApiTargetGroup = new elbv2.ApplicationTargetGroup(this, 'FhirApiTargetGroup', {
+      targetGroupName: `${prefix}-fhir-api-tg`,
+      vpc: props.vpc,
+      targetType: elbv2.TargetType.IP,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      port: 8080,
+      healthCheck: {
+        path: '/actuator/health/liveness',
+        healthyHttpCodes: '200',
+        interval: cdk.Duration.seconds(30),
+      },
+    });
+
+    this.fhirMetadataTargetGroup = new elbv2.ApplicationTargetGroup(this, 'FhirMetadataTargetGroup', {
+      targetGroupName: `${prefix}-fhir-meta-tg`,
+      vpc: props.vpc,
+      targetType: elbv2.TargetType.IP,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      port: 8080,
+      healthCheck: {
+        path: '/actuator/health/liveness',
+        healthyHttpCodes: '200',
+        interval: cdk.Duration.seconds(30),
+      },
+    });
+
+    this.listener = this.alb.addListener('HttpListener', {
+      port: 80,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      defaultAction: elbv2.ListenerAction.fixedResponse(404, {
+        contentType: 'application/json',
+        messageBody: '{"error":"Not found"}',
+      }),
+    });
+
+    // Path-based routing
+    this.listener.addAction('FhirMetadataRoute', {
+      priority: 10,
+      conditions: [
+        elbv2.ListenerCondition.pathPatterns(['/fhir/*/metadata']),
+      ],
+      action: elbv2.ListenerAction.forward([this.fhirMetadataTargetGroup]),
+    });
+
+    this.listener.addAction('FhirApiRoute', {
+      priority: 20,
+      conditions: [
+        elbv2.ListenerCondition.pathPatterns(['/fhir/*']),
+      ],
+      action: elbv2.ListenerAction.forward([this.fhirApiTargetGroup]),
+    });
+  }
+}
