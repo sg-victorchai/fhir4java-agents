@@ -12,14 +12,18 @@ import java.sql.Connection;
 import java.sql.Statement;
 
 /**
- * Initializes dedicated schemas in H2 for testing.
+ * Initializes custom schemas in H2 for testing.
  * <p>
- * This configuration creates ALL resource-related tables in dedicated schemas
- * (like 'careplan') to mirror the PostgreSQL schema structure during tests.
- * This implements the "Full Table Replication" design pattern.
+ * This configuration creates ALL resource-related tables in custom schemas
+ * to mirror the PostgreSQL schema structure during tests. Custom schemas include:
+ * <ul>
+ *   <li>{@code careplan} - Dedicated schema for CarePlan resources</li>
+ *   <li>{@code masterdata} - Shared schema for master data (Patient, Practitioner, etc.)</li>
+ *   <li>{@code patientdata} - Shared schema for patient clinical data (Observation, Condition, etc.)</li>
+ * </ul>
  * </p>
  * <p>
- * Tables created in each dedicated schema:
+ * Tables created in each custom schema:
  * <ul>
  *   <li>fhir_resource - Primary resource storage</li>
  *   <li>fhir_resource_history - Version history</li>
@@ -30,7 +34,7 @@ import java.sql.Statement;
  * </p>
  * <p>
  * Note: fhir_audit_log is NOT replicated as it's a cross-cutting concern
- * that remains in the shared 'fhir' schema.
+ * that remains in the default 'fhir' schema.
  * </p>
  */
 @Configuration
@@ -42,8 +46,8 @@ public class H2SchemaInitializer {
 
     private final DataSource dataSource;
 
-    // List of dedicated schemas to create tables for
-    private static final String[] DEDICATED_SCHEMAS = {"careplan"};
+    // List of custom schemas to create tables for (both dedicated and shared with custom schema names)
+    private static final String[] CUSTOM_SCHEMAS = {"careplan", "masterdata", "patientdata", "operationdata"};
 
     public H2SchemaInitializer(DataSource dataSource) {
         this.dataSource = dataSource;
@@ -57,11 +61,11 @@ public class H2SchemaInitializer {
             // Create fhir_tenant table in the shared FHIR schema
             createTenantTable(stmt);
 
-            for (String schemaName : DEDICATED_SCHEMAS) {
+            for (String schemaName : CUSTOM_SCHEMAS) {
                 createDedicatedSchemaTables(stmt, schemaName);
             }
 
-            log.info("Initialized H2 dedicated schemas with full table replication: {}", (Object) DEDICATED_SCHEMAS);
+            log.info("Initialized H2 dedicated schemas with full table replication: {}", (Object) CUSTOM_SCHEMAS);
         } catch (Exception e) {
             log.warn("Could not initialize H2 dedicated schemas (not H2?): {}", e.getMessage());
         }

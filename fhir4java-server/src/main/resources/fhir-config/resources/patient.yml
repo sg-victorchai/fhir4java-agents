@@ -10,7 +10,7 @@ fhirVersions:
 # Database schema configuration
 schema:
   type: shared
-  name: fhir
+  name: masterdata
 
 # Enabled interactions
 interactions:

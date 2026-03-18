@@ -10,18 +10,31 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.*;
 
 /**
- * Repository for FHIR resources stored in dedicated schemas.
+ * Repository for FHIR resources stored in non-default schemas.
  * <p>
- * Uses native SQL to access schema-qualified tables since JPA entities
- * are bound to a single schema. This allows dynamic schema routing for
- * resources configured with schema.type=dedicated.
+ * Uses JdbcTemplate with native SQL to access schema-qualified tables.
+ * This is the correct approach for dynamic schema routing because:
+ * <ul>
+ *   <li>Hibernate resolves {@code @Table(schema=...)} at startup - there's no supported API
+ *       to override the schema per-call at runtime</li>
+ *   <li>JdbcTemplate with {@code String.format("%s.fhir_resource", schemaName)} provides
+ *       reliable, test-friendly dynamic schema routing</li>
+ *   <li>{@code Types.OTHER} for JSONB content allows proper type handling in both
+ *       PostgreSQL (JSONB) and H2 (CLOB in PostgreSQL mode)</li>
+ * </ul>
+ * </p>
+ * <p>
+ * This repository is used by {@link SchemaAwareRepository} as a delegate for all
+ * non-default schema operations.
  * </p>
  */
 @Repository
@@ -37,6 +50,11 @@ public class DedicatedSchemaRepository {
 
     /**
      * Saves a FHIR resource entity to a dedicated schema.
+     * <p>
+     * Uses {@code Types.OTHER} for the JSONB content column to allow the JDBC driver
+     * to handle the type conversion properly. This works for both PostgreSQL (JSONB)
+     * and H2 (CLOB in PostgreSQL compatibility mode).
+     * </p>
      *
      * @param schemaName the dedicated schema name
      * @param entity the entity to save
@@ -49,8 +67,6 @@ public class DedicatedSchemaRepository {
             entity.setId(UUID.randomUUID());
         }
 
-        // Note: Using plain ? instead of ?::jsonb for H2 compatibility
-        // PostgreSQL will auto-cast text to JSONB, H2 stores as CLOB
         String sql = String.format("""
             INSERT INTO %s.fhir_resource (
                 id, resource_type, resource_id, fhir_version, version_id,
@@ -67,20 +83,23 @@ public class DedicatedSchemaRepository {
             entity.setCreatedAt(now);
         }
 
-        jdbcTemplate.update(sql,
-                entity.getId(),
-                entity.getResourceType(),
-                entity.getResourceId(),
-                entity.getFhirVersion(),
-                entity.getVersionId(),
-                entity.getIsCurrent(),
-                entity.getIsDeleted(),
-                entity.getContent(),
-                Timestamp.from(entity.getLastUpdated()),
-                Timestamp.from(entity.getCreatedAt()),
-                entity.getSourceUri(),
-                entity.getTenantId()
-        );
+        // Use PreparedStatementSetter to have explicit control over SQL types.
+        // Types.OTHER for the content column tells the JDBC driver to handle
+        // the type based on column metadata (works for PostgreSQL JSONB and H2 CLOB).
+        jdbcTemplate.update(sql, (PreparedStatement ps) -> {
+            ps.setObject(1, entity.getId());
+            ps.setString(2, entity.getResourceType());
+            ps.setString(3, entity.getResourceId());
+            ps.setString(4, entity.getFhirVersion());
+            ps.setInt(5, entity.getVersionId());
+            ps.setBoolean(6, entity.getIsCurrent());
+            ps.setBoolean(7, entity.getIsDeleted());
+            ps.setObject(8, entity.getContent(), Types.OTHER);  // JSONB/CLOB
+            ps.setTimestamp(9, Timestamp.from(entity.getLastUpdated()));
+            ps.setTimestamp(10, Timestamp.from(entity.getCreatedAt()));
+            ps.setString(11, entity.getSourceUri());
+            ps.setString(12, entity.getTenantId());
+        });
 
         log.debug("Saved {}/{} to schema {}", entity.getResourceType(), entity.getResourceId(), schemaName);
         return entity;
@@ -308,24 +327,83 @@ public class DedicatedSchemaRepository {
     }
 
     /**
-     * Maps common search parameters to simple JSON paths.
-     * This is a simplified version for basic searches.
+     * Maps known search parameters to their corresponding JSON paths.
+     * <p>
+     * <b>Security Note:</b> This method uses an allowlist approach - only explicitly
+     * mapped parameter names are accepted. Unknown parameters return {@code null}
+     * and are silently ignored in search queries. This prevents JSONB structure
+     * probing attacks where an attacker could supply arbitrary keys to explore
+     * the resource content structure.
+     * </p>
+     *
+     * @param paramName the search parameter name
+     * @return the JSON path for known parameters, or {@code null} for unknown parameters
      */
     private String mapParamToSimpleJsonPath(String paramName) {
-        return switch (paramName) {
-            case "status" -> "status";
-            case "identifier" -> "identifier";
-            case "subject" -> "subject";
-            case "patient" -> "patient";
-            case "category" -> "category";
-            case "code" -> "code";
-            case "date" -> "date";
-            case "intent" -> "intent";
-            case "title" -> "title";
-            case "description" -> "description";
-            default -> paramName;
-        };
+        String jsonPath = ALLOWED_SEARCH_PARAMS.get(paramName);
+        if (jsonPath == null && !isCommonParam(paramName)) {
+            log.debug("Ignoring unknown search parameter '{}' - not in allowlist", paramName);
+        }
+        return jsonPath;
     }
+
+    /**
+     * Checks if this is a common FHIR search parameter that starts with underscore.
+     * These are handled separately and should not trigger the "unknown parameter" log.
+     */
+    private boolean isCommonParam(String paramName) {
+        return paramName != null && paramName.startsWith("_");
+    }
+
+    /**
+     * Allowlist of search parameters that can be used for JSONB queries.
+     * <p>
+     * Only parameters in this map are accepted for content searches.
+     * This is a security measure to prevent arbitrary JSONB key probing.
+     * </p>
+     */
+    private static final Map<String, String> ALLOWED_SEARCH_PARAMS = Map.ofEntries(
+            // Common resource fields
+            Map.entry("status", "status"),
+            Map.entry("identifier", "identifier"),
+            Map.entry("subject", "subject"),
+            Map.entry("patient", "patient"),
+            Map.entry("category", "category"),
+            Map.entry("code", "code"),
+            Map.entry("date", "date"),
+            Map.entry("intent", "intent"),
+            Map.entry("title", "title"),
+            Map.entry("description", "description"),
+            // Additional common fields
+            Map.entry("name", "name"),
+            Map.entry("family", "family"),
+            Map.entry("given", "given"),
+            Map.entry("gender", "gender"),
+            Map.entry("birthdate", "birthDate"),
+            Map.entry("address", "address"),
+            Map.entry("telecom", "telecom"),
+            Map.entry("active", "active"),
+            Map.entry("type", "type"),
+            Map.entry("location", "location"),
+            Map.entry("performer", "performer"),
+            Map.entry("encounter", "encounter"),
+            Map.entry("period", "period"),
+            Map.entry("authored", "authored"),
+            Map.entry("author", "author"),
+            Map.entry("medication", "medication"),
+            Map.entry("requester", "requester"),
+            // CarePlan specific
+            Map.entry("activity", "activity"),
+            Map.entry("care-team", "careTeam"),
+            // Course specific
+            Map.entry("instructor", "instructor"),
+            Map.entry("training-provider", "trainingProvider"),
+            Map.entry("start-date", "startDate"),
+            // MedicationInventory specific
+            Map.entry("lot-number", "lotNumber"),
+            Map.entry("expiration-date", "expirationDate"),
+            Map.entry("supplier", "supplier")
+    );
 
     /**
      * Row mapper for FhirResourceEntity.

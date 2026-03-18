@@ -16,9 +16,23 @@ import java.util.Optional;
 /**
  * Routes FHIR resource operations to the appropriate repository based on schema configuration.
  * <p>
- * This repository acts as a facade that checks the resource configuration to determine
- * whether to use the shared schema (via FhirResourceRepository/JPA) or a dedicated schema
- * (via DedicatedSchemaRepository/native SQL).
+ * This repository acts as a facade that routes operations based on the configured schema:
+ * <ul>
+ *   <li><b>Default schema ("fhir")</b>: Uses {@link FhirResourceRepository} (standard JPA)</li>
+ *   <li><b>Custom schema</b>: Uses {@link SchemaAwareRepository} (JPA with dynamic schema switching)</li>
+ * </ul>
+ * </p>
+ * <p>
+ * Both paths use Hibernate/JPA for consistent type handling (including JSONB).
+ * The schema name is configured in the resource YAML files via {@code schema.name}.
+ * </p>
+ * <p>
+ * Examples:
+ * <ul>
+ *   <li>{@code schema.name: fhir} → Default repository (no schema switch)</li>
+ *   <li>{@code schema.name: masterdata} → SchemaAwareRepository with "masterdata" schema</li>
+ *   <li>{@code schema.name: careplan} → SchemaAwareRepository with "careplan" schema</li>
+ * </ul>
  * </p>
  */
 @Repository
@@ -27,15 +41,15 @@ public class SchemaRoutingRepository {
     private static final Logger log = LoggerFactory.getLogger(SchemaRoutingRepository.class);
 
     private final FhirResourceRepository sharedRepository;
-    private final DedicatedSchemaRepository dedicatedRepository;
+    private final SchemaAwareRepository schemaAwareRepository;
     private final SchemaResolver schemaResolver;
 
     public SchemaRoutingRepository(
             FhirResourceRepository sharedRepository,
-            DedicatedSchemaRepository dedicatedRepository,
+            SchemaAwareRepository schemaAwareRepository,
             SchemaResolver schemaResolver) {
         this.sharedRepository = sharedRepository;
-        this.dedicatedRepository = dedicatedRepository;
+        this.schemaAwareRepository = schemaAwareRepository;
         this.schemaResolver = schemaResolver;
     }
 
@@ -47,10 +61,10 @@ public class SchemaRoutingRepository {
      * @return the saved entity
      */
     public FhirResourceEntity save(String resourceType, FhirResourceEntity entity) {
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            log.debug("Routing save for {} to dedicated schema: {}", resourceType, schemaName);
-            return dedicatedRepository.save(schemaName, entity);
+            log.debug("Routing save for {} to custom schema: {}", resourceType, schemaName);
+            return schemaAwareRepository.save(schemaName, entity);
         }
         log.debug("Routing save for {} to shared schema", resourceType);
         return sharedRepository.save(entity);
@@ -62,9 +76,9 @@ public class SchemaRoutingRepository {
     public Optional<FhirResourceEntity> findByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
             String tenantId, String resourceType, String resourceId) {
 
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            return dedicatedRepository.findByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
+            return schemaAwareRepository.findByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
                     schemaName, tenantId, resourceType, resourceId);
         }
         return sharedRepository.findByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
@@ -77,9 +91,9 @@ public class SchemaRoutingRepository {
     public Optional<FhirResourceEntity> findByTenantIdAndResourceTypeAndResourceIdAndVersionId(
             String tenantId, String resourceType, String resourceId, Integer versionId) {
 
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            return dedicatedRepository.findByTenantIdAndResourceTypeAndResourceIdAndVersionId(
+            return schemaAwareRepository.findByTenantIdAndResourceTypeAndResourceIdAndVersionId(
                     schemaName, tenantId, resourceType, resourceId, versionId);
         }
         return sharedRepository.findByTenantIdAndResourceTypeAndResourceIdAndVersionId(
@@ -92,9 +106,9 @@ public class SchemaRoutingRepository {
     public List<FhirResourceEntity> findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
             String tenantId, String resourceType, String resourceId) {
 
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            return dedicatedRepository.findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
+            return schemaAwareRepository.findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
                     schemaName, tenantId, resourceType, resourceId);
         }
         return sharedRepository.findByTenantIdAndResourceTypeAndResourceIdOrderByVersionIdDesc(
@@ -107,9 +121,9 @@ public class SchemaRoutingRepository {
     public boolean existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
             String tenantId, String resourceType, String resourceId) {
 
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            return dedicatedRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
+            return schemaAwareRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
                     schemaName, tenantId, resourceType, resourceId);
         }
         return sharedRepository.existsByTenantIdAndResourceTypeAndResourceIdAndIsCurrentTrue(
@@ -120,9 +134,9 @@ public class SchemaRoutingRepository {
      * Gets the maximum version ID for a resource.
      */
     public Integer findMaxVersionId(String tenantId, String resourceType, String resourceId) {
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            return dedicatedRepository.findMaxVersionId(schemaName, tenantId, resourceType, resourceId);
+            return schemaAwareRepository.findMaxVersionId(schemaName, tenantId, resourceType, resourceId);
         }
         return sharedRepository.findMaxVersionId(tenantId, resourceType, resourceId);
     }
@@ -131,9 +145,9 @@ public class SchemaRoutingRepository {
      * Marks all versions of a resource as not current.
      */
     public void markAllVersionsNotCurrent(String tenantId, String resourceType, String resourceId) {
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            dedicatedRepository.markAllVersionsNotCurrent(schemaName, tenantId, resourceType, resourceId);
+            schemaAwareRepository.markAllVersionsNotCurrent(schemaName, tenantId, resourceType, resourceId);
         } else {
             sharedRepository.markAllVersionsNotCurrent(tenantId, resourceType, resourceId);
         }
@@ -143,9 +157,9 @@ public class SchemaRoutingRepository {
      * Soft deletes a resource.
      */
     public void softDelete(String tenantId, String resourceType, String resourceId, Instant now) {
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            dedicatedRepository.softDelete(schemaName, tenantId, resourceType, resourceId, now);
+            schemaAwareRepository.softDelete(schemaName, tenantId, resourceType, resourceId, now);
         } else {
             sharedRepository.softDelete(tenantId, resourceType, resourceId, now);
         }
@@ -157,10 +171,10 @@ public class SchemaRoutingRepository {
     public Page<FhirResourceEntity> searchWithParams(
             String tenantId, String resourceType, Map<String, String> searchParams, Pageable pageable) {
 
-        if (schemaResolver.isDedicatedSchema(resourceType)) {
+        if (schemaResolver.requiresSchemaSwitch(resourceType)) {
             String schemaName = schemaResolver.resolveSchema(resourceType);
-            log.debug("Routing search for {} to dedicated schema: {}", resourceType, schemaName);
-            return dedicatedRepository.searchWithParams(schemaName, tenantId, resourceType, searchParams, pageable);
+            log.debug("Routing search for {} to custom schema: {}", resourceType, schemaName);
+            return schemaAwareRepository.searchWithParams(schemaName, tenantId, resourceType, searchParams, pageable);
         }
         log.debug("Routing search for {} to shared schema", resourceType);
         return sharedRepository.searchWithParams(tenantId, resourceType, searchParams, pageable);
