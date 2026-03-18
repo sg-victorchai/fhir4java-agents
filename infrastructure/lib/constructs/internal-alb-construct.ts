@@ -4,6 +4,7 @@ import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Construct } from 'constructs';
 
 export interface InternalAlbConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
 }
 
@@ -17,13 +18,17 @@ export class InternalAlbConstruct extends Construct {
   constructor(scope: Construct, id: string, props: InternalAlbConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.securityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
       vpc: props.vpc,
-      description: 'Security group for Internal ALB',
+      securityGroupName: `${prefix}-internal-alb-sg`,
+      description: `Security group for ${prefix} Internal ALB`,
       allowAllOutbound: true,
     });
 
     this.alb = new elbv2.ApplicationLoadBalancer(this, 'InternalAlb', {
+      loadBalancerName: `${prefix}-internal-alb`,
       vpc: props.vpc,
       internetFacing: false,
       securityGroup: this.securityGroup,
@@ -32,6 +37,7 @@ export class InternalAlbConstruct extends Construct {
 
     // Target groups for ECS services
     this.fhirApiTargetGroup = new elbv2.ApplicationTargetGroup(this, 'FhirApiTargetGroup', {
+      targetGroupName: `${prefix}-fhir-api-tg`,
       vpc: props.vpc,
       targetType: elbv2.TargetType.IP,
       protocol: elbv2.ApplicationProtocol.HTTP,
@@ -44,6 +50,7 @@ export class InternalAlbConstruct extends Construct {
     });
 
     this.fhirMetadataTargetGroup = new elbv2.ApplicationTargetGroup(this, 'FhirMetadataTargetGroup', {
+      targetGroupName: `${prefix}-fhir-meta-tg`,
       vpc: props.vpc,
       targetType: elbv2.TargetType.IP,
       protocol: elbv2.ApplicationProtocol.HTTP,

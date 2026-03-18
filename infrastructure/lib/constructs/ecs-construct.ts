@@ -20,6 +20,7 @@ export interface ServiceConfig {
 }
 
 export interface EcsConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   services: ServiceConfig[];
   ecrRepository: ecr.IRepository;
@@ -38,19 +39,24 @@ export class EcsConstruct extends Construct {
   constructor(scope: Construct, id: string, props: EcsConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.cluster = new ecs.Cluster(this, 'Cluster', {
+      clusterName: `${prefix}-cluster`,
       vpc: props.vpc,
       containerInsights: true,
     });
 
     this.taskSecurityGroup = new ec2.SecurityGroup(this, 'TaskSecurityGroup', {
       vpc: props.vpc,
-      description: 'Security group for ECS tasks',
+      securityGroupName: `${prefix}-ecs-tasks-sg`,
+      description: `Security group for ${prefix} ECS tasks`,
       allowAllOutbound: true,
     });
 
     // Task execution role
     const executionRole = new iam.Role(this, 'ExecutionRole', {
+      roleName: `${prefix}-ecs-execution-role`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
@@ -59,12 +65,13 @@ export class EcsConstruct extends Construct {
 
     // Task role with least privilege
     const taskRole = new iam.Role(this, 'TaskRole', {
+      roleName: `${prefix}-ecs-task-role`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
 
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: ['rds-db:connect'],
-      resources: ['arn:aws:rds-db:*:*:dbuser:*/fhir4java_app'],
+      resources: [`arn:aws:rds-db:*:*:dbuser:*/${prefix.replace(/-/g, '_')}_app`],
     }));
 
     taskRole.addToPolicy(new iam.PolicyStatement({
@@ -74,7 +81,7 @@ export class EcsConstruct extends Construct {
 
     // Log group
     const logGroup = new logs.LogGroup(this, 'LogGroup', {
-      logGroupName: '/ecs/fhir4java',
+      logGroupName: `/ecs/${prefix}`,
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -130,6 +137,7 @@ export class EcsConstruct extends Construct {
       container.addMountPoints({ sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false });
 
       const service = new ecs.FargateService(this, `${svc.name}Service`, {
+        serviceName: `${prefix}-${svc.name}`,
         cluster: this.cluster,
         taskDefinition,
         desiredCount: svc.desiredCount,

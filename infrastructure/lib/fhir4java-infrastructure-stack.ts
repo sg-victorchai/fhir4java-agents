@@ -16,6 +16,8 @@ import { VpcEndpointAutomationConstruct } from './constructs/vpc-endpoint-automa
 import { EcsConstruct } from './constructs/ecs-construct';
 
 export interface Fhir4JavaInfrastructureStackProps extends cdk.StackProps {
+  appName: string;
+  environment: string;
   computePlatform?: 'ecs' | 'eks';
   domainName: string;
   certificateArn: string;
@@ -27,27 +29,36 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: Fhir4JavaInfrastructureStackProps) {
     super(scope, id, props);
 
+    // Resource naming prefix
+    const resourcePrefix = `${props.appName}-${props.environment}`;
+
     // VPC
-    const vpcConstruct = new VpcConstruct(this, 'Vpc');
+    const vpcConstruct = new VpcConstruct(this, 'Vpc', {
+      resourcePrefix,
+    });
 
     // RDS PostgreSQL
     const rdsConstruct = new RdsConstruct(this, 'Rds', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
       iamAuthentication: true,
     });
 
     // ElastiCache
     const cacheConstruct = new ElastiCacheConstruct(this, 'Cache', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
     });
 
     // Internal ALB (Service Routing)
     const internalAlbConstruct = new InternalAlbConstruct(this, 'InternalAlb', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
     });
 
     // Admin ALB
     const adminAlbConstruct = new AdminAlbConstruct(this, 'AdminAlb', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
       certificateArn: props.certificateArn,
       vpnCidr: props.vpnCidr,
@@ -55,12 +66,14 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
 
     // NLB (VPC Link Target)
     const nlbConstruct = new NlbConstruct(this, 'Nlb', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
       internalAlb: internalAlbConstruct.alb,
     });
 
     // Private API Gateway
     const apiGatewayConstruct = new ApiGatewayConstruct(this, 'ApiGateway', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
       nlbListener: nlbConstruct.listener,
       domainName: props.domainName,
@@ -69,6 +82,7 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
 
     // Public ALB
     const publicAlbConstruct = new PublicAlbConstruct(this, 'PublicAlb', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
       certificateArn: props.certificateArn,
       domainName: props.domainName,
@@ -76,23 +90,25 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
 
     // VPC Endpoint IP Automation
     new VpcEndpointAutomationConstruct(this, 'VpcEndpointAutomation', {
+      resourcePrefix,
       vpcEndpoint: vpcConstruct.apiGatewayEndpoint,
       targetGroup: publicAlbConstruct.targetGroup,
     });
 
     // ECR Repository
     const ecrRepository = new ecr.Repository(this, 'EcrRepository', {
-      repositoryName: 'fhir4java',
+      repositoryName: `${resourcePrefix}-app`,
       imageScanOnPush: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     // ECS Services
     const ecsConstruct = new EcsConstruct(this, 'Ecs', {
+      resourcePrefix,
       vpc: vpcConstruct.vpc,
       ecrRepository,
       rdsEndpoint: rdsConstruct.instance.dbInstanceEndpointAddress,
-      rdsSecretName: 'fhir4java/prod/rds',
+      rdsSecretName: `${resourcePrefix}/rds`,
       cacheEndpoint: cacheConstruct.cluster.attrPrimaryEndPointAddress,
       cacheSecretArn: cacheConstruct.secret.secretArn,
       apiGatewayDomain: props.domainName,

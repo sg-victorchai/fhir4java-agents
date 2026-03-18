@@ -10,6 +10,7 @@ import { Construct } from 'constructs';
 import * as path from 'path';
 
 export interface VpcEndpointAutomationConstructProps {
+  resourcePrefix: string;
   vpcEndpoint: ec2.IInterfaceVpcEndpoint;
   targetGroup: elbv2.IApplicationTargetGroup;
 }
@@ -20,7 +21,10 @@ export class VpcEndpointAutomationConstruct extends Construct {
   constructor(scope: Construct, id: string, props: VpcEndpointAutomationConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.lambda = new lambda.Function(this, 'UpdateTargetsLambda', {
+      functionName: `${prefix}-vpce-target-updater`,
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/update-targets')),

@@ -4,6 +4,7 @@ import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Construct } from 'constructs';
 
 export interface NlbConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   internalAlb: elbv2.IApplicationLoadBalancer;
 }
@@ -15,7 +16,10 @@ export class NlbConstruct extends Construct {
   constructor(scope: Construct, id: string, props: NlbConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.nlb = new elbv2.NetworkLoadBalancer(this, 'Nlb', {
+      loadBalancerName: `${prefix}-nlb`,
       vpc: props.vpc,
       internetFacing: false,
       crossZoneEnabled: true,
@@ -24,6 +28,7 @@ export class NlbConstruct extends Construct {
 
     // Target group pointing to Internal ALB
     const targetGroup = new elbv2.NetworkTargetGroup(this, 'AlbTargetGroup', {
+      targetGroupName: `${prefix}-nlb-alb-tg`,
       vpc: props.vpc,
       targetType: elbv2.TargetType.ALB,
       port: 80,

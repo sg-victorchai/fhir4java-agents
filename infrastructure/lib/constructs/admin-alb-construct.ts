@@ -5,6 +5,7 @@ import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import { Construct } from 'constructs';
 
 export interface AdminAlbConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   certificateArn: string;
   vpnCidr: string;
@@ -20,9 +21,12 @@ export class AdminAlbConstruct extends Construct {
   constructor(scope: Construct, id: string, props: AdminAlbConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.securityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
       vpc: props.vpc,
-      description: 'Security group for Admin ALB (VPN only)',
+      securityGroupName: `${prefix}-admin-alb-sg`,
+      description: `Security group for ${prefix} Admin ALB (VPN only)`,
       allowAllOutbound: true,
     });
 
@@ -34,6 +38,7 @@ export class AdminAlbConstruct extends Construct {
     );
 
     this.alb = new elbv2.ApplicationLoadBalancer(this, 'AdminAlb', {
+      loadBalancerName: `${prefix}-admin-alb`,
       vpc: props.vpc,
       internetFacing: false,
       securityGroup: this.securityGroup,
@@ -41,6 +46,7 @@ export class AdminAlbConstruct extends Construct {
     });
 
     this.actuatorTargetGroup = new elbv2.ApplicationTargetGroup(this, 'ActuatorTargetGroup', {
+      targetGroupName: `${prefix}-actuator-tg`,
       vpc: props.vpc,
       targetType: elbv2.TargetType.IP,
       protocol: elbv2.ApplicationProtocol.HTTP,
@@ -53,6 +59,7 @@ export class AdminAlbConstruct extends Construct {
     });
 
     this.adminTargetGroup = new elbv2.ApplicationTargetGroup(this, 'AdminTargetGroup', {
+      targetGroupName: `${prefix}-admin-tg`,
       vpc: props.vpc,
       targetType: elbv2.TargetType.IP,
       protocol: elbv2.ApplicationProtocol.HTTP,

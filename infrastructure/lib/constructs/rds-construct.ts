@@ -5,6 +5,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
 export interface RdsConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   instanceClass?: ec2.InstanceClass;
   instanceSize?: ec2.InstanceSize;
@@ -21,16 +22,19 @@ export class RdsConstruct extends Construct {
   constructor(scope: Construct, id: string, props: RdsConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.securityGroup = new ec2.SecurityGroup(this, 'RdsSecurityGroup', {
       vpc: props.vpc,
-      description: 'Security group for RDS PostgreSQL',
+      securityGroupName: `${prefix}-rds-sg`,
+      description: `Security group for ${prefix} RDS PostgreSQL`,
       allowAllOutbound: false,
     });
 
     this.secret = new secretsmanager.Secret(this, 'RdsSecret', {
-      secretName: 'fhir4java/prod/rds',
+      secretName: `${prefix}/rds`,
       generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: 'fhir4java_app' }),
+        secretStringTemplate: JSON.stringify({ username: `${prefix.replace(/-/g, '_')}_app` }),
         generateStringKey: 'password',
         excludeCharacters: '/@"\\\'',
         passwordLength: 32,
@@ -38,6 +42,7 @@ export class RdsConstruct extends Construct {
     });
 
     this.instance = new rds.DatabaseInstance(this, 'PostgresInstance', {
+      instanceIdentifier: `${prefix}-postgres`,
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_16_4,
       }),
@@ -49,7 +54,7 @@ export class RdsConstruct extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [this.securityGroup],
       credentials: rds.Credentials.fromSecret(this.secret),
-      databaseName: props.databaseName ?? 'fhir4java_prod',
+      databaseName: props.databaseName ?? `${prefix.replace(/-/g, '_')}_db`,
       multiAz: props.multiAz ?? true,
       storageEncrypted: true,
       deletionProtection: true,

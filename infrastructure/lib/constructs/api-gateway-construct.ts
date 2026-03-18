@@ -7,6 +7,7 @@ import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Construct } from 'constructs';
 
 export interface ApiGatewayConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   nlbListener: elbv2.INetworkListener;
   domainName: string;
@@ -21,16 +22,19 @@ export class ApiGatewayConstruct extends Construct {
   constructor(scope: Construct, id: string, props: ApiGatewayConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     // VPC Link for private integration
     this.vpcLink = new apigatewayv2.VpcLink(this, 'VpcLink', {
+      vpcLinkName: `${prefix}-vpc-link`,
       vpc: props.vpc,
       subnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     });
 
     // HTTP API (Private)
     this.httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
-      apiName: 'fhir4java-api',
-      description: 'FHIR4Java Private API Gateway',
+      apiName: `${prefix}-api`,
+      description: `${prefix} Private API Gateway`,
       corsPreflight: {
         allowOrigins: ['https://' + props.domainName],
         allowMethods: [

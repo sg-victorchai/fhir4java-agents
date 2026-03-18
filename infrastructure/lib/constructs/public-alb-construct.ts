@@ -6,6 +6,7 @@ import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import { Construct } from 'constructs';
 
 export interface PublicAlbConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   certificateArn: string;
   domainName: string;
@@ -20,9 +21,12 @@ export class PublicAlbConstruct extends Construct {
   constructor(scope: Construct, id: string, props: PublicAlbConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.securityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
       vpc: props.vpc,
-      description: 'Security group for Public ALB',
+      securityGroupName: `${prefix}-public-alb-sg`,
+      description: `Security group for ${prefix} Public ALB`,
       allowAllOutbound: true,
     });
 
@@ -33,6 +37,7 @@ export class PublicAlbConstruct extends Construct {
     );
 
     this.alb = new elbv2.ApplicationLoadBalancer(this, 'PublicAlb', {
+      loadBalancerName: `${prefix}-public-alb`,
       vpc: props.vpc,
       internetFacing: true,
       securityGroup: this.securityGroup,
@@ -41,6 +46,7 @@ export class PublicAlbConstruct extends Construct {
 
     // Target group for VPC Endpoint ENI IPs (managed by Lambda)
     this.targetGroup = new elbv2.ApplicationTargetGroup(this, 'VpcEndpointTargetGroup', {
+      targetGroupName: `${prefix}-vpce-tg`,
       vpc: props.vpc,
       targetType: elbv2.TargetType.IP,
       protocol: elbv2.ApplicationProtocol.HTTPS,
@@ -67,11 +73,12 @@ export class PublicAlbConstruct extends Construct {
 
     // WAF WebACL
     const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
+      name: `${prefix}-waf`,
       defaultAction: { allow: {} },
       scope: 'REGIONAL',
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
-        metricName: 'fhir4java-waf',
+        metricName: `${prefix}-waf`,
         sampledRequestsEnabled: true,
       },
       rules: [

@@ -5,6 +5,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
 export interface ElastiCacheConstructProps {
+  resourcePrefix: string;
   vpc: ec2.IVpc;
   nodeType?: string;
   numNodeGroups?: number;
@@ -19,14 +20,17 @@ export class ElastiCacheConstruct extends Construct {
   constructor(scope: Construct, id: string, props: ElastiCacheConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.securityGroup = new ec2.SecurityGroup(this, 'CacheSecurityGroup', {
       vpc: props.vpc,
-      description: 'Security group for ElastiCache',
+      securityGroupName: `${prefix}-cache-sg`,
+      description: `Security group for ${prefix} ElastiCache`,
       allowAllOutbound: false,
     });
 
     this.secret = new secretsmanager.Secret(this, 'CacheSecret', {
-      secretName: 'fhir4java/prod/elasticache',
+      secretName: `${prefix}/elasticache`,
       generateSecretString: {
         secretStringTemplate: JSON.stringify({}),
         generateStringKey: 'authToken',
@@ -36,14 +40,16 @@ export class ElastiCacheConstruct extends Construct {
     });
 
     const subnetGroup = new elasticache.CfnSubnetGroup(this, 'SubnetGroup', {
-      description: 'FHIR4Java ElastiCache Subnet Group',
+      cacheSubnetGroupName: `${prefix}-cache-subnet-group`,
+      description: `${prefix} ElastiCache Subnet Group`,
       subnetIds: props.vpc.selectSubnets({
         subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
       }).subnetIds,
     });
 
     this.cluster = new elasticache.CfnReplicationGroup(this, 'ReplicationGroup', {
-      replicationGroupDescription: 'FHIR4Java ElastiCache Cluster',
+      replicationGroupId: `${prefix}-cache`,
+      replicationGroupDescription: `${prefix} ElastiCache Cluster`,
       engine: 'valkey',
       cacheNodeType: props.nodeType ?? 'cache.r6g.large',
       numNodeGroups: props.numNodeGroups ?? 2,

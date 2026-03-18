@@ -3,6 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 
 export interface VpcConstructProps {
+  resourcePrefix: string;
   maxAzs?: number;
   natGateways?: number;
 }
@@ -14,25 +15,28 @@ export class VpcConstruct extends Construct {
   public readonly isolatedSubnets: ec2.ISubnet[];
   public readonly apiGatewayEndpoint: ec2.InterfaceVpcEndpoint;
 
-  constructor(scope: Construct, id: string, props: VpcConstructProps = {}) {
+  constructor(scope: Construct, id: string, props: VpcConstructProps) {
     super(scope, id);
 
+    const prefix = props.resourcePrefix;
+
     this.vpc = new ec2.Vpc(this, 'Vpc', {
+      vpcName: `${prefix}-vpc`,
       maxAzs: props.maxAzs ?? 3,
       natGateways: props.natGateways ?? 1,
       subnetConfiguration: [
         {
-          name: 'public',
+          name: `${prefix}-public`,
           subnetType: ec2.SubnetType.PUBLIC,
           cidrMask: 24,
         },
         {
-          name: 'private',
+          name: `${prefix}-private`,
           subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
           cidrMask: 24,
         },
         {
-          name: 'database',
+          name: `${prefix}-database`,
           subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 24,
         },
