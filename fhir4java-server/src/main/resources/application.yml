@@ -39,12 +39,16 @@ spring:
       connection-timeout: 30000
 
   # Flyway Migration
+  # Note: Database schema is created by Docker init script (db/init/01-init-schema.sql)
+  # Flyway is used for tracking migrations and applying future schema changes
   flyway:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    baseline-version: 0
     validate-on-migrate: true
     schemas: fhir
+    default-schema: fhir
 
   # Redis Cache Configuration
   data:
@@ -238,7 +242,7 @@ spring:
 
   datasource:
     # H2 INIT: Only create schemas. Function aliases are registered by H2FunctionInitializer @PostConstruct
-    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE SCHEMA IF NOT EXISTS CAREPLAN
+    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE SCHEMA IF NOT EXISTS CAREPLAN\;CREATE SCHEMA IF NOT EXISTS MASTERDATA\;CREATE SCHEMA IF NOT EXISTS PATIENTDATA\;CREATE SCHEMA IF NOT EXISTS OPERATIONDATA
     driver-class-name: org.h2.Driver
     username: fhir4java
     password: fhir4java
