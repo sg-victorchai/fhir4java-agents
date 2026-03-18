@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.stream.Collectors;
 
 /**
@@ -32,7 +32,10 @@ public class ResourceRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(ResourceRegistry.class);
 
-    private final Map<String, ResourceConfiguration> resources = new ConcurrentHashMap<>();
+    // Use case-insensitive map to handle variations in resource type casing from clients
+    // (e.g., "CarePlan" vs "CAREPLAN" vs "careplan")
+    private final Map<String, ResourceConfiguration> resources =
+            new ConcurrentSkipListMap<>(String.CASE_INSENSITIVE_ORDER);
     private final ObjectMapper yamlMapper;
     private final PathMatchingResourcePatternResolver resourceResolver;
 
@@ -41,6 +44,9 @@ public class ResourceRegistry {
 
     @Value("${fhir4java.server.default-version:R5}")
     private String globalDefaultVersionStr;
+
+    @Value("${spring.jpa.properties.hibernate.default_schema:fhir}")
+    private String defaultSchema;
 
     private FhirVersion globalDefaultVersion;
 
@@ -68,10 +74,70 @@ public class ResourceRegistry {
                     resources.size(),
                     resources.keySet().stream().sorted().collect(Collectors.joining(", ")));
 
+            // Validate schema configurations
+            validateSchemaConfigurations();
+
         } catch (IOException e) {
             log.error("Failed to load resource configurations from: {}", resourcesPath, e);
             throw new RuntimeException("Failed to load resource configurations", e);
         }
+    }
+
+    /**
+     * Validates schema configurations and logs warnings for potential issues.
+     */
+    private void validateSchemaConfigurations() {
+        // Group resources by schema name
+        Map<String, List<String>> schemaToResources = new java.util.HashMap<>();
+        Map<String, List<String>> dedicatedSchemas = new java.util.HashMap<>();
+
+        for (ResourceConfiguration config : resources.values()) {
+            String schemaName = config.getSchema().getEffectiveSchemaName(defaultSchema);
+            String resourceType = config.getResourceType();
+
+            schemaToResources.computeIfAbsent(schemaName, k -> new java.util.ArrayList<>()).add(resourceType);
+
+            if (config.getSchema().isDedicated()) {
+                dedicatedSchemas.computeIfAbsent(schemaName, k -> new java.util.ArrayList<>()).add(resourceType);
+            }
+        }
+
+        // Warn if multiple resources claim the same schema as "dedicated"
+        for (Map.Entry<String, List<String>> entry : dedicatedSchemas.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                log.warn("Schema '{}' is marked as 'dedicated' by multiple resources: {}. " +
+                         "Dedicated schemas should be exclusive to one resource type.",
+                         entry.getKey(), entry.getValue());
+            }
+        }
+
+        // Warn if a "dedicated" schema is also used by a "shared" resource
+        for (Map.Entry<String, List<String>> entry : dedicatedSchemas.entrySet()) {
+            String schemaName = entry.getKey();
+            List<String> allResourcesInSchema = schemaToResources.get(schemaName);
+            List<String> dedicatedResources = entry.getValue();
+
+            if (allResourcesInSchema.size() > dedicatedResources.size()) {
+                List<String> sharedResources = allResourcesInSchema.stream()
+                        .filter(r -> !dedicatedResources.contains(r))
+                        .toList();
+                log.warn("Schema '{}' is marked as 'dedicated' by {} but also used as 'shared' by {}. " +
+                         "Consider using consistent schema types.",
+                         schemaName, dedicatedResources, sharedResources);
+            }
+        }
+
+        // Log schema summary
+        log.info("Schema configuration summary:");
+        schemaToResources.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    String schemaName = entry.getKey();
+                    List<String> resourceTypes = entry.getValue();
+                    String schemaType = resourceTypes.size() == 1 &&
+                            dedicatedSchemas.containsKey(schemaName) ? "dedicated" : "shared";
+                    log.info("  Schema '{}' ({}): {}", schemaName, schemaType, resourceTypes);
+                });
     }
 
     private void loadResourceConfiguration(Resource configFile) {

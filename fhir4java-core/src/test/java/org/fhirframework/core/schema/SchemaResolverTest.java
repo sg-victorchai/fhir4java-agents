@@ -18,6 +18,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class SchemaResolverTest {
 
+    private static final String DEFAULT_SCHEMA = "fhir";
+
     @Mock
     private ResourceRegistry resourceRegistry;
 
@@ -25,7 +27,7 @@ class SchemaResolverTest {
 
     @BeforeEach
     void setUp() {
-        schemaResolver = new SchemaResolver(resourceRegistry);
+        schemaResolver = new SchemaResolver(resourceRegistry, DEFAULT_SCHEMA);
     }
 
     @Test
@@ -66,7 +68,62 @@ class SchemaResolverTest {
         String schema = schemaResolver.resolveSchema("Unknown");
 
         // Assert
-        assertEquals("fhir", schema);
+        assertEquals(DEFAULT_SCHEMA, schema);
+    }
+
+    @Test
+    @DisplayName("Should return custom schema for shared resource with custom schema name")
+    void resolveSchema_SharedResourceWithCustomSchema_ReturnsCustomSchema() {
+        // Arrange
+        ResourceConfiguration patientConfig = createResourceConfig("Patient", "shared", "masterdata");
+        when(resourceRegistry.getResource("Patient")).thenReturn(Optional.of(patientConfig));
+
+        // Act
+        String schema = schemaResolver.resolveSchema("Patient");
+
+        // Assert
+        assertEquals("masterdata", schema);
+    }
+
+    @Test
+    @DisplayName("Should require schema switch for non-default schema")
+    void requiresSchemaSwitch_NonDefaultSchema_ReturnsTrue() {
+        // Arrange
+        ResourceConfiguration carePlanConfig = createResourceConfig("CarePlan", "dedicated", "careplan");
+        when(resourceRegistry.getResource("CarePlan")).thenReturn(Optional.of(carePlanConfig));
+
+        // Act
+        boolean requiresSwitch = schemaResolver.requiresSchemaSwitch("CarePlan");
+
+        // Assert
+        assertTrue(requiresSwitch);
+    }
+
+    @Test
+    @DisplayName("Should not require schema switch for default schema")
+    void requiresSchemaSwitch_DefaultSchema_ReturnsFalse() {
+        // Arrange
+        ResourceConfiguration patientConfig = createResourceConfig("Patient", "shared", "fhir");
+        when(resourceRegistry.getResource("Patient")).thenReturn(Optional.of(patientConfig));
+
+        // Act
+        boolean requiresSwitch = schemaResolver.requiresSchemaSwitch("Patient");
+
+        // Assert
+        assertFalse(requiresSwitch);
+    }
+
+    @Test
+    @DisplayName("Should not require schema switch for unknown resource")
+    void requiresSchemaSwitch_UnknownResource_ReturnsFalse() {
+        // Arrange
+        when(resourceRegistry.getResource("Unknown")).thenReturn(Optional.empty());
+
+        // Act
+        boolean requiresSwitch = schemaResolver.requiresSchemaSwitch("Unknown");
+
+        // Assert
+        assertFalse(requiresSwitch);
     }
 
     @Test
@@ -111,10 +168,20 @@ class SchemaResolverTest {
     }
 
     @Test
-    @DisplayName("Should return correct default schema name")
-    void getDefaultSchema_ReturnsCorrectValue() {
+    @DisplayName("Should return injected default schema name")
+    void getDefaultSchema_ReturnsInjectedValue() {
         // Act & Assert
-        assertEquals("fhir", schemaResolver.getDefaultSchema());
+        assertEquals(DEFAULT_SCHEMA, schemaResolver.getDefaultSchema());
+    }
+
+    @Test
+    @DisplayName("Should use custom default schema when configured")
+    void getDefaultSchema_CustomDefault_ReturnsCustomValue() {
+        // Arrange
+        SchemaResolver customResolver = new SchemaResolver(resourceRegistry, "fhircommon");
+
+        // Act & Assert
+        assertEquals("fhircommon", customResolver.getDefaultSchema());
     }
 
     private ResourceConfiguration createResourceConfig(String resourceType, String schemaType, String schemaName) {

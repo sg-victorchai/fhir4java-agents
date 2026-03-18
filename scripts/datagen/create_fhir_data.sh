@@ -322,6 +322,7 @@ echo "Chronic Disease Management Data"
 echo "=========================================="
 
 # Function to create an Organization
+# fix the payload to be FHIR R5 
 create_organization() {
     local org_json=$(cat <<EOF
 {
@@ -335,14 +336,6 @@ create_organization() {
         }]
     }],
     "name": "${ORGANIZATION_NAME}",
-    "address": [{
-        "use": "work",
-        "type": "physical",
-        "line": ["123 Orchard Road"],
-        "city": "Singapore",
-        "postalCode": "238867",
-        "country": "Singapore"
-    }],
     "contact": [{
         "purpose": {
             "coding": [{
@@ -350,6 +343,14 @@ create_organization() {
                 "code": "ADMIN",
                 "display": "Administrative"
             }]
+        },
+        "address":{
+	        "use": "work",
+	        "type": "physical",
+	        "line": ["123 Orchard Road"],
+	        "city": "Singapore",
+	        "postalCode": "238867",
+	        "country": "Singapore"
         },
         "telecom": [{
             "system": "phone",
@@ -481,13 +482,13 @@ create_encounter() {
         "display": "${ORGANIZATION_NAME}"
     },
     "reason": [{
-        "use": {
+        "use": [{
             "coding": [{
                 "system": "http://terminology.hl7.org/CodeSystem/encounter-reason-use",
-                "code": "RV",
-                "display": "Reason for Visit"
+                "code": "HM",
+                "display": "Health Maintenance"
             }]
-        },
+        }],
         "value": [{
             "concept": {
                 "coding": [{
@@ -781,11 +782,6 @@ create_careplan() {
             "text": "${goal_detail}"
         }]
     }],
-    "activity": [{
-        "plannedActivityReference": {
-            "reference": "#activity-${plan_index}"
-        }
-    }],
     "note": [{
         "text": "Care plan created for chronic disease management. Patient to follow medication regimen, dietary modifications, and lifestyle changes. Regular follow-up appointments scheduled for monitoring progress."
     }]
@@ -795,7 +791,7 @@ EOF
 
     # First create the activity as a contained resource workaround - just include in careplan
     # For R5, we'll create a simpler version
-
+    #2026-03-17 Discovered that this careplan json format is incorrect
     local careplan_simple_json=$(cat <<EOF
 {
     "resourceType": "CarePlan",
@@ -862,7 +858,7 @@ EOF
     response=$(curl -s -X POST "${BASE_URL}/CarePlan" \
         -H "Content-Type: application/fhir+json" \
         -H "Accept: application/fhir+json" \
-        -d "${careplan_simple_json}")
+        -d "${careplan_json}")
 
     plan_id=$(echo "$response" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     echo "$plan_id"
