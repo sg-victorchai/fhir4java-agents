@@ -44,11 +44,11 @@ export class RdsConstruct extends Construct {
     this.instance = new rds.DatabaseInstance(this, 'PostgresInstance', {
       instanceIdentifier: `${prefix}-postgres`,
       engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_16_4,
+        version: rds.PostgresEngineVersion.VER_18_2,
       }),
       instanceType: ec2.InstanceType.of(
-        props.instanceClass ?? ec2.InstanceClass.R6G,
-        props.instanceSize ?? ec2.InstanceSize.LARGE
+        props.instanceClass ?? ec2.InstanceClass.R7G,
+        props.instanceSize ?? ec2.InstanceSize.LARGE,
       ),
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
@@ -61,10 +61,10 @@ export class RdsConstruct extends Construct {
       iamAuthentication: props.iamAuthentication ?? true,
       backupRetention: cdk.Duration.days(7),
       allocatedStorage: 100,
-      storageType: rds.StorageType.GP3,
+      storageType: rds.StorageType.IO2,
       parameterGroup: new rds.ParameterGroup(this, 'ParameterGroup', {
         engine: rds.DatabaseInstanceEngine.postgres({
-          version: rds.PostgresEngineVersion.VER_16_4,
+          version: rds.PostgresEngineVersion.VER_18_2,
         }),
         parameters: {
           'max_connections': '200',

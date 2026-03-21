@@ -112,6 +112,15 @@ public class FhirResourceController {
 
         ResourceResult result = resourceService.read(resourceType, id, version);
 
+        // Return 410 Gone for deleted resources (FHIR spec compliant)
+        if (result.deleted()) {
+            return ResponseEntity
+                    .status(HttpStatus.GONE)
+                    .contentType(FhirMediaType.APPLICATION_FHIR_JSON)
+                    .header("ETag", "W/\"" + result.versionId() + "\"")
+                    .build();
+        }
+
         return ResponseEntity
                 .ok()
                 .contentType(FhirMediaType.APPLICATION_FHIR_JSON)

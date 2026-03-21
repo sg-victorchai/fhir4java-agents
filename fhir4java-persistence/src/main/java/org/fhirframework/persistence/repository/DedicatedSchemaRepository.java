@@ -273,12 +273,13 @@ public class DedicatedSchemaRepository {
                 continue;
             }
 
-            // Generic JSONB search using @> operator for exact matches
+            // Generic JSONB search using jsonb_extract_path_text function
+            // Uses LOWER() for case-insensitive matching (works on both PostgreSQL and H2)
             // This is a simplified implementation - complex searches should use the full
             // FhirResourceRepositoryImpl logic adapted for native SQL
             String jsonPath = mapParamToSimpleJsonPath(paramName);
             if (jsonPath != null) {
-                whereClause.append(" AND content->>? ILIKE ?");
+                whereClause.append(" AND LOWER(jsonb_extract_path_text(content, ?)) LIKE LOWER(?)");
                 params.add(jsonPath);
                 params.add("%" + paramValue + "%");
             }

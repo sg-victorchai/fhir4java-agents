@@ -24,7 +24,12 @@
         "short": "A course available for enrollment",
         "definition": "This resource represents the available course for anyone to enroll",
         "min": 0,
-        "max": "*"
+        "max": "*",
+        "base": {
+          "path": "DomainResource",
+          "min": 0,
+          "max": "*"
+        }
       },
       {
         "id": "Course.id",
@@ -33,6 +38,11 @@
         "definition": "The logical id of the resource.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.id",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "http://hl7.org/fhirpath/System.String", "extension": [{"url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "id"}]}],
         "isSummary": true
       },
@@ -42,6 +52,11 @@
         "short": "Metadata about the resource",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.meta",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Meta"}],
         "isSummary": true
       },
@@ -51,6 +66,11 @@
         "short": "A set of rules under which this content was created",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.implicitRules",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "uri"}],
         "isModifier": true,
         "isSummary": true
@@ -61,6 +81,11 @@
         "short": "Language of the resource content",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.language",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "code"}],
         "binding": {"strength": "required", "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0"}
       },
@@ -70,6 +95,11 @@
         "short": "Text summary of the resource",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "DomainResource.text",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Narrative"}]
       },
       {
@@ -78,6 +108,11 @@
         "short": "Contained, inline Resources",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "DomainResource.contained",
+          "min": 0,
+          "max": "*"
+        },
         "type": [{"code": "Resource"}]
       },
       {
@@ -86,6 +121,11 @@
         "short": "Additional content defined by implementations",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "DomainResource.extension",
+          "min": 0,
+          "max": "*"
+        },
         "type": [{"code": "Extension"}]
       },
       {
@@ -94,6 +134,11 @@
         "short": "Extensions that cannot be ignored",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "DomainResource.modifierExtension",
+          "min": 0,
+          "max": "*"
+        },
         "type": [{"code": "Extension"}],
         "isModifier": true
       },
@@ -104,6 +149,11 @@
         "definition": "A unique code that identifies this course",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "Course.code",
+          "min": 1,
+          "max": "1"
+        },
         "type": [{"code": "code"}],
         "isSummary": true
       },
@@ -114,6 +164,11 @@
         "definition": "The category or type of the course such as infrastructure, cybersecurity, application security, programming, communication",
         "min": 1,
         "max": "*",
+        "base": {
+          "path": "Course.category",
+          "min": 1,
+          "max": "*"
+        },
         "type": [{"code": "code"}],
         "isSummary": true,
         "binding": {
@@ -128,6 +183,11 @@
         "definition": "The human-readable name of the course",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "Course.title",
+          "min": 1,
+          "max": "1"
+        },
         "type": [{"code": "string"}],
         "isSummary": true
       },
@@ -138,6 +198,11 @@
         "definition": "The current status of the course",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "Course.status",
+          "min": 1,
+          "max": "1"
+        },
         "type": [{"code": "code"}],
         "isModifier": true,
         "isSummary": true,
@@ -153,6 +218,11 @@
         "definition": "A detailed description of the course content and objectives",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.description",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "markdown"}]
       },
       {
@@ -162,6 +232,11 @@
         "definition": "The person(s) who teach or instruct the course",
         "min": 1,
         "max": "*",
+        "base": {
+          "path": "Course.instructor",
+          "min": 1,
+          "max": "*"
+        },
         "type": [{"code": "Reference", "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Person"]}],
         "isSummary": true
       },
@@ -172,6 +247,11 @@
         "definition": "The duration of the course",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.duration",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Duration"}]
       },
       {
@@ -181,6 +261,11 @@
         "definition": "The date when the course starts",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.startDate",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "date"}]
       },
       {
@@ -190,6 +275,11 @@
         "definition": "Other courses that must be completed before enrolling in this course",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "Course.prerequisites",
+          "min": 0,
+          "max": "*"
+        },
         "type": [{"code": "Reference", "targetProfile": ["http://fhir4java.org/fhir/StructureDefinition/Course"]}]
       },
       {
@@ -199,6 +289,11 @@
         "definition": "The fee charged for the course",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.courseFee",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Money"}]
       },
       {
@@ -208,6 +303,11 @@
         "definition": "The amount of government subsidy available for the course",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.governmentSubsidy",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Money"}]
       },
       {
@@ -217,6 +317,11 @@
         "definition": "The fee for the certification exam associated with the course",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.certExamFee",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Money"}]
       },
       {
@@ -226,6 +331,11 @@
         "definition": "The organization that provides or hosts the training course",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Course.trainingProvider",
+          "min": 0,
+          "max": "1"
+        },
         "type": [{"code": "Reference", "targetProfile": ["http://hl7.org/fhir/StructureDefinition/Organization"]}],
         "isSummary": true
       }

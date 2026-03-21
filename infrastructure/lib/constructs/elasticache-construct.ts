@@ -32,10 +32,11 @@ export class ElastiCacheConstruct extends Construct {
     this.secret = new secretsmanager.Secret(this, 'CacheSecret', {
       secretName: `${prefix}/elasticache`,
       generateSecretString: {
-        secretStringTemplate: JSON.stringify({}),
-        generateStringKey: 'authToken',
-        excludeCharacters: '/@"\\\'',
-        passwordLength: 64,
+        // ElastiCache AUTH tokens require only alphanumeric characters
+        // to avoid encoding issues with CloudFormation dynamic references
+        excludePunctuation: true,
+        includeSpace: false,
+        passwordLength: 32,
       },
     });
 
@@ -58,7 +59,7 @@ export class ElastiCacheConstruct extends Construct {
       securityGroupIds: [this.securityGroup.securityGroupId],
       transitEncryptionEnabled: true,
       atRestEncryptionEnabled: true,
-      authToken: this.secret.secretValueFromJson('authToken').unsafeUnwrap(),
+      authToken: this.secret.secretValue.unsafeUnwrap(),
       automaticFailoverEnabled: true,
       multiAzEnabled: true,
     });

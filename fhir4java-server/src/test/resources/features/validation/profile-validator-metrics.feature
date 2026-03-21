@@ -63,18 +63,18 @@ Feature: Profile Validator Metrics
   Scenario: Metrics distinguish between successful and failed validations
     Given I validate a valid Patient resource
     And I validate an invalid Patient resource
-    When I query metrics with tag filter "result=success"
+    When I query metrics with tag filter "result:success"
     Then the counter should show successful validations
-    When I query metrics with tag filter "result=failure"
+    When I query metrics with tag filter "result:failure"
     Then the counter should show failed validations
 
   @metrics @resource-type-tracking
   Scenario: Metrics track validation by resource type
     Given I validate multiple Patient resources
     And I validate multiple Observation resources
-    When I query metrics with tag filter "resourceType=Patient"
+    When I query metrics with tag filter "resourceType:Patient"
     Then the counter should show Patient validations
-    When I query metrics with tag filter "resourceType=Observation"
+    When I query metrics with tag filter "resourceType:Observation"
     Then the counter should show Observation validations
 
   @metrics @disabled

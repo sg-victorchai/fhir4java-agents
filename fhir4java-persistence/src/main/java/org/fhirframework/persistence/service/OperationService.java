@@ -143,6 +143,12 @@ public class OperationService {
         try {
             IBaseResource result = handler.execute(context);
             return new OperationResult(true, result, 200);
+        } catch (org.fhirframework.core.exception.ResourceNotFoundException e) {
+            log.warn("Resource not found during operation ${}: {}", operationName, e.getMessage());
+            return createNotFoundResult(e.getResourceType(), e.getResourceId());
+        } catch (IllegalArgumentException e) {
+            log.warn("Invalid input for operation ${}: {}", operationName, e.getMessage());
+            return createInvalidInputResult(operationName, e.getMessage(), version);
         } catch (Exception e) {
             log.error("Error executing operation ${}: {}", operationName, e.getMessage(), e);
             return createErrorResult(operationName, e, version);
@@ -164,11 +170,12 @@ public class OperationService {
         OperationOutcome outcome = new OperationOutcome();
         outcome.addIssue()
                 .setSeverity(IssueSeverity.ERROR)
-                .setCode(IssueType.NOTSUPPORTED)
-                .setDiagnostics(String.format("Operation '$%s' is not supported at %s level",
+                .setCode(IssueType.NOTFOUND)
+                .setDiagnostics(String.format("Operation '$%s' is not found at %s level",
                         operationName, location));
 
-        return new OperationResult(false, outcome, 501);
+        // Return 404 Not Found per FHIR spec for unknown/unregistered operations
+        return new OperationResult(false, outcome, 404);
     }
 
     private OperationResult createInvalidInputResult(String operationName, String message,
@@ -181,6 +188,17 @@ public class OperationService {
                         operationName, message));
 
         return new OperationResult(false, outcome, 400);
+    }
+
+    private OperationResult createNotFoundResult(String resourceType, String resourceId) {
+        OperationOutcome outcome = new OperationOutcome();
+        outcome.addIssue()
+                .setSeverity(IssueSeverity.ERROR)
+                .setCode(IssueType.NOTFOUND)
+                .setDiagnostics(String.format("%s/%s not found",
+                        resourceType, resourceId));
+
+        return new OperationResult(false, outcome, 404);
     }
 
     private OperationResult createErrorResult(String operationName, Exception e,

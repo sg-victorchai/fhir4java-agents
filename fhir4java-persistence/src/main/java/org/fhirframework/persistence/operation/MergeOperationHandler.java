@@ -59,11 +59,11 @@ public class MergeOperationHandler implements OperationHandler {
 
         IBaseResource input = context.getInputResource();
         if (input == null) {
-            return createError("No input Parameters resource provided");
+            throw new IllegalArgumentException("No input Parameters resource provided");
         }
 
         if (!(input instanceof Parameters params)) {
-            return createError("Input must be a Parameters resource");
+            throw new IllegalArgumentException("Input must be a Parameters resource");
         }
 
         // Extract source-patient and target-patient references
@@ -71,10 +71,10 @@ public class MergeOperationHandler implements OperationHandler {
         String targetRef = extractReference(params, "target-patient");
 
         if (sourceRef == null) {
-            return createError("Missing required parameter: source-patient");
+            throw new IllegalArgumentException("Missing required parameter: source-patient");
         }
         if (targetRef == null) {
-            return createError("Missing required parameter: target-patient");
+            throw new IllegalArgumentException("Missing required parameter: target-patient");
         }
 
         // Extract patient IDs from references (e.g., "Patient/123" -> "123")
@@ -82,31 +82,21 @@ public class MergeOperationHandler implements OperationHandler {
         String targetId = extractPatientId(targetRef);
 
         if (sourceId == null) {
-            return createError("Invalid source-patient reference: " + sourceRef);
+            throw new IllegalArgumentException("Invalid source-patient reference: " + sourceRef);
         }
         if (targetId == null) {
-            return createError("Invalid target-patient reference: " + targetRef);
+            throw new IllegalArgumentException("Invalid target-patient reference: " + targetRef);
         }
         if (sourceId.equals(targetId)) {
-            return createError("Source and target patient cannot be the same");
+            throw new IllegalArgumentException("Source and target patient cannot be the same");
         }
 
         FhirContext fhirContext = contextFactory.getContext(context.getVersion());
         IParser parser = fhirContext.newJsonParser();
 
-        // Read both patients
-        FhirResourceService.ResourceResult sourceResult;
-        FhirResourceService.ResourceResult targetResult;
-        try {
-            sourceResult = resourceService.read("Patient", sourceId, context.getVersion());
-        } catch (Exception e) {
-            return createError("Source patient not found: Patient/" + sourceId);
-        }
-        try {
-            targetResult = resourceService.read("Patient", targetId, context.getVersion());
-        } catch (Exception e) {
-            return createError("Target patient not found: Patient/" + targetId);
-        }
+        // Read both patients - throws ResourceNotFoundException if not found (handled by OperationService for 404)
+        FhirResourceService.ResourceResult sourceResult = resourceService.read("Patient", sourceId, context.getVersion());
+        FhirResourceService.ResourceResult targetResult = resourceService.read("Patient", targetId, context.getVersion());
 
         // Parse source patient and update it
         Patient sourcePatient = (Patient) parser.parseResource(sourceResult.content());

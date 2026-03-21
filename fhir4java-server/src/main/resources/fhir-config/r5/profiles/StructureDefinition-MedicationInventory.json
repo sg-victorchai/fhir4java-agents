@@ -24,7 +24,12 @@
         "short": "Medication inventory tracking",
         "definition": "A resource for tracking medication supplies and consumption, with support for package-level inventory management.",
         "min": 0,
-        "max": "*"
+        "max": "*",
+        "base": {
+          "path": "DomainResource",
+          "min": 0,
+          "max": "*"
+        }
       },
       {
         "id": "MedicationInventory.id",
@@ -33,6 +38,11 @@
         "definition": "The logical id of the resource, as used in the URL for the resource.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.id",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "http://hl7.org/fhirpath/System.String",
@@ -53,6 +63,11 @@
         "definition": "The metadata about the resource. This is content that is maintained by the infrastructure.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.meta",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "Meta"
@@ -67,6 +82,11 @@
         "definition": "A reference to a set of rules that were followed when the resource was constructed.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.implicitRules",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "uri"
@@ -83,6 +103,11 @@
         "definition": "The base language in which the resource is written.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Resource.language",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "code"
@@ -101,6 +126,11 @@
         "definition": "A human-readable narrative that contains a summary of the resource and can be used to represent the content of the resource to a human.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "DomainResource.text",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "Narrative"
@@ -114,6 +144,11 @@
         "definition": "These resources do not have an independent existence apart from the resource that contains them.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "DomainResource.contained",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "Resource"
@@ -127,6 +162,11 @@
         "definition": "May be used to represent additional information that is not part of the basic definition of the resource.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "DomainResource.extension",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "Extension"
@@ -140,6 +180,11 @@
         "definition": "May be used to represent additional information that is not part of the basic definition of the resource and that modifies the understanding of the element that contains it.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "DomainResource.modifierExtension",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "Extension"
@@ -155,6 +200,11 @@
         "definition": "Business identifiers such as SKU, barcode, or internal inventory ID.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "MedicationInventory.identifier",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "Identifier"
@@ -169,6 +219,11 @@
         "definition": "The current status of the inventory item.",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.status",
+          "min": 1,
+          "max": "1"
+        },
         "type": [
           {
             "code": "code"
@@ -190,6 +245,11 @@
         "definition": "Reference to the Medication resource that this inventory tracks.",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.medication",
+          "min": 1,
+          "max": "1"
+        },
         "type": [
           {
             "code": "Reference",
@@ -207,6 +267,11 @@
         "definition": "The total quantity of medication units currently in stock (e.g., 100 tablets). This should equal the sum of (packaging.unitsPerPackage * packaging.packageCount) + packaging.openedUnits for all packaging entries.",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.quantity",
+          "min": 1,
+          "max": "1"
+        },
         "type": [
           {
             "code": "Quantity"
@@ -221,6 +286,11 @@
         "definition": "Tracks inventory at the package level, allowing for partial package dispensing. For example: 5 boxes of 20 tablets each, plus 10 loose tablets from an opened box.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "MedicationInventory.packaging",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "BackboneElement"
@@ -234,6 +304,11 @@
         "definition": "Unique id for the element within a resource.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "Element.id",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "http://hl7.org/fhirpath/System.String",
@@ -253,6 +328,11 @@
         "definition": "May be used to represent additional information that is not part of the basic definition of the element.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "Element.extension",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "Extension"
@@ -266,6 +346,11 @@
         "definition": "May be used to represent additional information that is not part of the basic definition of the element and that modifies the understanding of the element in which it is contained.",
         "min": 0,
         "max": "*",
+        "base": {
+          "path": "BackboneElement.modifierExtension",
+          "min": 0,
+          "max": "*"
+        },
         "type": [
           {
             "code": "Extension"
@@ -281,6 +366,11 @@
         "definition": "The type of packaging for this inventory entry.",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.packaging.type",
+          "min": 1,
+          "max": "1"
+        },
         "type": [
           {
             "code": "CodeableConcept"
@@ -299,6 +389,11 @@
         "definition": "The number of medication units in each complete package (e.g., 20 tablets per box).",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.packaging.unitsPerPackage",
+          "min": 1,
+          "max": "1"
+        },
         "type": [
           {
             "code": "positiveInt"
@@ -312,6 +407,11 @@
         "definition": "The number of complete (unopened) packages in stock (e.g., 5 boxes).",
         "min": 1,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.packaging.packageCount",
+          "min": 1,
+          "max": "1"
+        },
         "type": [
           {
             "code": "positiveInt"
@@ -325,6 +425,11 @@
         "definition": "The number of loose units from opened packages (e.g., 10 tablets remaining from a partially dispensed box). Default is 0 if not specified.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.packaging.openedUnits",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "integer"
@@ -338,6 +443,11 @@
         "definition": "Reference to the Location where this inventory is stored.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.location",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "Reference",
@@ -354,6 +464,11 @@
         "definition": "The expiration date of the medication inventory.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.expirationDate",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "date"
@@ -368,6 +483,11 @@
         "definition": "The lot or batch number for traceability.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.lotNumber",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "string"
@@ -381,6 +501,11 @@
         "definition": "Reference to the Organization that supplies this inventory.",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.supplier",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "Reference",
@@ -397,6 +522,11 @@
         "definition": "The date and time when the inventory was last updated (e.g., after a dispense or restock).",
         "min": 0,
         "max": "1",
+        "base": {
+          "path": "MedicationInventory.lastUpdated",
+          "min": 0,
+          "max": "1"
+        },
         "type": [
           {
             "code": "dateTime"

@@ -119,8 +119,9 @@ public class FhirExceptionHandler {
     }
 
     /**
-     * Handle HAPI FHIR parsing errors (e.g., invalid JSON structure, invalid enum values).
-     * Returns 422 Unprocessable Entity as the content is well-formed but semantically invalid.
+     * Handle HAPI FHIR parsing errors.
+     * Returns 400 Bad Request for JSON syntax errors (unparseable content).
+     * Returns 422 Unprocessable Entity for valid JSON but invalid FHIR structure.
      */
     @ExceptionHandler(DataFormatException.class)
     public ResponseEntity<String> handleDataFormatException(DataFormatException ex,
@@ -133,11 +134,85 @@ public class FhirExceptionHandler {
             errorMessage = "Invalid resource format or content";
         }
 
+        // Determine if this is a JSON syntax error (400) or FHIR structure error (422)
+        // JSON syntax errors have specific patterns in the exception chain
+        HttpStatus status = isJsonSyntaxError(ex)
+                ? HttpStatus.BAD_REQUEST
+                : HttpStatus.UNPROCESSABLE_ENTITY;
+
+        IssueType issueType = status == HttpStatus.BAD_REQUEST
+                ? IssueType.INVALID
+                : IssueType.STRUCTURE;
+
         OperationOutcome outcome = new OperationOutcomeBuilder()
-                .error(IssueType.STRUCTURE, "Resource validation failed", errorMessage)
+                .error(issueType, status == HttpStatus.BAD_REQUEST
+                        ? "Invalid JSON syntax"
+                        : "Resource validation failed", errorMessage)
                 .build();
 
-        return buildResponse(outcome, HttpStatus.UNPROCESSABLE_ENTITY, request);
+        return buildResponse(outcome, status, request);
+    }
+
+    /**
+     * Check if the DataFormatException is caused by a JSON syntax error.
+     * JSON syntax errors should return 400, while FHIR structure errors should return 422.
+     */
+    private boolean isJsonSyntaxError(DataFormatException ex) {
+        // Check the exception message for JSON syntax error patterns
+        String message = ex.getMessage();
+        if (message != null) {
+            String lowerMessage = message.toLowerCase();
+            // Patterns indicating JSON syntax errors (not FHIR structure errors)
+            // HAPI FHIR error codes for JSON parsing issues:
+            // - HAPI-1859: Content does not appear to be FHIR JSON
+            // - HAPI-1861: Failed to parse JSON encoded FHIR content
+            if (lowerMessage.contains("hapi-1859") ||
+                lowerMessage.contains("hapi-1861") ||
+                lowerMessage.contains("unexpected character") ||
+                lowerMessage.contains("unrecognized token") ||
+                lowerMessage.contains("failed to parse json") ||
+                lowerMessage.contains("invalid json") ||
+                lowerMessage.contains("unterminated") ||
+                lowerMessage.contains("malformed") ||
+                lowerMessage.contains("content does not appear to be") ||
+                lowerMessage.contains("does not appear to be fhir") ||
+                lowerMessage.contains("first non-whitespace character") ||
+                lowerMessage.contains("must be '{'") ||
+                lowerMessage.contains("error was: unrecognized") ||
+                lowerMessage.contains("error was: unexpected") ||
+                (lowerMessage.contains("failed to parse") && lowerMessage.contains("content"))) {
+                return true;
+            }
+        }
+
+        // Check the cause for JSON parsing exceptions
+        Throwable cause = ex.getCause();
+        while (cause != null) {
+            String causeName = cause.getClass().getName().toLowerCase();
+            String causeMessage = cause.getMessage();
+            // Check class name for JSON parser exceptions
+            if (causeName.contains("jsonparse") ||
+                causeName.contains("jsonsyntax") ||
+                causeName.contains("jackson") ||
+                causeName.contains("gson") ||
+                causeName.contains("jsonmappingexception") ||
+                causeName.contains("jsonprocessingexception")) {
+                return true;
+            }
+            // Also check cause messages
+            if (causeMessage != null) {
+                String lowerCauseMsg = causeMessage.toLowerCase();
+                if (lowerCauseMsg.contains("unrecognized token") ||
+                    lowerCauseMsg.contains("unexpected character") ||
+                    lowerCauseMsg.contains("hapi-1859") ||
+                    lowerCauseMsg.contains("hapi-1861")) {
+                    return true;
+                }
+            }
+            cause = cause.getCause();
+        }
+
+        return false;
     }
 
     @ExceptionHandler(NoHandlerFoundException.class)

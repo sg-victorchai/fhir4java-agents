@@ -463,6 +463,42 @@ Proceed with generation? (y/n)
 3. All custom elements
 4. For each BackboneElement: its base elements (`id`, `extension`, `modifierExtension`) plus custom children
 
+### CRITICAL: Base Component Required
+
+**HAPI FHIR validator (v6.4.0+) REQUIRES a `base` component on EVERY element in the snapshot.** Without this, validation will fail with a `NullPointerException`.
+
+Each element in the snapshot MUST have a `base` object with:
+- `path`: The path to where the element was originally defined
+- `min`: Minimum cardinality in the base definition
+- `max`: Maximum cardinality in the base definition
+
+**Base Path Rules:**
+
+| Element Type | Base Path Pattern |
+|--------------|-------------------|
+| Root element (`{Resource}`) | `DomainResource` |
+| Elements from Resource (`id`, `meta`, `implicitRules`, `language`) | `Resource.{name}` |
+| Elements from DomainResource (`text`, `contained`, `extension`, `modifierExtension`) | `DomainResource.{name}` |
+| BackboneElement infrastructure (`{backbone}.id`, `{backbone}.extension`) | `Element.id`, `Element.extension` |
+| BackboneElement modifierExtension (`{backbone}.modifierExtension`) | `BackboneElement.modifierExtension` |
+| Custom elements | Same as the element's own path |
+
+**Example:**
+```json
+{
+  "id": "MyResource.status",
+  "path": "MyResource.status",
+  "min": 1,
+  "max": "1",
+  "base": {
+    "path": "MyResource.status",
+    "min": 1,
+    "max": "1"
+  },
+  "type": [{"code": "code"}]
+}
+```
+
 ### StructureDefinition Template
 
 ```json
@@ -492,7 +528,8 @@ Proceed with generation? (y/n)
         "short": "{Short description}",
         "definition": "{Full definition}",
         "min": 0,
-        "max": "*"
+        "max": "*",
+        "base": { "path": "DomainResource", "min": 0, "max": "*" }
       },
       // === DomainResource Base Elements (REQUIRED) ===
       {
@@ -502,6 +539,7 @@ Proceed with generation? (y/n)
         "definition": "The logical id of the resource.",
         "min": 0,
         "max": "1",
+        "base": { "path": "Resource.id", "min": 0, "max": "1" },
         "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "id" }] }],
         "isSummary": true
       },
@@ -511,6 +549,7 @@ Proceed with generation? (y/n)
         "short": "Metadata about the resource",
         "min": 0,
         "max": "1",
+        "base": { "path": "Resource.meta", "min": 0, "max": "1" },
         "type": [{ "code": "Meta" }],
         "isSummary": true
       },
@@ -520,6 +559,7 @@ Proceed with generation? (y/n)
         "short": "A set of rules under which this content was created",
         "min": 0,
         "max": "1",
+        "base": { "path": "Resource.implicitRules", "min": 0, "max": "1" },
         "type": [{ "code": "uri" }],
         "isModifier": true,
         "isSummary": true
@@ -530,6 +570,7 @@ Proceed with generation? (y/n)
         "short": "Language of the resource content",
         "min": 0,
         "max": "1",
+        "base": { "path": "Resource.language", "min": 0, "max": "1" },
         "type": [{ "code": "code" }],
         "binding": { "strength": "required", "valueSet": "http://hl7.org/fhir/ValueSet/all-languages|5.0.0" }
       },
@@ -539,6 +580,7 @@ Proceed with generation? (y/n)
         "short": "Text summary of the resource",
         "min": 0,
         "max": "1",
+        "base": { "path": "DomainResource.text", "min": 0, "max": "1" },
         "type": [{ "code": "Narrative" }]
       },
       {
@@ -547,6 +589,7 @@ Proceed with generation? (y/n)
         "short": "Contained, inline Resources",
         "min": 0,
         "max": "*",
+        "base": { "path": "DomainResource.contained", "min": 0, "max": "*" },
         "type": [{ "code": "Resource" }]
       },
       {
@@ -555,6 +598,7 @@ Proceed with generation? (y/n)
         "short": "Additional content defined by implementations",
         "min": 0,
         "max": "*",
+        "base": { "path": "DomainResource.extension", "min": 0, "max": "*" },
         "type": [{ "code": "Extension" }]
       },
       {
@@ -563,10 +607,11 @@ Proceed with generation? (y/n)
         "short": "Extensions that cannot be ignored",
         "min": 0,
         "max": "*",
+        "base": { "path": "DomainResource.modifierExtension", "min": 0, "max": "*" },
         "type": [{ "code": "Extension" }],
         "isModifier": true
       },
-      // === Custom Elements ===
+      // === Custom Elements (base.path = element's own path) ===
       {
         "id": "{ResourceName}.{elementName}",
         "path": "{ResourceName}.{elementName}",
@@ -574,6 +619,7 @@ Proceed with generation? (y/n)
         "definition": "{Element definition}",
         "min": {min},
         "max": "{max}",
+        "base": { "path": "{ResourceName}.{elementName}", "min": {min}, "max": "{max}" },
         "type": [{ "code": "{dataType}" }],
         "isSummary": {true|false},
         "isModifier": {true|false}
@@ -590,7 +636,7 @@ Proceed with generation? (y/n)
         "min": 0,
         "max": "*"
       },
-      // === ONLY Custom Elements (no inherited base elements) ===
+      // === ONLY Custom Elements (no inherited base elements, no base component needed) ===
       {
         "id": "{ResourceName}.{elementName}",
         "path": "{ResourceName}.{elementName}",
@@ -609,25 +655,27 @@ Proceed with generation? (y/n)
 
 ### BackboneElement in Snapshot
 
-For each BackboneElement, include its base elements in the snapshot:
+For each BackboneElement, include its base elements in the snapshot with proper `base` components:
 
 ```json
-// The backbone element itself
+// The backbone element itself (base.path = its own path)
 {
   "id": "{ResourceName}.{backbone}",
   "path": "{ResourceName}.{backbone}",
   "short": "{description}",
   "min": 0,
   "max": "*",
+  "base": { "path": "{ResourceName}.{backbone}", "min": 0, "max": "*" },
   "type": [{ "code": "BackboneElement" }]
 },
-// BackboneElement base elements (REQUIRED in snapshot)
+// BackboneElement base elements (REQUIRED in snapshot, base.path = Element/BackboneElement)
 {
   "id": "{ResourceName}.{backbone}.id",
   "path": "{ResourceName}.{backbone}.id",
   "short": "Unique id for inter-element referencing",
   "min": 0,
   "max": "1",
+  "base": { "path": "Element.id", "min": 0, "max": "1" },
   "type": [{ "code": "http://hl7.org/fhirpath/System.String", "extension": [{ "url": "http://hl7.org/fhir/StructureDefinition/structuredefinition-fhir-type", "valueUrl": "string" }] }]
 },
 {
@@ -636,6 +684,7 @@ For each BackboneElement, include its base elements in the snapshot:
   "short": "Additional content defined by implementations",
   "min": 0,
   "max": "*",
+  "base": { "path": "Element.extension", "min": 0, "max": "*" },
   "type": [{ "code": "Extension" }]
 },
 {
@@ -644,16 +693,18 @@ For each BackboneElement, include its base elements in the snapshot:
   "short": "Extensions that cannot be ignored",
   "min": 0,
   "max": "*",
+  "base": { "path": "BackboneElement.modifierExtension", "min": 0, "max": "*" },
   "type": [{ "code": "Extension" }],
   "isModifier": true
 },
-// Custom backbone children
+// Custom backbone children (base.path = their own path)
 {
   "id": "{ResourceName}.{backbone}.{child}",
   "path": "{ResourceName}.{backbone}.{child}",
   "short": "{description}",
   "min": {min},
   "max": "{max}",
+  "base": { "path": "{ResourceName}.{backbone}.{child}", "min": {min}, "max": "{max}" },
   "type": [{ "code": "{dataType}" }]
 }
 ```

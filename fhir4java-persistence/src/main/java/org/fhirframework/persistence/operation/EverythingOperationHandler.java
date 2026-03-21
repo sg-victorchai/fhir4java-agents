@@ -78,19 +78,10 @@ public class EverythingOperationHandler implements OperationHandler {
         Bundle resultBundle = new Bundle();
         resultBundle.setType(Bundle.BundleType.SEARCHSET);
 
-        // Read the Patient resource itself
-        try {
-            FhirResourceService.ResourceResult patientResult = resourceService.read("Patient", patientId, version);
-            addToBundle(resultBundle, "Patient", patientId, patientResult);
-        } catch (Exception e) {
-            log.warn("Patient/{} not found for $everything: {}", patientId, e.getMessage());
-            OperationOutcome outcome = new OperationOutcome();
-            outcome.addIssue()
-                    .setSeverity(OperationOutcome.IssueSeverity.ERROR)
-                    .setCode(OperationOutcome.IssueType.NOTFOUND)
-                    .setDiagnostics("Patient/" + patientId + " not found");
-            return outcome;
-        }
+        // Read the Patient resource itself - throws ResourceNotFoundException if not found
+        // This exception propagates to OperationService which returns 404
+        FhirResourceService.ResourceResult patientResult = resourceService.read("Patient", patientId, version);
+        addToBundle(resultBundle, "Patient", patientId, patientResult);
 
         // Search each compartment type for related resources
         for (String compartmentType : COMPARTMENT_TYPES) {

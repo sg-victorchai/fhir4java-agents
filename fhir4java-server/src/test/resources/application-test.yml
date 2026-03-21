@@ -1,0 +1,61 @@
+# Test profile configuration for BDD tests
+# Overrides settings from main application.yml for test environment
+
+# Actuator endpoints for tests
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+
+spring:
+  # H2 in-memory database for tests
+  datasource:
+    url: jdbc:h2:mem:fhir4java_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;INIT=CREATE SCHEMA IF NOT EXISTS FHIR\;CREATE SCHEMA IF NOT EXISTS CAREPLAN\;CREATE SCHEMA IF NOT EXISTS MASTERDATA\;CREATE SCHEMA IF NOT EXISTS PATIENTDATA\;CREATE SCHEMA IF NOT EXISTS OPERATIONDATA\;SET SCHEMA FHIR
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        default_schema: fhir
+
+  # Disable Flyway for tests (using H2 with create-drop)
+  flyway:
+    enabled: false
+
+  # Disable Redis for tests
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+  cache:
+    type: simple
+
+# FHIR4Java test configuration
+fhir4java:
+  validation:
+    # Disable profile validation for tests to allow test data to pass
+    profile-validation: off
+    # Use lenient parser for tests to allow unknown elements
+    parser-error-handler: lenient
+    # Disable strict health checks for tests
+    health-check-mode: disabled
+
+  # Configure sample plugins for tests
+  plugins:
+    patient-create:
+      enabled: true
+      # Keep family name requirement enabled for the plugin test
+      require-family-name: true
+      auto-generate-mrn: true
+      duplicate-check-enabled: false

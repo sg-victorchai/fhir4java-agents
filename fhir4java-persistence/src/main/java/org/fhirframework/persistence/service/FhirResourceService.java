@@ -9,6 +9,7 @@ import org.fhirframework.core.tenant.TenantContext;
 import org.fhirframework.core.validation.ProfileValidator;
 import org.fhirframework.core.validation.SearchParameterValidator;
 import org.fhirframework.core.validation.ValidationConfig;
+import org.fhirframework.core.validation.ValidationIssue;
 import org.fhirframework.core.validation.ValidationResult;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.persistence.entity.FhirResourceEntity;
@@ -154,16 +155,13 @@ public class FhirResourceService {
                         TenantContext.getCurrentTenantId(), resourceType, resourceId)
                 .orElseThrow(() -> new ResourceNotFoundException(resourceType, resourceId));
 
-        if (entity.getIsDeleted()) {
-            throw new ResourceNotFoundException(resourceType, resourceId);
-        }
-
+        // Return deleted flag so controller can return 410 Gone (FHIR spec compliant)
         return new ResourceResult(
                 entity.getResourceId(),
                 entity.getVersionId(),
                 entity.getContent(),
                 entity.getLastUpdated(),
-                false
+                entity.getIsDeleted()
         );
     }
 
@@ -478,6 +476,10 @@ public class FhirResourceService {
 
     /**
      * Validate search parameters and throw FhirException if validation fails.
+     * <p>
+     * Denied parameters (BUSINESSRULE errors) always cause failure.
+     * Unknown parameters only cause failure if fail-on-unknown-search-parameters is true.
+     * </p>
      */
     private void validateSearchParametersOrThrow(String resourceType, Map<String, String> params, FhirVersion version) {
         // Convert Map<String, String> to Map<String, String[]> for the validator
@@ -489,12 +491,29 @@ public class FhirResourceService {
         ValidationResult result = searchParameterValidator.validateSearchParameters(version, resourceType, paramArrays);
 
         if (result.hasErrors()) {
+            // Check for BUSINESSRULE errors (denied parameters) - these always cause failure
+            List<ValidationIssue> deniedParamErrors = result.getErrors().stream()
+                    .filter(issue -> issue.issueType() == org.hl7.fhir.r5.model.OperationOutcome.IssueType.BUSINESSRULE)
+                    .toList();
+
+            if (!deniedParamErrors.isEmpty()) {
+                String errors = deniedParamErrors.stream()
+                        .map(ValidationIssue::message)
+                        .collect(java.util.stream.Collectors.joining("; "));
+                if (errors.isEmpty()) errors = "Search parameter is not allowed";
+                // Throw IllegalArgumentException for 400 Bad Request response
+                // (denied parameters are client errors - bad request with unsupported params)
+                throw new IllegalArgumentException(errors);
+            }
+
+            // For other errors (unknown parameters), check configuration
             if (validationConfig.isFailOnUnknownSearchParameters()) {
                 String errors = result.getErrors().stream()
-                        .map(issue -> issue.message())
-                        .reduce((a, b) -> a + "; " + b)
-                        .orElse("Invalid search parameters");
-                throw new FhirException(errors, "invalid");
+                        .map(ValidationIssue::message)
+                        .collect(java.util.stream.Collectors.joining("; "));
+                if (errors.isEmpty()) errors = "Invalid search parameters";
+                // Throw IllegalArgumentException for 400 Bad Request response
+                throw new IllegalArgumentException(errors);
             }
             // Log but continue - invalid parameters will be ignored by the repository
             log.warn("Search parameter validation issues: {}", result);
