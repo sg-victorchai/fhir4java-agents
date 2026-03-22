@@ -336,6 +336,8 @@ public class DedicatedSchemaRepository {
      * probing attacks where an attacker could supply arbitrary keys to explore
      * the resource content structure.
      * </p>
+     * 
+     * TODO - this needs to be expanded to cover more parameters and resource types for real-world use.
      *
      * @param paramName the search parameter name
      * @return the JSON path for known parameters, or {@code null} for unknown parameters
@@ -343,7 +345,7 @@ public class DedicatedSchemaRepository {
     private String mapParamToSimpleJsonPath(String paramName) {
         String jsonPath = ALLOWED_SEARCH_PARAMS.get(paramName);
         if (jsonPath == null && !isCommonParam(paramName)) {
-            log.debug("Ignoring unknown search parameter '{}' - not in allowlist", paramName);
+            log.warn("Ignoring unknown search parameter '{}' - not in allowlist", paramName);
         }
         return jsonPath;
     }
