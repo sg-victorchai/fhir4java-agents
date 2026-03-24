@@ -1,8 +1,8 @@
 # Next-Generation Clinical UI Design: FHIR4Java
 
-**Status:** DRAFT - Brainstorming In Progress
+**Status:** DRAFT - Ready for Review
 **Created:** 2026-03-22
-**Last Updated:** 2026-03-22
+**Last Updated:** 2026-03-24
 
 ---
 
@@ -111,6 +111,35 @@ Patient context COLLAPSES to banner
 Command Workspace EXPANDS to fill space
 User can toggle [Expand Chart] to see full chart temporarily
 ```
+
+### Cross-Window State Synchronization (Dual Monitor)
+
+When operating in dual-window mode, state must be synchronized between browser windows using the BroadcastChannel API (React Context cannot share state across windows):
+
+```typescript
+// Shared channel for clinical session state
+const clinicalChannel = new BroadcastChannel('fhir4java-clinical-session');
+
+// Publish state changes
+clinicalChannel.postMessage({
+  type: 'PATIENT_CONTEXT_CHANGED',
+  patientId: 'Patient/123',
+  encounterId: 'Encounter/456'
+});
+
+// Subscribe to state changes from other window
+clinicalChannel.onmessage = (event) => {
+  if (event.data.type === 'PATIENT_CONTEXT_CHANGED') {
+    syncPatientContext(event.data.patientId, event.data.encounterId);
+  }
+};
+```
+
+The `PatientContext` provider wraps both windows and uses BroadcastChannel to keep them synchronized. Events synchronized:
+- Patient selection/deselection
+- Encounter start/end
+- Note state changes (draft saved, signed)
+- Real-time alerts and notifications
 
 ---
 
@@ -423,46 +452,1065 @@ prescriptions:
 
 ---
 
-## Remaining Design Sections (To Be Completed)
+## Clinical Note Workflow & Documentation States
 
-The following sections need to be designed in the next session:
+### Terminology Alignment (Epic Standard)
 
-1. **Frontend Architecture Details**
-   - Component hierarchy
-   - State management patterns
-   - FHIR data fetching strategy
+This design uses industry-standard terminology aligned with Epic EHR:
 
-2. **Patient Chart Canvas Design**
-   - Composable panel system
-   - Information architecture
-   - Responsive collapse behavior
+| Term | Definition | When Used |
+|------|------------|-----------|
+| **Pended** | Draft saved but not complete; visible in "Incomplete" tab | Note in progress, may be awaiting results |
+| **Signed** | Finalized and locked; triggers automated distribution | Note complete, no further edits allowed |
+| **Cosign Needed** | Awaiting supervisor validation/attestation | Trainee notes requiring attending review |
+| **Addendum** | Addition to previously signed note | Late results, corrections, supplemental info |
 
-3. **Command Workspace Design**
-   - Input modes (voice/text)
-   - Result display patterns
-   - Form generation for data entry
+### FHIR Resource Mapping
 
-4. **Voice Integration**
-   - Web Speech API implementation
-   - Medical vocabulary handling
-   - Error recovery
+Clinical notes are represented using **Composition** (structured content) and **DocumentReference** (metadata/binary):
 
-5. **Backend Command Service**
-   - CommandInterpreter implementation
-   - CommandExecutor implementation
-   - Cache implementation
+**Important**: `Encounter.location.status` tracks patient physical location (planned/active/reserved/completed), NOT note status.
 
-6. **Real-Time Updates**
-   - WebSocket event design
-   - Optimistic UI updates
+#### Composition.status (Document Maturity)
 
-7. **Security & Audit**
-   - Authentication flow
-   - Command audit trail
+| Status | Definition | Epic Equivalent |
+|--------|------------|-----------------|
+| `partial` | Initial/interim/preliminary; data incomplete | Pended (draft) |
+| `preliminary` | Early verified results, not all final | Pended (some content ready) |
+| `final` | Complete and verified, no further work planned | Signed |
+| `amended` | Modified after release as final | Addendum (content change) |
+| `corrected` | Modified to correct an error | Addendum (error correction) |
+| `appended` | New content added after final | Addendum (addition) |
 
-8. **Project Structure**
-   - New module: fhir4java-ui
-   - Build and deployment
+#### DocumentReference.docStatus
+
+| Status | Definition |
+|--------|------------|
+| `preliminary` | Document draft/incomplete |
+| `final` | Document is complete |
+| `amended` | Document has been revised |
+
+### Note Lifecycle State Machine
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    CLINICAL NOTE LIFECYCLE                           │
+│            (Epic terminology + FHIR Composition.status)              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐       │
+│  │ PENDED   │───▶│ PENDED   │───▶│  SIGNED  │───▶│ ADDENDUM │       │
+│  │ (partial)│    │(prelim.) │    │ (final)  │    │(amended/ │       │
+│  │          │    │          │    │          │    │ appended)│       │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘       │
+│       │               │               │                              │
+│       ▼               ▼               ▼                              │
+│  Initial draft   Results ready,  Locked, no     Late results        │
+│  Awaiting labs   A&P drafted     further edits  require addendum    │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ COSIGN NEEDED                                                │    │
+│  │ (Applies to Pended or Signed notes requiring attestation)   │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### State Mapping Summary
+
+| Workflow State | Epic Term | Composition.status | DocumentReference.docStatus | Encounter.status |
+|----------------|-----------|-------------------|---------------------------|------------------|
+| Visit started, note begun | Pended | `partial` | `preliminary` | `in-progress` |
+| Awaiting lab results | Pended | `partial` or `preliminary` | `preliminary` | `in-progress` |
+| Results ready, completing | Pended | `preliminary` | `preliminary` | `in-progress` |
+| Note finalized | Signed | `final` | `final` | `finished` |
+| Late result arrives | Addendum | `appended` | `amended` | `finished` |
+| Error correction | Addendum | `corrected` | `amended` | `finished` |
+
+---
+
+## Pending Results & Note Completion Workflow
+
+### Clinical Reality
+
+Notes often cannot be finalized immediately because test results are pending:
+
+| Result Type | Typical Turnaround | Workflow Impact |
+|-------------|-------------------|-----------------|
+| STAT labs | 15-60 minutes | Keep session warm, notify when ready |
+| Routine labs | 2-24 hours | Save as Pended, resume when results arrive |
+| Specialized tests | Days to weeks | May require Addendum after note signed |
+| Imaging | Minutes to hours | Depends on modality and radiologist |
+
+### Workflow During Encounter
+
+When clinician orders tests and needs to wait for results:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ COMMAND WORKSPACE                                               │
+├────────────────────────────────────────────────────────────────┤
+│ ▼ Activity Stream                                               │
+│                                                                 │
+│ 09:15 [Clinician] Patient reports chest pain for 2 days        │
+│ 09:16 [Patient] It gets worse when I breathe deeply            │
+│ 09:18 [Order] Troponin, D-dimer, Chest X-ray ✓ Sent            │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐│
+│ │ ⏳ AWAITING RESULTS                                          ││
+│ │ • Troponin I (STAT) - Est. 30 min                           ││
+│ │ • D-dimer (STAT) - Est. 30 min                              ││
+│ │ • Chest X-ray - Est. 1 hour                                  ││
+│ │                                                              ││
+│ │ [Continue with other documentation]  [Save & Close for Now] ││
+│ └─────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│ ────── NOTE PREVIEW (Pended) ──────                             │
+│ Chief Complaint: Chest pain x 2 days                           │
+│ HPI: 58yo male presents with...                                │
+│ Assessment & Plan: ⚠️ PENDING - Awaiting cardiac workup        │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Save & Close Behavior
+
+When clinician selects "Save & Close for Now":
+1. Note saved with `Composition.status = partial`
+2. System tracks pending orders via extension
+3. Subscriptions created for result notifications
+4. Clinician can see other patients while waiting
+
+### Result Notification
+
+When results arrive, notification appears regardless of current context:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 🔔 NOTIFICATION BANNER                                         │
+├────────────────────────────────────────────────────────────────┤
+│ Results Ready: John Smith (MRN: 12345)                         │
+│ • Troponin I: 0.02 ng/mL (Normal)                              │
+│ • D-dimer: 0.45 (Normal)                                       │
+│                                                                 │
+│ [Resume Note]  [View Results Only]  [Remind in 15 min]         │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Resume with AI-Assisted Completion
+
+When clinician resumes a pended note:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ COMMAND WORKSPACE - Resuming Note for John Smith               │
+├────────────────────────────────────────────────────────────────┤
+│ ▼ Activity Stream (continued)                                   │
+│                                                                 │
+│ 09:18 [Order] Troponin, D-dimer, Chest X-ray ✓ Sent            │
+│ ─────── SESSION PAUSED: 09:25 ───────                          │
+│ ─────── SESSION RESUMED: 10:02 ──────                          │
+│ 10:02 [Results] Troponin I: 0.02 ng/mL ✓ Normal                │
+│ 10:02 [Results] D-dimer: 0.45 µg/mL ✓ Normal                   │
+│ 10:15 [Results] CXR: No acute cardiopulmonary process          │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐│
+│ │ 🤖 AI-SUGGESTED ASSESSMENT & PLAN                           ││
+│ │                                                              ││
+│ │ Assessment:                                                  ││
+│ │ Chest pain, likely musculoskeletal. Cardiac workup negative ││
+│ │ (troponin 0.02, D-dimer 0.45, CXR unremarkable). No evidence││
+│ │ of ACS or PE.                                                ││
+│ │                                                              ││
+│ │ Plan:                                                        ││
+│ │ 1. Supportive care with NSAIDs PRN                          ││
+│ │ 2. Return precautions discussed                              ││
+│ │ 3. Follow up with PCP in 1 week if symptoms persist         ││
+│ │                                                              ││
+│ │ [Accept]  [Edit]  [Regenerate]  [Write My Own]              ││
+│ └─────────────────────────────────────────────────────────────┘│
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Pending Results Tracking Panel
+
+Clinicians can view all their pending notes:
+
+```
+┌─────────────────────────────────┐
+│ 📋 MY PENDED NOTES              │
+├─────────────────────────────────┤
+│ John Smith (09:15 visit)        │
+│   ⏳ CXR - Est. 45 min remaining│
+│   ✓ Troponin - READY            │
+│   ✓ D-dimer - READY             │
+│                                 │
+│ Mary Johnson (08:30 visit)      │
+│   ⏳ UA Culture - Est. 48 hours │
+│   ✓ Urinalysis - READY          │
+│                                 │
+│ [2 notes ready for completion]  │
+└─────────────────────────────────┘
+```
+
+### Addendum Workflow (Late Results)
+
+For results arriving after note is signed:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 🔔 LATE RESULT NOTIFICATION                                    │
+├────────────────────────────────────────────────────────────────┤
+│ Culture result ready for Mary Johnson                          │
+│ Original visit: 3 days ago (note signed)                       │
+│                                                                 │
+│ Result: Urine culture - E. coli > 100,000 CFU/mL               │
+│         Sensitive to: Cipro, Bactrim, Nitrofurantoin           │
+│                                                                 │
+│ AI Suggestion: Patient was prescribed Bactrim empirically.     │
+│ Culture confirms sensitivity. No action needed unless          │
+│ patient reports ongoing symptoms.                               │
+│                                                                 │
+│ [Create Addendum]  [Acknowledge Only]  [Call Patient]          │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Workflow Decision Matrix
+
+| Scenario | Note State | Action | Result |
+|----------|------------|--------|--------|
+| STAT results (< 2 hours) | Pended (partial) | Keep session warm, auto-notify | One-click resume |
+| Same-day routine (2-8 hours) | Pended (partial) | Save, notify when ready | Context preserved on resume |
+| Multi-day results | Pended (preliminary) | Save, notify when ready | AI summarizes intervening events |
+| Results after signing | Signed (final) | Create Addendum | New Composition with `appended` status |
+
+### FHIR Data Model
+
+```typescript
+// Clinical Note as FHIR Composition
+interface ClinicalNoteComposition {
+  resourceType: 'Composition';
+  status: 'partial' | 'preliminary' | 'final' | 'amended' | 'corrected' | 'appended';
+  type: CodeableConcept;  // LOINC code: 11506-3 (Progress Note), 34117-2 (H&P), etc.
+  encounter: Reference<Encounter>;
+  date: string;  // dateTime
+  author: Reference<Practitioner>[];
+  title: string;
+
+  // Cosign/attestation workflow
+  attester?: {
+    mode: 'personal' | 'professional' | 'legal' | 'official';
+    time?: string;
+    party?: Reference<Practitioner>;
+  }[];
+
+  // Note sections (Chief Complaint, HPI, Exam, A&P, etc.)
+  section: {
+    title: string;
+    code: CodeableConcept;
+    text: Narrative;
+    entry?: Reference<Resource>[];  // Links to orders, results, conditions
+  }[];
+
+  // Extension: Pending results tracking
+  extension?: {
+    url: 'http://fhir4java.org/StructureDefinition/awaiting-results';
+    extension: {
+      url: 'order';
+      valueReference: Reference<ServiceRequest>;
+    } | {
+      url: 'expectedTime';
+      valueDateTime: string;
+    } | {
+      url: 'resultReceived';
+      valueBoolean: boolean;
+    }[];
+  }[];
+}
+
+// DocumentReference for note metadata
+interface ClinicalNoteDocumentReference {
+  resourceType: 'DocumentReference';
+  status: 'current' | 'superseded';
+  docStatus: 'preliminary' | 'final' | 'amended';
+  type: CodeableConcept;
+  subject: Reference<Patient>;
+  context: {
+    encounter: Reference<Encounter>[];
+    period: Period;
+  };
+  content: {
+    attachment: Attachment;  // Rendered PDF or HTML
+  }[];
+}
+
+// Encounter tracks patient location, NOT note status
+interface ClinicalEncounter {
+  resourceType: 'Encounter';
+  status: 'planned' | 'arrived' | 'triaged' | 'in-progress' |
+          'onleave' | 'finished' | 'cancelled';
+
+  // Location status = where patient IS, not note state
+  location?: {
+    location: Reference<Location>;
+    status: 'planned' | 'active' | 'reserved' | 'completed';
+    period: Period;
+  }[];
+}
+```
+
+### AI Features for Note Completion
+
+| Feature | Trigger | Behavior |
+|---------|---------|----------|
+| **Result Interpretation** | Results arrive | AI interprets in context of chief complaint |
+| **A&P Drafting** | All results ready | AI drafts assessment incorporating findings |
+| **Critical Value Alert** | Abnormal result | Immediate notification with clinical guidance |
+| **Additional Test Suggestion** | Results inconclusive | AI suggests follow-up tests if warranted |
+| **Addendum Drafting** | Late result on signed note | AI drafts addendum text for review |
+
+---
+
+## Patient Search & Queue Management
+
+### Ambulatory Visit Workflow
+
+The system supports a complete patient flow from check-in to checkout, with role-based access control:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    AMBULATORY VISIT WORKFLOW                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐          │
+│  │ SCHEDULED │───▶│  ARRIVED  │───▶│  ROOMED   │───▶│   READY   │          │
+│  │           │    │           │    │           │    │           │          │
+│  │ Appt only │    │ Checked in│    │ In exam   │    │ Vitals    │          │
+│  │           │    │ at front  │    │ room      │    │ complete  │          │
+│  └───────────┘    └───────────┘    └───────────┘    └─────┬─────┘          │
+│       │                                                    │                │
+│       │                                                    ▼                │
+│       │           ┌───────────┐    ┌───────────┐    ┌───────────┐          │
+│       │           │ COMPLETED │◀───│  CHECKOUT │◀───│    IN     │          │
+│       │           │           │    │   READY   │    │CONSULTATION│         │
+│       │           │ Visit done│    │           │    │           │          │
+│       │           │ & closed  │    │ Doc done  │    │ With      │          │
+│       │           └───────────┘    └───────────┘    │ provider  │          │
+│       │                                             └───────────┘          │
+│       ▼                                                                     │
+│  ┌───────────┐                                                              │
+│  │  NO SHOW  │   (Patient did not arrive)                                  │
+│  └───────────┘                                                              │
+│                                                                              │
+│  ═══════════════════════════════════════════════════════════════════════   │
+│  ROLE PERMISSIONS:                                                          │
+│  • Patient Service Assistant: SCHEDULED → ARRIVED → ROOMED                  │
+│  •                            CHECKOUT READY → COMPLETED                    │
+│  • Nurse/MA:                  ROOMED → READY                                │
+│  • Clinician:                 READY → IN CONSULTATION → CHECKOUT READY      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Terminology Alignment (Epic Standard)
+
+| Epic Term | Our Term | FHIR Mapping | Description |
+|-----------|----------|--------------|-------------|
+| Scheduled | Scheduled | `Appointment.status = booked` (Encounter not yet created) | Appointment exists, patient not arrived |
+| Arrived | Arrived | `subjectStatus = arrived` | Patient checked in at front desk |
+| Roomed | Roomed | `subjectStatus = triaged` | Patient moved to exam room |
+| Ready for Provider | Ready | `subjectStatus = receiving-care` | Vitals done, ready for clinician |
+| With Provider | In Consultation | `Encounter.status = in-progress` | Clinician actively seeing patient |
+| Checkout Ready | Checkout Ready | `subjectStatus = departed` | Visit complete, pending checkout |
+| Checked Out | Completed | `Encounter.status = finished` | Patient left, visit finalized |
+| No Show | No Show | `Encounter.status = cancelled` | Patient did not arrive |
+
+### Role-Based Access Control
+
+| Role | Can View Queue | Can Check In/Out | Can Access Chart | Can Document | Can Sign Notes |
+|------|---------------|------------------|------------------|--------------|----------------|
+| Patient Service Assistant | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Medical Assistant | ✓ | ✗ | Limited | ✗ | ✗ |
+| Nurse | ✓ | ✗ | ✓ | Nursing notes | ✗ |
+| Physician/NP/PA | ✓ | ✗ | ✓ | ✓ | ✓ |
+| Resident | ✓ | ✗ | ✓ | ✓ | Needs cosign |
+
+### Queue Dashboard (Patient Service Assistant View)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FHIR4Java │ Family Medicine Clinic          Today: Mar 24, 2026   Jane Doe │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ [🔍 Search Patient]  [+ Walk-in]  [📅 Schedule]           [⚙️] [🔔 3] [👤] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ DEPARTMENT QUEUE                                      Filter: [All ▼]  │ │
+│ ├─────────────────────────────────────────────────────────────────────────┤ │
+│ │                                                                         │ │
+│ │ ══════════ WAITING TO BE ROOMED (3) ══════════                         │ │
+│ │ ┌─────────────────────────────────────────────────────────────────────┐│ │
+│ │ │ ⬆️⬇️ │ 🟡 Johnson, Mary      │ 09:00 │ Dr. Smith │ Follow-up    │ 25m ││ │
+│ │ │     │ DOB: 1965-03-15 │ F   │ Arrived 08:35                        ││ │
+│ │ │     │                       │ [Room Patient]  [Cancel Check-in]    ││ │
+│ │ └─────────────────────────────────────────────────────────────────────┘│ │
+│ │                                                                         │ │
+│ │ ══════════ SCHEDULED - NOT YET ARRIVED (4) ══════════                  │ │
+│ │ ┌─────────────────────────────────────────────────────────────────────┐│ │
+│ │ │     │ ⚪ Williams, James    │ 09:45 │ Dr. Smith │ Follow-up    │     ││ │
+│ │ │     │                       │ [Check In]  [No Show]  [Reschedule]  ││ │
+│ │ └─────────────────────────────────────────────────────────────────────┘│ │
+│ │                                                                         │ │
+│ │ ══════════ CHECKOUT READY (1) ══════════                               │ │
+│ │ ┌─────────────────────────────────────────────────────────────────────┐│ │
+│ │ │     │ 🟢 Thompson, Michael  │ 08:30 │ Dr. Smith │ Follow-up    │     ││ │
+│ │ │     │                       │ [Complete Checkout]  [Print AVS]     ││ │
+│ │ └─────────────────────────────────────────────────────────────────────┘│ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Queue Dashboard (Clinician View)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ MY PATIENTS                                             [View: Board ▼]    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ ══════════ IN CONSULTATION (1) ══════════                                   │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ 🔵 Adams, Sarah          │ Room 3  │ Started: 09:10 │ 20 min            │ │
+│ │ 45F │ Hypertension follow-up                                            │ │
+│ │ ⚠️ Allergies: Penicillin │ Last A1c: 7.2%                               │ │
+│ │ [Continue Documentation]                                 [Mark Done ➜] │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│ ══════════ READY FOR PROVIDER (2) ══════════                                │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ 🟢 Johnson, Mary         │ Room 1  │ Waiting: 12 min                    │ │
+│ │ 59F │ Diabetes follow-up                                                │ │
+│ │ Vitals: BP 138/84, HR 72 │ Chief: "Here for lab review"                 │ │
+│ │ [Start Visit ▶]                                          [View Chart]  │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│ ══════════ UPCOMING (3) ══════════                                          │
+│   10:00  Brown, Patricia    │ Annual Exam                                   │
+│   10:30  Lee, David         │ Follow-up                                     │
+│   11:00  Martinez, Ana      │ Sick Visit                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Navigation Flow by Role
+
+```
+PATIENT SERVICE ASSISTANT:
+Queue Dashboard → Search Patient → Check-In Wizard → Queue (Updated)
+       ↑                                                    │
+       └────────────────── Checkout Wizard ◀────────────────┘
+
+CLINICIAN:
+Provider Queue → Select Patient → Patient Chart → Command Workspace
+       ↑                                              │
+       │                                              │ [Mark Done]
+       └──────────────── Auto-return ◀────────────────┘
+```
+
+### FHIR Data Model for Queue
+
+```typescript
+interface QueuedEncounter {
+  resourceType: 'Encounter';
+  status: 'planned' | 'in-progress' | 'finished' | 'cancelled';
+
+  // Granular patient tracking (FHIR R5)
+  subjectStatus: {
+    coding: [{
+      system: 'http://hl7.org/fhir/encounter-subject-status';
+      code: 'arrived' | 'triaged' | 'receiving-care' | 'departed';
+    }];
+  };
+
+  // Queue-specific extensions
+  extension: [{
+    url: 'http://fhir4java.org/StructureDefinition/queue-position';
+    valueInteger: number;
+  }, {
+    url: 'http://fhir4java.org/StructureDefinition/assigned-provider';
+    valueReference: Reference<Practitioner>;
+  }, {
+    url: 'http://fhir4java.org/StructureDefinition/room-assignment';
+    valueString: string;
+  }];
+
+  subject: Reference<Patient>;
+  appointment: Reference<Appointment>;
+  location: {
+    location: Reference<Location>;
+    status: 'planned' | 'active' | 'completed';
+  }[];
+}
+```
+
+---
+
+## Frontend Architecture
+
+### Component Hierarchy
+
+```
+App
+├── AuthProvider
+├── PatientProvider
+├── WebSocketProvider
+│
+└── AppShell
+    ├── GlobalHeader
+    │   ├── Logo
+    │   ├── GlobalSearch (patient lookup)
+    │   ├── NotificationBell
+    │   └── UserMenu
+    │
+    ├── RoleBasedNav (routes based on user role)
+    │
+    ├── QueueDashboard (for queue views)
+    │   ├── QueueFilters
+    │   ├── QueueList (grouped by status)
+    │   │   └── QueueCard (per patient)
+    │   └── CheckInWizard / CheckOutWizard
+    │
+    └── ClinicalView (for chart + documentation)
+        ├── PatientSafetyBanner
+        │
+        └── MainLayout (split-pane)
+            ├── PatientChartPane (collapsible left)
+            │   ├── ChartNavigation
+            │   └── ChartCanvas
+            │       ├── ProblemsPanel
+            │       ├── MedicationsPanel
+            │       ├── AllergiesPanel
+            │       ├── VitalsPanel
+            │       └── ResultsPanel
+            │
+            └── CommandWorkspacePane
+                ├── CommandInput (voice/text)
+                ├── ActivityStream
+                ├── NotePreviewPanel
+                └── ConfirmationModal
+```
+
+### State Management
+
+```typescript
+// TanStack Query for server state (FHIR data)
+// - Automatic caching & deduplication
+// - Background refetching
+// - Optimistic updates
+
+// Zustand for UI state
+interface LayoutStore {
+  chartPaneCollapsed: boolean;
+  chartPaneWidth: number;
+  activePanels: string[];
+}
+
+interface CommandStore {
+  inputMode: 'voice' | 'text';
+  isListening: boolean;
+  pendingCommand: Command | null;
+  commandHistory: Command[];
+}
+
+interface SessionStore {
+  currentEncounterId: string | null;
+  activityStream: ActivityEntry[];
+  noteState: 'idle' | 'active' | 'pended';
+  pendingResults: PendingResult[];
+}
+
+interface QueueStore {
+  encounters: QueuedEncounter[];
+  filters: QueueFilters;
+  viewMode: 'board' | 'list';
+  groupBy: 'status' | 'provider' | 'time';
+}
+
+// React Context for cross-cutting concerns
+// - AuthContext: user, tenant, permissions
+// - PatientContext: selected patient
+// - WebSocketContext: real-time subscriptions
+```
+
+### FHIR Data Fetching Strategy
+
+```typescript
+// Custom hooks for FHIR resources
+function usePatientObservations(patientId: string, category?: string) {
+  return useQuery({
+    queryKey: ['fhir', 'Observation', { patient: patientId, category }],
+    queryFn: () => fhirClient.search('Observation', { patient: patientId, category }),
+    staleTime: 30_000,
+  });
+}
+
+// Command API mutation
+function useCommandMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (command: CommandRequest) => commandApi.execute(command),
+    onSuccess: (result) => {
+      result.affectedResources?.forEach(ref => {
+        queryClient.invalidateQueries({ queryKey: ['fhir', ref.resourceType] });
+      });
+    },
+  });
+}
+```
+
+---
+
+## Patient Chart Canvas
+
+### Expanded View (Dual Monitor / Full Width)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ PATIENT CHART CANVAS                                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│ [Problems] [Meds] [Allergies] [Vitals] [Results] [Visits] [Docs]        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ PROBLEMS (Active)                                        [+ Add] [▼]│ │
+│ │ • Type 2 Diabetes Mellitus (E11.9)           Dx: 2019    Chronic   │ │
+│ │ • Essential Hypertension (I10)               Dx: 2018    Chronic   │ │
+│ │ • Hyperlipidemia (E78.5)                     Dx: 2020    Chronic   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ MEDICATIONS (Active)                                     [+ Add] [▼]│ │
+│ │ • Metformin 1000mg         PO BID          Last filled: 2026-03-01 │ │
+│ │ • Lisinopril 20mg          PO Daily        Last filled: 2026-03-01 │ │
+│ │ • Atorvastatin 40mg        PO QHS          Last filled: 2026-02-15 │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ ALLERGIES                                                    [+ Add]│ │
+│ │ ⚠️ Penicillin              Rash, Hives               Confirmed      │ │
+│ │ ⚠️ Sulfa drugs             Anaphylaxis               Confirmed      │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ VITALS (Last 3)                                          [Trend] [▼]│ │
+│ │ Today 09:15    BP: 142/88 ⚠️  HR: 78   Temp: 98.6°F   SpO2: 98%   │ │
+│ │ 2026-03-10     BP: 138/84     HR: 72   Temp: 98.4°F   SpO2: 99%   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Collapsed View (Single Monitor - ~250px width)
+
+```
+┌────────────────────────────────┐
+│ PROBLEMS (4)              [▶] │
+│ • Diabetes                     │
+│ • Hypertension                 │
+│ • Hyperlipidemia               │
+│ • Chest pain (today)           │
+├────────────────────────────────┤
+│ MEDS (4)                  [▶] │
+│ • Metformin 1000mg             │
+│ • Lisinopril 20mg              │
+│ • Atorvastatin 40mg            │
+├────────────────────────────────┤
+│ ⚠️ ALLERGIES (2)          [▶] │
+│ • Penicillin                   │
+│ • Sulfa                        │
+├────────────────────────────────┤
+│ VITALS (Today)            [▶] │
+│ BP: 142/88 ⚠️                 │
+│ HR: 78  SpO2: 98%              │
+├────────────────────────────────┤
+│ RESULTS                   [▶] │
+│ 🔴 2 abnormal                  │
+│ ⏳ 3 pending                   │
+└────────────────────────────────┘
+```
+
+---
+
+## Command Workspace
+
+### Full Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ COMMAND WORKSPACE                                                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ INPUT BAR                                                           │ │
+│ │ ┌─────┐ ┌─────────────────────────────────────────────────┐ ┌─────┐│ │
+│ │ │ 🎤  │ │ Type or speak a command...                      │ │ ⏎   ││ │
+│ │ └─────┘ └─────────────────────────────────────────────────┘ └─────┘│ │
+│ │ [Voice: ON]  [Mode: Ambient Documentation]  Encounter: Today 09:15 │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ ACTIVITY STREAM                                                     │ │
+│ ├─────────────────────────────────────────────────────────────────────┤ │
+│ │ 09:15 [👤 Patient]                                                  │ │
+│ │ "I've been having this chest pain for about two days now."         │ │
+│ │                                                                     │ │
+│ │ 09:16 [🩺 Clinician]                                                │ │
+│ │ "Can you describe the pain? Is it sharp, dull, pressure-like?"     │ │
+│ │                                                                     │ │
+│ │ 09:18 [⚡ Command] "Order troponin, d-dimer, and chest x-ray"       │ │
+│ │ ┌─────────────────────────────────────────────────────────────┐   │ │
+│ │ │ ✓ Orders placed:                                             │   │ │
+│ │ │ • Troponin I (STAT)   • D-dimer (STAT)   • Chest X-ray      │   │ │
+│ │ └─────────────────────────────────────────────────────────────┘   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ NOTE PREVIEW (Pended)                                    [Expand]  │ │
+│ │ Chief Complaint: Chest pain x 2 days                               │ │
+│ │ HPI: 58yo male presents with chest pain described as an ache...    │ │
+│ │ Assessment & Plan: ⏳ Awaiting cardiac workup results              │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Activity Stream Entry Types
+
+| Type | Icon | Description |
+|------|------|-------------|
+| `transcript-patient` | 👤 | Patient speech (ambient mode) |
+| `transcript-clinician` | 🩺 | Clinician speech (ambient mode) |
+| `command` | ⚡ | Voice/text command |
+| `command-result` | ✓/✗ | Command execution result |
+| `result-received` | 📊 | Lab/imaging result arrived |
+| `ai-suggestion` | 🤖 | AI-generated suggestion |
+| `session-marker` | ─── | Session start/pause/resume |
+
+### Selection & Confirmation Patterns
+
+**Multiple Options:**
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Multiple options found. Select one:                                     │
+│                                                                         │
+│ ○ Metoprolol Succinate ER 25mg   (once daily)      [Common]            │
+│ ○ Metoprolol Succinate ER 50mg   (once daily)                          │
+│ ○ Metoprolol Tartrate 25mg       (twice daily)                         │
+│                                                                         │
+│ [Cancel]                                              [Select: 1-3]    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Confirmation Form (High-Risk):**
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 📋 PRESCRIPTION CONFIRMATION                                            │
+│                                                                         │
+│ Medication:  Metoprolol Succinate ER 25mg                              │
+│ Sig:         Take 1 tablet by mouth once daily         [Edit]          │
+│ Quantity:    30 tablets                                [Edit]          │
+│ Refills:     3                                         [Edit]          │
+│ Pharmacy:    CVS - 123 Main St                         [Change]        │
+│                                                                         │
+│ ⚠️ Interactions: None detected                                          │
+│ ✓ Allergies: No known allergies to beta-blockers                       │
+│                                                                         │
+│ [Cancel]                                    [Sign & Send to Pharmacy]  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Voice Integration
+
+### Web Speech API Implementation
+
+```typescript
+function useVoiceInput(config: VoiceConfig) {
+  const [state, setState] = useState<VoiceState>({
+    isListening: false,
+    transcript: '',
+    interimTranscript: '',
+    confidence: 0,
+  });
+
+  // Browser-native speech recognition
+  const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+  recognition.continuous = config.continuous;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = (event) => {
+    // Process results, apply medical vocabulary enhancement
+    const processed = enhanceMedicalTerms(transcript);
+    setState(s => ({ ...s, transcript: processed }));
+  };
+
+  return { ...state, startListening, stopListening };
+}
+```
+
+### Medical Vocabulary Enhancement
+
+Common misrecognitions corrected automatically:
+
+| Heard | Corrected |
+|-------|-----------|
+| "met foreman" | metformin |
+| "lies in a pearl" | lisinopril |
+| "a one c" | A1c |
+| "see bc" | CBC |
+| "bee mp" | BMP |
+| "cabbage" | CABG |
+
+### Speaker Diarization (Ambient Mode)
+
+- Heuristic-based classification of clinician vs patient speech
+- Medical terminology density → likely clinician
+- Symptom language ("I feel", "It hurts") → likely patient
+- Voice profile matching when calibrated
+
+---
+
+## Backend Command Service
+
+### Architecture
+
+```
+CommandController (POST /api/command)
+         │
+         ▼
+CommandService
+         │
+    ┌────┼────┐
+    ▼    ▼    ▼
+CommandInterpreter  CommandExecutor  CommandCache
+    │                    │
+    │    ┌───────────────┤
+    ▼    ▼               ▼
+PatternMatcher      QueryExecutor    OrderCreator
+SemanticSearcher    PrescriptionWriter
+LlmInterpreter      NoteUpdater
+```
+
+### Command Request/Response
+
+```java
+public record CommandRequest(
+    String command,           // Natural language
+    Reference patient,        // Patient reference
+    Reference encounter,      // Optional encounter
+    CommandMode mode          // EXECUTE or DRAFT
+) {}
+
+public record CommandResponse(
+    String commandId,
+    CommandStatus status,     // COMPLETED, AWAITING_CONFIRMATION, FAILED
+    InterpretedCommand interpretation,
+    Object result,
+    List<Suggestion> suggestions,
+    List<Reference> affectedResources
+) {}
+```
+
+### Interpretation Pipeline
+
+1. **Tier 1: Exact Cache** (~0ms) - Hash lookup
+2. **Tier 2: Pattern Match** (~1-5ms) - YAML templates
+3. **Tier 3: Semantic Search** (~10-50ms) - Embeddings
+4. **Tier 4: LLM** (~200-500ms) - Novel commands only
+
+### Risk Assessment
+
+| Risk Level | Examples | Behavior |
+|------------|----------|----------|
+| NONE | Queries, navigation | Auto-execute |
+| LOW | Routine labs, documentation | Auto-execute |
+| MEDIUM | Orders with alerts | Show warning |
+| HIGH | Prescriptions, high-alert meds | Require confirmation |
+
+---
+
+## Real-Time Updates
+
+### WebSocket Architecture
+
+```
+Browser ◀════════════▶ WebSocketHandler (/ws/events)
+   │                          │
+   │ subscribe(topic)         │
+   │─────────────────────────▶│
+   │                          │
+   │ event(data)              │ EventPublisher
+   │◀─────────────────────────│◀──── Domain Events
+```
+
+### Event Types
+
+| Event | Trigger | Data |
+|-------|---------|------|
+| `result-received` | DiagnosticReport created | Report, related orders, isCritical |
+| `order-status-changed` | ServiceRequest updated | Previous/new status |
+| `note-updated` | Composition modified | Change type, updatedBy |
+| `critical-value` | Abnormal result detected | Observation, value, normal range |
+| `queue-updated` | Encounter status changed | Encounter, new subjectStatus |
+
+### Subscription Topics
+
+- `patient/{id}/results` - Results for specific patient
+- `patient/{id}/orders` - Order updates
+- `department/{id}/queue` - Queue changes
+- `alerts/critical` - All critical value alerts
+
+---
+
+## Security & Audit
+
+### Authentication Flow
+
+```
+Browser → FHIR4Java → Identity Provider (Keycloak/Okta/Azure AD)
+   │          │              │
+   │ Login    │              │
+   │─────────▶│─────────────▶│ OAuth2/OIDC
+   │          │              │
+   │          │◀─────────────│ JWT Tokens
+   │◀─────────│              │
+   │ Session  │              │
+```
+
+### JWT Claims
+
+```typescript
+interface JwtClaims {
+  sub: string;              // User ID
+  tenant_id: string;        // Tenant
+  practitioner_id: string;  // FHIR Practitioner reference
+  roles: string[];          // ['physician', 'nurse', etc.]
+  permissions: string[];    // ['patient:read', 'order:write', etc.]
+}
+```
+
+### Permission Model
+
+| Permission | Description |
+|------------|-------------|
+| `patient:read` | View patient data |
+| `patient:write` | Modify patient data |
+| `order:write` | Create orders |
+| `rx:sign` | Sign prescriptions (e-prescribe) |
+| `note:write` | Create/edit notes |
+| `note:sign` | Sign notes |
+| `note:cosign` | Cosign trainee notes |
+
+### Command Audit Trail
+
+All commands logged to `command_audit_log`:
+
+| Field | Description |
+|-------|-------------|
+| command_id | UUID |
+| user_id | Who executed |
+| patient_ref | Affected patient |
+| raw_command | Original input |
+| interpreted_intent | Parsed intent |
+| interpretation_source | CACHE/PATTERN/SEMANTIC/LLM |
+| execution_status | COMPLETED/FAILED |
+| affected_resources | Created/modified resources |
+| client_ip | Source IP |
+| created_at | Timestamp |
+
+---
+
+## Project Structure
+
+### New Module: fhir4java-ui
+
+```
+fhir4java-ui/
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+├── tailwind.config.js
+│
+├── src/
+│   ├── main.tsx
+│   ├── App.tsx
+│   │
+│   ├── components/
+│   │   ├── ui/              # shadcn/ui components
+│   │   ├── layout/          # AppShell, GlobalHeader, MainLayout
+│   │   ├── queue/           # QueueDashboard, QueueCard, CheckInWizard
+│   │   ├── patient/         # PatientSearch, PatientCard
+│   │   ├── chart/           # PatientChartPane, panels/*
+│   │   └── workspace/       # CommandWorkspacePane, ActivityStream
+│   │
+│   ├── hooks/
+│   │   ├── useFhirQuery.ts
+│   │   ├── useCommand.ts
+│   │   ├── useVoiceInput.ts
+│   │   ├── useWebSocket.ts
+│   │   └── useQueue.ts
+│   │
+│   ├── stores/
+│   │   ├── layoutStore.ts
+│   │   ├── commandStore.ts
+│   │   ├── sessionStore.ts
+│   │   └── queueStore.ts
+│   │
+│   ├── contexts/
+│   │   ├── AuthContext.tsx
+│   │   ├── PatientContext.tsx
+│   │   └── WebSocketContext.tsx
+│   │
+│   ├── lib/
+│   │   ├── fhirClient.ts
+│   │   ├── commandApi.ts
+│   │   └── voiceEnhancer.ts
+│   │
+│   └── types/
+│       ├── fhir.d.ts
+│       ├── command.d.ts
+│       └── queue.d.ts
+│
+└── tests/
+```
+
+### Backend Additions (fhir4java-api)
+
+```
+fhir4java-api/src/main/java/com/fhir4java/api/
+├── controller/
+│   ├── CommandController.java      # NEW
+│   └── WebSocketController.java    # NEW
+├── service/
+│   ├── CommandService.java         # NEW
+│   ├── CommandInterpreter.java     # NEW
+│   └── CommandExecutor.java        # NEW
+└── websocket/
+    ├── ClinicalWebSocketHandler.java  # NEW
+    └── ClinicalEventPublisher.java    # NEW
+```
+
+### Build Configuration
+
+```typescript
+// vite.config.ts
+export default defineConfig({
+  build: {
+    outDir: '../fhir4java-server/src/main/resources/static',
+  },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8080',
+      '/fhir': 'http://localhost:8080',
+      '/ws': { target: 'ws://localhost:8080', ws: true },
+    },
+  },
+});
+```
 
 ---
 
@@ -478,12 +1526,10 @@ The following sections need to be designed in the next session:
 
 ## Next Steps
 
-1. Resume brainstorming to complete remaining design sections
-2. Review and finalize the design
-3. Run spec review
-4. Get user approval
-5. Transition to implementation planning (writing-plans skill)
+1. Review and approve this design specification
+2. Run spec review
+3. Transition to implementation planning (writing-plans skill)
 
 ---
 
-*This document is a work in progress. Last saved during active brainstorming session.*
+*Document complete. Ready for review.*
