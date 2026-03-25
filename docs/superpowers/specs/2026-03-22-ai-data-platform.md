@@ -1,8 +1,30 @@
 # AI-Ready Platform Design: FHIR4Java as a Native AI Agent Data Platform
 
+**Status:** DRAFT - Ready for Review
+**Created:** 2026-03-22
+**Last Updated:** 2026-03-25
+
 ## Executive Summary
 
-This document proposes the enhancements needed to transform FHIR4Java from a traditional FHIR server into a **fully AI-ready data and API platform** that natively integrates within AI agent ecosystems. The design covers seven pillars: MCP Server exposure (Hybrid B2+ with 3 unified tools), API discovery (OpenAPI + enhanced CapabilityStatement), event-driven architecture, semantic search, agent-friendly auth, bulk data processing, and an AI orchestration layer.
+This document proposes the enhancements needed to transform FHIR4Java from a traditional FHIR server into a **fully AI-ready data and API platform** that natively integrates within AI agent ecosystems and supports a next-generation clinical UI.
+
+The design covers **ten pillars**:
+
+| # | Pillar | Purpose |
+|---|--------|---------|
+| 1 | **MCP Server** | Expose FHIR as AI tools (3 unified tools: discover, query, mutate) |
+| 2 | **API Discovery** | OpenAPI + enhanced CapabilityStatement for all consumers |
+| 3 | **Event-Driven Architecture** | Real-time updates via FHIR Subscriptions, SSE, WebSocket |
+| 4 | **Semantic Search** | Natural language queries + vector search for clinical narratives |
+| 5 | **Agent-Friendly Auth** | OAuth2/SMART on FHIR + API keys with scoped authorization |
+| 6 | **Bulk Data Processing** | $export + NDJSON streaming for large datasets |
+| 7 | **AI Orchestration** | Composite workflows, CDS Hooks, GraphQL |
+| 8 | **Command API** | Natural language command interface for clinical UI |
+| 9 | **UI Configuration** | Multi-level config system (system → tenant → role → user) |
+| 10 | **Clinical Workflow** | Queue management, note lifecycle, pending results tracking |
+
+Pillars 1-7 serve **AI agents** (Claude, GPT, custom agents).
+Pillars 8-10 serve the **clinical web UI** and its backend requirements.
 
 ---
 
@@ -28,6 +50,17 @@ This document proposes the enhancements needed to transform FHIR4Java from a tra
 | No bulk data export ($export) | Agents can't efficiently process large datasets |
 | No FHIR Subscriptions | No push-based notifications for agent workflows |
 | No structured tool descriptions | Agents can't self-discover what tools/operations exist |
+
+### What's Missing for Clinical UI Support
+| Gap | Impact |
+|-----|--------|
+| No Command API | UI can't send natural language commands to backend |
+| No command interpretation | No tiered pipeline (cache → pattern → semantic → LLM) |
+| No UI configuration service | No multi-level panel/view customization |
+| No queue management | No ambulatory workflow tracking |
+| No note lifecycle service | No pended/signed/addendum state management |
+| No pending results tracking | Can't coordinate note completion with result arrival |
+| No frontend module | No React-based clinical UI |
 
 ---
 
@@ -718,6 +751,97 @@ POST /api/webhooks
 }
 ```
 
+### 3.4 Clinical UI Event Types
+
+Beyond generic FHIR resource events, the clinical UI requires specific event types for real-time workflow support:
+
+| Event Type | Trigger | Payload | Use Case |
+|------------|---------|---------|----------|
+| `result-received` | DiagnosticReport/Observation created | Report, related orders, isCritical, interpretation | Notify clinician when lab/imaging results arrive |
+| `order-status-changed` | ServiceRequest status update | Previous status, new status, order details | Track order progress in WIP panel |
+| `critical-value` | Abnormal result detected | Observation, value, normal range, severity | Immediate alert for critical lab values |
+| `note-updated` | Composition modified | Change type (draft/pend/sign), updatedBy | Real-time note collaboration awareness |
+| `queue-updated` | Encounter subjectStatus changed | Encounter, previous/new status, wait time | Update queue dashboard |
+| `results-complete` | All pending results for note received | Composition, completedOrders | Prompt for note completion |
+
+#### WebSocket Event Format
+
+```typescript
+// WebSocket message structure
+interface ClinicalEvent {
+  type: 'result-received' | 'order-status-changed' | 'critical-value' |
+        'note-updated' | 'queue-updated' | 'results-complete';
+  timestamp: string;
+  tenantId: string;
+  data: ResultReceivedData | OrderStatusData | CriticalValueData |
+        NoteUpdatedData | QueueUpdatedData | ResultsCompleteData;
+}
+
+// Example: result-received
+interface ResultReceivedData {
+  observationId: string;
+  diagnosticReportId?: string;
+  patientId: string;
+  encounterId?: string;
+  testName: string;
+  value: string;
+  unit?: string;
+  interpretation: 'normal' | 'abnormal' | 'critical';
+  isCritical: boolean;
+  relatedOrders: string[];      // ServiceRequest references
+  pendingNoteId?: string;       // Composition awaiting this result
+}
+
+// Example: queue-updated
+interface QueueUpdatedData {
+  encounterId: string;
+  patientId: string;
+  previousStatus: string;
+  newStatus: string;
+  roomAssignment?: string;
+  waitTimeMinutes?: number;
+  assignedProvider?: string;
+}
+```
+
+#### Subscription Topics for Clinical UI
+
+```
+patient/{id}/results         # Results for specific patient
+patient/{id}/orders          # Order status changes
+encounter/{id}/events        # All events for encounter
+department/{id}/queue        # Queue changes for department
+provider/{id}/queue          # Queue for specific provider
+alerts/critical              # All critical value alerts (tenant-wide)
+notes/{id}/updates           # Real-time note updates
+```
+
+#### WebSocket Handler
+
+```java
+@Component
+public class ClinicalWebSocketHandler extends TextWebSocketHandler {
+
+    @Override
+    public void afterConnectionEstablished(WebSocketSession session) {
+        // Extract subscriptions from query params
+        // e.g., /ws/events?patient=Patient/123&topics=results,orders
+        String patientId = getQueryParam(session, "patient");
+        List<String> topics = getQueryParams(session, "topics");
+
+        subscriptionManager.subscribe(session, patientId, topics);
+    }
+
+    public void publishEvent(ClinicalEvent event) {
+        // Find all sessions subscribed to this event's topics
+        Set<WebSocketSession> sessions = subscriptionManager.getSubscribers(event);
+        for (WebSocketSession session : sessions) {
+            session.sendMessage(new TextMessage(serialize(event)));
+        }
+    }
+}
+```
+
 ---
 
 ## Pillar 4: Semantic Search & Natural Language Query
@@ -1056,6 +1180,586 @@ Benefits for agents:
 
 ---
 
+## Pillar 8: Command API for Clinical UI
+
+### Goal
+Provide a high-level natural language command interface for the clinical web UI, abstracting FHIR complexity behind intuitive commands that clinicians can speak or type.
+
+### Relationship to MCP (Pillar 1)
+
+| Interface | Audience | Protocol | Use Case |
+|-----------|----------|----------|----------|
+| MCP (3 tools) | AI Agents (Claude, GPT) | MCP over HTTP/SSE/stdio | Agent-to-server FHIR operations |
+| Command API | Clinical Web UI | REST + WebSocket | Clinician natural language commands |
+
+The Command API is designed for **human clinicians using the web UI**, while MCP is for **AI agents**. Both share underlying interpretation logic but serve different interaction patterns:
+
+- **Command API** adds: confirmation flows, risk assessment, activity streams, note integration, voice input support
+- **MCP tools** focus on: structured tool calling, agent-friendly responses, MCP protocol compliance
+
+### 8.1 Command Endpoint
+
+```
+POST /api/command
+{
+  "command": "Order CBC, BMP, and lipid panel",
+  "patient": "Patient/123",
+  "encounter": "Encounter/456",
+  "mode": "execute"    // or "draft" for preview
+}
+
+Response:
+{
+  "commandId": "cmd-789",
+  "status": "completed",
+  "interpretation": {
+    "intent": "CREATE_ORDERS",
+    "resources": ["ServiceRequest"],
+    "source": "PATTERN_MATCH"
+  },
+  "result": {
+    "created": [
+      { "resourceType": "ServiceRequest", "id": "sr-1", "code": "CBC" },
+      { "resourceType": "ServiceRequest", "id": "sr-2", "code": "BMP" },
+      { "resourceType": "ServiceRequest", "id": "sr-3", "code": "Lipid Panel" }
+    ]
+  },
+  "suggestions": [
+    { "label": "Add A1c", "command": "order a1c" }
+  ],
+  "affectedResources": ["ServiceRequest/sr-1", "ServiceRequest/sr-2", "ServiceRequest/sr-3"]
+}
+```
+
+### 8.2 Tiered Interpretation Pipeline
+
+To minimize LLM usage (cost and latency), commands flow through four tiers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 1: EXACT MATCH CACHE                          ~0ms       │
+│  Key: hash("order cbc" + context)                              │
+│  If found → Return cached interpretation                       │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ MISS
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 2: TEMPLATE PATTERN MATCHING                  ~1-5ms     │
+│  Pattern: "order|get|request {labTest}"                        │
+│  Covers ~80% of commands without LLM                           │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ NO MATCH
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 3: SEMANTIC SIMILARITY SEARCH                 ~10-50ms   │
+│  Embed command, search past successful interpretations         │
+│  Uses local embeddings (no LLM call)                           │
+│  Threshold: similarity > 0.85 → use cached                     │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ NO SIMILAR MATCH
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 4: LLM INTERPRETATION                         ~200-500ms │
+│  Only for novel/complex commands                               │
+│  After LLM interprets: cache result for future                 │
+│  Expected: <5% of commands reach this tier after warmup        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 8.3 Command Cache Layers
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  LAYER 1: GLOBAL CACHE (Shared across all users)               │
+│  • Standard medical commands understood universally            │
+│  • "order cbc" → same everywhere                               │
+│  • Pre-seeded with ~500 common commands at startup             │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  LAYER 2: TENANT CACHE (Organization-specific)                 │
+│  • Hospital-specific order sets                                │
+│  • "order admission labs" → maps to that hospital's set        │
+│  • Custom aliases ("the usual" = specific order combo)         │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  LAYER 3: USER CACHE (Individual preferences)                  │
+│  • "my standard workup" → Dr. Smith's preferred orders         │
+│  • Recent commands for "do that again" functionality           │
+│  • Learned corrections (user edited AI's interpretation)       │
+└─────────────────────────────────────────────────────────────────┘
+
+CACHE LOOKUP ORDER:
+User Cache → Tenant Cache → Global Cache → Pattern Match → LLM
+```
+
+### 8.4 Risk-Based Execution
+
+| Risk Level | Examples | Behavior |
+|------------|----------|----------|
+| **NONE** | Queries, navigation, chart viewing | Auto-execute immediately |
+| **LOW** | Routine labs, documentation drafts | Auto-execute with notification |
+| **MEDIUM** | Orders with drug interactions | Show warning, allow proceed |
+| **HIGH** | Prescriptions, high-alert meds, chemo | Require explicit confirmation |
+| **CRITICAL** | Delete operations, status changes | Two-step confirmation |
+
+### 8.5 Pre-Seeded Command Templates
+
+```yaml
+# commands/queries.yml
+queries:
+  - patterns: ["show {type}", "get {type}", "display {type}"]
+    intent: QUERY
+    variables:
+      type:
+        labs: { resource: Observation, category: laboratory }
+        vitals: { resource: Observation, category: vital-signs }
+        meds: { resource: MedicationRequest, status: active }
+        problems: { resource: Condition, clinical-status: active }
+        allergies: { resource: AllergyIntolerance }
+        a1c: { resource: Observation, code: "4548-4" }
+
+# commands/orders.yml
+orders:
+  - patterns: ["order {test}", "get {test}", "request {test}"]
+    intent: CREATE_ORDER
+    resource: ServiceRequest
+    variables:
+      test:
+        cbc: { code: "58410-2", display: "CBC" }
+        bmp: { code: "24320-4", display: "BMP" }
+        cmp: { code: "24323-8", display: "CMP" }
+
+# commands/prescriptions.yml
+prescriptions:
+  - patterns: ["prescribe {drug}", "rx {drug}", "start {drug}"]
+    intent: PRESCRIBE
+    resource: MedicationRequest
+    riskLevel: HIGH
+    requiresConfirmation: true
+```
+
+### 8.6 Implementation Components
+
+```java
+// New classes in fhir4java-api
+@RestController
+@RequestMapping("/api/command")
+public class CommandController {
+    @PostMapping
+    public CommandResponse execute(@RequestBody CommandRequest request) { ... }
+}
+
+@Service
+public class CommandService {
+    private final CommandInterpreter interpreter;
+    private final CommandExecutor executor;
+    private final CommandCache cache;
+}
+
+@Service
+public class CommandInterpreter {
+    private final PatternMatcher patternMatcher;        // Tier 2
+    private final SemanticSearcher semanticSearcher;    // Tier 3
+    private final LlmInterpreter llmInterpreter;        // Tier 4
+
+    public InterpretedCommand interpret(String command, CommandContext context) { ... }
+}
+
+@Service
+public class CommandExecutor {
+    private final QueryExecutor queryExecutor;
+    private final OrderCreator orderCreator;
+    private final PrescriptionWriter prescriptionWriter;
+    private final NoteUpdater noteUpdater;
+
+    public CommandResult execute(InterpretedCommand command) { ... }
+}
+```
+
+### 8.7 Command Audit Trail
+
+All commands logged to `command_audit_log`:
+
+```sql
+CREATE TABLE command_audit_log (
+    id                    BIGSERIAL PRIMARY KEY,
+    command_id            UUID NOT NULL,
+    tenant_id             VARCHAR(64) NOT NULL,
+    user_id               VARCHAR(255) NOT NULL,
+    patient_ref           VARCHAR(128),
+    encounter_ref         VARCHAR(128),
+    raw_command           TEXT NOT NULL,
+    interpreted_intent    VARCHAR(100),
+    interpretation_source VARCHAR(20),    -- CACHE, PATTERN, SEMANTIC, LLM
+    execution_mode        VARCHAR(20),    -- EXECUTE, DRAFT
+    execution_status      VARCHAR(20),    -- COMPLETED, FAILED, CANCELLED
+    risk_level            VARCHAR(20),
+    affected_resources    JSONB,
+    error_message         TEXT,
+    latency_ms            INTEGER,
+    client_ip             INET,
+    user_agent            TEXT,
+    created_at            TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_cmd_audit_tenant_user ON command_audit_log(tenant_id, user_id, created_at DESC);
+CREATE INDEX idx_cmd_audit_patient ON command_audit_log(patient_ref, created_at DESC);
+```
+
+---
+
+## Pillar 9: UI Configuration Service
+
+### Goal
+Provide a multi-level configuration system for the clinical UI, enabling organizations, roles, and individual users to customize panel layouts, columns, filters, and views.
+
+### 9.1 Configuration Hierarchy
+
+```
+SYSTEM DEFAULTS (shipped with application)
+    │ overrides ▼
+TENANT CONFIGURATION (organization-specific)
+    │ overrides ▼
+ROLE CONFIGURATION (role-specific defaults)
+    │ overrides ▼
+USER PREFERENCES (individual customization)
+```
+
+Each level can override the previous. Configuration merges use deep merge semantics.
+
+### 9.2 UI Configuration Tables
+
+Tables are added to the `fhir` schema (consistent with tenant table location) with `ui_` prefix:
+
+```sql
+-- Tenant/role-level panel overrides
+CREATE TABLE IF NOT EXISTS fhir.ui_panel_config (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    role_code           VARCHAR(100),             -- NULL = tenant default, value = role-specific
+    panel_id            VARCHAR(100) NOT NULL,
+    config              JSONB NOT NULL,           -- Panel configuration JSON
+    enabled             BOOLEAN DEFAULT TRUE,
+    display_order       INTEGER DEFAULT 0,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_by          VARCHAR(255),
+    updated_by          VARCHAR(255),
+    CONSTRAINT uk_ui_panel_config UNIQUE (tenant_id, role_code, panel_id)
+);
+
+-- User-level panel preferences
+CREATE TABLE IF NOT EXISTS fhir.ui_user_panel_preferences (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    panel_id            VARCHAR(100) NOT NULL,
+    preferences         JSONB NOT NULL,
+    collapsed           BOOLEAN DEFAULT FALSE,
+    display_order       INTEGER DEFAULT 0,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uk_ui_user_panel UNIQUE (tenant_id, user_id, panel_id)
+);
+
+-- User saved views (named configurations)
+CREATE TABLE IF NOT EXISTS fhir.ui_user_saved_views (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    view_name           VARCHAR(100) NOT NULL,
+    view_type           VARCHAR(50) NOT NULL,     -- 'chart', 'queue', 'workspace'
+    config              JSONB NOT NULL,
+    is_default          BOOLEAN DEFAULT FALSE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uk_ui_user_view UNIQUE (tenant_id, user_id, view_name, view_type)
+);
+
+-- Tenant command aliases
+CREATE TABLE IF NOT EXISTS fhir.ui_command_aliases (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    alias               VARCHAR(255) NOT NULL,
+    expansion           TEXT NOT NULL,
+    category            VARCHAR(50),
+    enabled             BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uk_ui_tenant_alias UNIQUE (tenant_id, alias)
+);
+
+-- User command shortcuts
+CREATE TABLE IF NOT EXISTS fhir.ui_user_command_shortcuts (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    shortcut            VARCHAR(255) NOT NULL,
+    expansion           TEXT NOT NULL,
+    usage_count         INTEGER DEFAULT 0,
+    last_used_at        TIMESTAMP WITH TIME ZONE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uk_ui_user_shortcut UNIQUE (tenant_id, user_id, shortcut)
+);
+
+-- Tenant branding
+CREATE TABLE IF NOT EXISTS fhir.ui_tenant_branding (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL UNIQUE REFERENCES fhir.fhir_tenant(internal_id),
+    logo_url            VARCHAR(500),
+    primary_color       VARCHAR(7),
+    secondary_color     VARCHAR(7),
+    accent_color        VARCHAR(7),
+    custom_css          TEXT,
+    config              JSONB,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+### 9.3 UI Configuration API
+
+```
+GET  /api/uiconfig/panels                           # List available panels
+GET  /api/uiconfig/panels/{id}/config               # Get merged config for user
+PUT  /api/uiconfig/panels/{id}/preferences          # Save user preferences
+GET  /api/uiconfig/panels/{id}/data                 # Fetch panel data (FHIR query)
+
+GET  /api/uiconfig/views                            # List user's saved views
+POST /api/uiconfig/views                            # Create saved view
+PUT  /api/uiconfig/views/{id}                       # Update saved view
+DELETE /api/uiconfig/views/{id}                     # Delete saved view
+
+GET  /api/uiconfig/layout/{context}                 # Get layout preferences
+PUT  /api/uiconfig/layout/{context}                 # Save layout preferences
+
+GET  /api/uiconfig/branding                         # Get tenant branding
+
+# Admin endpoints
+PUT  /api/uiconfig/admin/panels/{id}/tenant-config  # Tenant-level config
+PUT  /api/uiconfig/admin/panels/{id}/role-config    # Role-level config
+POST /api/uiconfig/admin/panels/custom              # Create custom panel
+PUT  /api/uiconfig/admin/branding                   # Update branding
+```
+
+### 9.4 Configuration Merge Logic
+
+```java
+@Service
+public class UiConfigService {
+
+    public PanelConfig getPanelConfig(String panelId, UserContext context) {
+        // Load configurations from each level
+        PanelConfig systemConfig = loadSystemConfig(panelId);           // YAML files
+        PanelConfig tenantConfig = loadTenantConfig(panelId, context.getTenantId());
+        PanelConfig roleConfig = loadRoleConfig(panelId, context.getTenantId(), context.getRoles());
+        PanelConfig userConfig = loadUserConfig(panelId, context.getTenantId(), context.getUserId());
+
+        // Deep merge: user > role > tenant > system
+        return deepMerge(systemConfig, tenantConfig, roleConfig, userConfig);
+    }
+}
+```
+
+---
+
+## Pillar 10: Clinical Workflow Support
+
+### Goal
+Provide backend services for clinical workflow management including patient queue management, note lifecycle tracking, and pending results coordination.
+
+### 10.1 Queue Management
+
+#### Queue Status State Machine
+
+```
+┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐
+│ SCHEDULED │───▶│  ARRIVED  │───▶│  ROOMED   │───▶│   READY   │
+│           │    │           │    │           │    │           │
+│ Appt only │    │ Checked in│    │ In exam   │    │ Vitals    │
+│           │    │ at front  │    │ room      │    │ complete  │
+└───────────┘    └───────────┘    └───────────┘    └─────┬─────┘
+     │                                                    │
+     │                                                    ▼
+     │           ┌───────────┐    ┌───────────┐    ┌───────────┐
+     │           │ COMPLETED │◀───│  CHECKOUT │◀───│    IN     │
+     │           │           │    │   READY   │    │CONSULTATION│
+     │           │ Visit done│    │           │    │           │
+     │           │ & closed  │    │ Doc done  │    │ With      │
+     │           └───────────┘    └───────────┘    │ provider  │
+     │                                             └───────────┘
+     ▼
+┌───────────┐
+│  NO SHOW  │
+└───────────┘
+```
+
+#### FHIR Mapping
+
+| Queue State | FHIR Encounter.status | FHIR subjectStatus |
+|-------------|----------------------|-------------------|
+| Scheduled | (no encounter yet) | N/A |
+| Arrived | `in-progress` | `arrived` |
+| Roomed | `in-progress` | `triaged` |
+| Ready | `in-progress` | `receiving-care` |
+| In Consultation | `in-progress` | `receiving-care` |
+| Checkout Ready | `in-progress` | `departed` |
+| Completed | `finished` | `departed` |
+| No Show | `cancelled` | N/A |
+
+#### Queue Extensions
+
+```json
+{
+  "resourceType": "Encounter",
+  "extension": [
+    {
+      "url": "http://fhir4java.org/StructureDefinition/queue-position",
+      "valueInteger": 3
+    },
+    {
+      "url": "http://fhir4java.org/StructureDefinition/assigned-provider",
+      "valueReference": { "reference": "Practitioner/dr-smith" }
+    },
+    {
+      "url": "http://fhir4java.org/StructureDefinition/room-assignment",
+      "valueString": "Exam Room 2"
+    },
+    {
+      "url": "http://fhir4java.org/StructureDefinition/wait-time-minutes",
+      "valueInteger": 12
+    }
+  ]
+}
+```
+
+#### Queue Service API
+
+```
+GET  /api/queue                                     # Get department queue
+GET  /api/queue?provider={id}                       # Get provider's queue
+GET  /api/queue?status=ready                        # Filter by status
+
+POST /api/queue/check-in                            # Check in patient
+{
+  "appointmentId": "Appointment/appt-123",
+  "patientId": "Patient/123"
+}
+
+POST /api/queue/room                                # Room patient
+{
+  "encounterId": "Encounter/enc-456",
+  "room": "Exam Room 2"
+}
+
+POST /api/queue/ready                               # Mark ready for provider
+POST /api/queue/start-visit                         # Start consultation
+POST /api/queue/checkout-ready                      # Mark for checkout
+POST /api/queue/complete                            # Complete checkout
+POST /api/queue/no-show                             # Mark as no-show
+```
+
+### 10.2 Note Lifecycle Management
+
+#### Note States
+
+| State | Composition.status | DocumentReference.docStatus | Description |
+|-------|-------------------|---------------------------|-------------|
+| Pended (draft) | `partial` | `preliminary` | Initial draft, incomplete |
+| Pended (results pending) | `preliminary` | `preliminary` | Waiting for results |
+| Signed | `final` | `final` | Complete, locked |
+| Addendum | `appended` | `amended` | Addition to signed note |
+| Corrected | `corrected` | `amended` | Error correction |
+
+#### Pending Results Tracking
+
+Extension to track pending orders for a note:
+
+```json
+{
+  "resourceType": "Composition",
+  "status": "preliminary",
+  "extension": [
+    {
+      "url": "http://fhir4java.org/StructureDefinition/awaiting-results",
+      "extension": [
+        {
+          "url": "order",
+          "valueReference": { "reference": "ServiceRequest/sr-123" }
+        },
+        {
+          "url": "expectedTime",
+          "valueDateTime": "2026-03-25T10:30:00Z"
+        },
+        {
+          "url": "resultReceived",
+          "valueBoolean": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Note Service API
+
+```
+POST /api/notes/pend                                # Save as pended
+{
+  "encounterId": "Encounter/enc-456",
+  "sections": [...],
+  "awaitingOrders": ["ServiceRequest/sr-123", "ServiceRequest/sr-124"]
+}
+
+POST /api/notes/sign                                # Sign note (finalize)
+{
+  "compositionId": "Composition/comp-789"
+}
+
+POST /api/notes/addendum                            # Create addendum
+{
+  "originalCompositionId": "Composition/comp-789",
+  "addendumText": "Culture results returned..."
+}
+
+GET /api/notes/pended                               # Get user's pended notes
+GET /api/notes/pended?awaitingResults=true          # Filter by pending results
+```
+
+### 10.3 Result Notification Service
+
+Coordinates between FHIR Subscriptions and the clinical UI to notify clinicians when results arrive:
+
+```java
+@Service
+public class ResultNotificationService {
+
+    @EventListener
+    public void onObservationCreated(ObservationCreatedEvent event) {
+        // Find pended notes awaiting this result
+        List<Composition> pendedNotes = findNotesAwaitingOrder(event.getBasedOn());
+
+        for (Composition note : pendedNotes) {
+            // Update awaiting-results extension
+            markResultReceived(note, event.getObservation());
+
+            // Notify clinician via WebSocket
+            notifyResultReady(note.getAuthor(), event.getObservation());
+
+            // Check if all results complete
+            if (allResultsReceived(note)) {
+                notifyNoteReadyForCompletion(note);
+            }
+        }
+    }
+}
+```
+
+---
+
 ## Implementation Priority & Phasing
 
 ### Phase 1: Foundation (Weeks 1-4) - "Agents Can Discover"
@@ -1116,6 +1820,47 @@ Benefits for agents:
 
 **Outcome:** Agents can execute complex clinical workflows and efficiently query data.
 
+### Phase 6: Clinical UI Backend (Weeks 25-32) - "Clinicians Can Command"
+
+| Component | Module | Priority | Effort |
+|-----------|--------|----------|--------|
+| Command API endpoint | fhir4java-api | P0 | 1 week |
+| Command interpretation pipeline | fhir4java-api | P0 | 2 weeks |
+| Command caching (3-layer) | fhir4java-api | P0 | 1 week |
+| Pre-seeded command templates | fhir4java-api | P1 | 1 week |
+| Risk assessment engine | fhir4java-api | P0 | 1 week |
+| Queue management service | fhir4java-api | P0 | 1 week |
+| Note lifecycle service | fhir4java-api | P1 | 1 week |
+
+**Outcome:** Backend services ready for clinical UI integration. Clinicians can execute commands, manage queues, and track note states.
+
+### Phase 7: UI Configuration (Weeks 33-36) - "Organizations Can Customize"
+
+| Component | Module | Priority | Effort |
+|-----------|--------|----------|--------|
+| UI config database schema | fhir4java-persistence | P0 | 3 days |
+| UI config service (merge logic) | fhir4java-api | P0 | 1 week |
+| Panel configuration API | fhir4java-api | P1 | 1 week |
+| Saved views API | fhir4java-api | P1 | 3 days |
+| Tenant branding API | fhir4java-api | P2 | 3 days |
+| Command alias service | fhir4java-api | P1 | 3 days |
+
+**Outcome:** Multi-level UI configuration system operational. Tenants, roles, and users can customize panels and workflows.
+
+### Phase 8: Clinical UI Frontend (Weeks 37-48) - "Clinicians Can Work"
+
+| Component | Module | Priority | Effort |
+|-----------|--------|----------|--------|
+| React project setup (Vite + shadcn) | fhir4java-ui | P0 | 1 week |
+| Two-pane layout (Chart + Workspace) | fhir4java-ui | P0 | 2 weeks |
+| Patient Chart Canvas + panels | fhir4java-ui | P0 | 3 weeks |
+| Command Workspace + voice | fhir4java-ui | P0 | 2 weeks |
+| Queue Dashboard (role-based) | fhir4java-ui | P0 | 2 weeks |
+| WebSocket integration | fhir4java-ui | P0 | 1 week |
+| Trending views (sparklines + charts) | fhir4java-ui | P1 | 1 week |
+
+**Outcome:** Complete clinical UI operational. Clinicians can work with patients using voice/text commands, view charts, manage queues, and receive real-time updates.
+
 ---
 
 ## New Module Structure
@@ -1123,9 +1868,61 @@ Benefits for agents:
 ```
 fhir4java-agents/
 ├── fhir4java-core/              # (existing) + DiscoveryService, NL search, subscription topics
-├── fhir4java-persistence/       # (existing) + vector embeddings, bulk export
-├── fhir4java-api/               # (existing) + OpenAPI customizer, SSE, webhooks, GraphQL
+├── fhir4java-persistence/       # (existing) + vector embeddings, bulk export, UI config tables
+├── fhir4java-api/               # (existing) + OpenAPI, SSE, webhooks, GraphQL, Command API
+│   └── src/main/java/
+│       └── org/fhirframework/api/
+│           ├── controller/
+│           │   ├── CommandController.java         # NEW - Command API endpoint
+│           │   ├── QueueController.java           # NEW - Queue management
+│           │   ├── NoteController.java            # NEW - Note lifecycle
+│           │   └── UiConfigController.java        # NEW - UI configuration API
+│           ├── service/
+│           │   ├── CommandService.java            # NEW - Command orchestration
+│           │   ├── CommandInterpreter.java        # NEW - Tiered interpretation
+│           │   ├── CommandExecutor.java           # NEW - Command execution
+│           │   ├── CommandCache.java              # NEW - Multi-layer caching
+│           │   ├── QueueService.java              # NEW - Queue management
+│           │   ├── NoteLifecycleService.java      # NEW - Note state machine
+│           │   └── UiConfigService.java           # NEW - Config merge logic
+│           └── websocket/
+│               ├── ClinicalWebSocketHandler.java  # NEW - Clinical events
+│               └── ClinicalEventPublisher.java    # NEW - Event publishing
 ├── fhir4java-plugin/            # (existing) + embedding plugin, subscription plugin
+├── fhir4java-ui/                # NEW - React frontend application
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   ├── tailwind.config.js
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── components/
+│       │   ├── ui/              # shadcn/ui components
+│       │   ├── layout/          # AppShell, GlobalHeader, MainLayout
+│       │   ├── queue/           # QueueDashboard, QueueCard, CheckInWizard
+│       │   ├── patient/         # PatientSearch, PatientCard
+│       │   ├── chart/           # PatientChartPane, panels/*
+│       │   └── workspace/       # CommandWorkspacePane, ActivityStream
+│       ├── hooks/
+│       │   ├── useFhirQuery.ts
+│       │   ├── useCommand.ts
+│       │   ├── useVoiceInput.ts
+│       │   ├── useWebSocket.ts
+│       │   └── useQueue.ts
+│       ├── stores/
+│       │   ├── layoutStore.ts
+│       │   ├── commandStore.ts
+│       │   ├── sessionStore.ts
+│       │   └── queueStore.ts
+│       ├── contexts/
+│       │   ├── AuthContext.tsx
+│       │   ├── PatientContext.tsx
+│       │   └── WebSocketContext.tsx
+│       └── lib/
+│           ├── fhirClient.ts
+│           ├── commandApi.ts
+│           └── voiceEnhancer.ts
 ├── fhir4java-mcp/               # NEW - MCP server implementation
 │   ├── src/main/java/
 │   │   └── org/fhirframework/mcp/
@@ -1311,6 +2108,26 @@ fhir4java:
 
 ## Summary
 
-This design transforms FHIR4Java from a **FHIR server that agents can call** into a **FHIR platform that agents natively integrate with**. The Hybrid B2+ tool design (3 unified tools: discover, query, mutate) keeps the MCP interface lean and scalable while the `fhir_discover` tool ensures agents can learn capabilities at runtime. Combined with OpenAPI for REST consumers, enhanced CapabilityStatement for FHIR interoperability, event streaming, semantic search, and agent-friendly auth, this creates a platform where AI agents are first-class consumers of clinical data.
+This design transforms FHIR4Java from a **FHIR server** into a **complete AI-ready clinical platform** serving two audiences:
 
-The phased approach ensures the server remains production-stable while incrementally adding AI capabilities, with each phase delivering standalone value.
+**For AI Agents (Pillars 1-7):**
+- MCP integration with 3 unified tools (discover, query, mutate) keeps the interface lean and scalable
+- `fhir_discover` enables runtime capability learning
+- OpenAPI serves REST consumers, enhanced CapabilityStatement serves FHIR systems
+- Event streaming (SSE, WebSocket, FHIR Subscriptions) enables real-time agent reactions
+- Semantic search allows natural language queries over clinical narratives
+- Agent-friendly auth with OAuth2/SMART scopes ensures secure, fine-grained access
+
+**For Clinical UI (Pillars 8-10):**
+- Command API provides natural language interface for clinicians (voice/text)
+- Tiered interpretation pipeline minimizes LLM usage through caching and pattern matching
+- Multi-level UI configuration (system → tenant → role → user) enables organizational customization
+- Queue management supports full ambulatory workflow (scheduled → arrived → roomed → ready → consultation → checkout)
+- Note lifecycle service manages pended/signed/addendum states with pending results coordination
+
+**Integration Points:**
+- Command API reuses interpretation logic from MCP tools internally
+- Clinical events (result-received, queue-updated, etc.) flow through the same event infrastructure as agent events
+- UI configuration tables share the `fhir` schema with tenant configuration
+
+The 8-phase implementation ensures production stability while incrementally delivering value: Phases 1-5 focus on AI agent capabilities, Phases 6-8 add clinical UI support.
