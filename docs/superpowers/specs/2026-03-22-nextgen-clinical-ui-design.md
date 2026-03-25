@@ -1870,227 +1870,30 @@ export default defineConfig({
 
 ---
 
-## UI Configuration Database Schema
+## UI Configuration Backend
 
-UI configuration tables are added to the existing `fhir` schema, which already contains cross-cutting concerns (tenant mapping, audit log). Tables are prefixed with `ui_` to distinguish from FHIR data tables.
+The UI configuration backend (database schema, API endpoints, and merge logic) is defined in the AI Data Platform spec:
 
-### Schema Overview
+**Reference:** [2026-03-22-ai-data-platform.md](./2026-03-22-ai-data-platform.md) — **Pillar 9: UI Configuration Service**
 
-```
-fhir schema:
-├── fhir_resource           # FHIR data (existing)
-├── fhir_search_index       # FHIR data (existing)
-├── fhir_audit_log          # Cross-cutting (existing)
-├── fhir_tenant             # Cross-cutting (existing)
-│
-└── UI CONFIG TABLES (prefixed with 'ui_'):
-    ├── ui_panel_config          # Tenant/role panel overrides
-    ├── ui_user_panel_preferences # User panel customizations
-    ├── ui_user_saved_views      # Named view configurations
-    ├── ui_user_layout_preferences # Pane sizes, positions
-    ├── ui_custom_panel_definitions # Tenant-created panels
-    ├── ui_command_aliases       # Tenant command shortcuts
-    ├── ui_user_command_shortcuts # User command shortcuts
-    ├── ui_tenant_branding       # Tenant branding
-    └── ui_config_audit_log      # UI config change log
-```
+### Summary
 
-### Table Definitions
+| Component | Location in Backend Spec |
+|-----------|-------------------------|
+| Database tables (`ui_*` prefix in `fhir` schema) | Pillar 9, Section 9.2 |
+| `/api/uiconfig/*` endpoints | Pillar 9, Section 9.3 |
+| Configuration merge logic | Pillar 9, Section 9.4 |
 
-```sql
--- ============================================================================
--- UI CONFIGURATION TABLES (in fhir schema)
--- ============================================================================
-
--- Tenant/role-level panel overrides
-CREATE TABLE IF NOT EXISTS fhir.ui_panel_config (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    role_code           VARCHAR(100),             -- NULL = tenant default, value = role-specific
-    panel_id            VARCHAR(100) NOT NULL,
-    config              JSONB NOT NULL,           -- Panel configuration JSON
-    enabled             BOOLEAN DEFAULT TRUE,
-    display_order       INTEGER DEFAULT 0,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    created_by          VARCHAR(255),
-    updated_by          VARCHAR(255),
-
-    CONSTRAINT uk_ui_panel_config UNIQUE (tenant_id, role_code, panel_id)
-);
-
-CREATE INDEX idx_ui_panel_config_tenant ON fhir.ui_panel_config(tenant_id);
-CREATE INDEX idx_ui_panel_config_role ON fhir.ui_panel_config(tenant_id, role_code);
-
--- User-level panel preferences
-CREATE TABLE IF NOT EXISTS fhir.ui_user_panel_preferences (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    user_id             VARCHAR(255) NOT NULL,
-    panel_id            VARCHAR(100) NOT NULL,
-    preferences         JSONB NOT NULL,           -- Column visibility, filters, etc.
-    collapsed           BOOLEAN DEFAULT FALSE,
-    display_order       INTEGER DEFAULT 0,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    CONSTRAINT uk_ui_user_panel UNIQUE (tenant_id, user_id, panel_id)
-);
-
-CREATE INDEX idx_ui_user_panel_user ON fhir.ui_user_panel_preferences(tenant_id, user_id);
-
--- User saved views (named configurations)
-CREATE TABLE IF NOT EXISTS fhir.ui_user_saved_views (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    user_id             VARCHAR(255) NOT NULL,
-    view_name           VARCHAR(100) NOT NULL,
-    view_type           VARCHAR(50) NOT NULL,     -- 'chart', 'queue', 'workspace'
-    config              JSONB NOT NULL,           -- Full view configuration
-    is_default          BOOLEAN DEFAULT FALSE,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    CONSTRAINT uk_ui_user_view UNIQUE (tenant_id, user_id, view_name, view_type)
-);
-
-CREATE INDEX idx_ui_user_views ON fhir.ui_user_saved_views(tenant_id, user_id, view_type);
-
--- Workspace layout preferences
-CREATE TABLE IF NOT EXISTS fhir.ui_user_layout_preferences (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    user_id             VARCHAR(255) NOT NULL,
-    layout_context      VARCHAR(50) NOT NULL,     -- 'clinical', 'queue', 'dashboard'
-    preferences         JSONB NOT NULL,           -- Pane sizes, positions, etc.
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    CONSTRAINT uk_ui_user_layout UNIQUE (tenant_id, user_id, layout_context)
-);
-
--- Tenant-created custom panels
-CREATE TABLE IF NOT EXISTS fhir.ui_custom_panel_definitions (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    panel_id            VARCHAR(100) NOT NULL,
-    panel_name          VARCHAR(255) NOT NULL,
-    description         TEXT,
-    icon                VARCHAR(50),
-    definition          JSONB NOT NULL,           -- Full panel definition
-    enabled             BOOLEAN DEFAULT TRUE,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    created_by          VARCHAR(255),
-    updated_by          VARCHAR(255),
-
-    CONSTRAINT uk_ui_custom_panel UNIQUE (tenant_id, panel_id)
-);
-
-CREATE INDEX idx_ui_custom_panel_tenant ON fhir.ui_custom_panel_definitions(tenant_id);
-
--- Tenant command aliases
-CREATE TABLE IF NOT EXISTS fhir.ui_command_aliases (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    alias               VARCHAR(255) NOT NULL,    -- e.g., "admission labs"
-    expansion           TEXT NOT NULL,            -- e.g., "order CBC, BMP, UA, CXR"
-    category            VARCHAR(50),              -- 'orders', 'queries', 'navigation'
-    enabled             BOOLEAN DEFAULT TRUE,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    CONSTRAINT uk_ui_tenant_alias UNIQUE (tenant_id, alias)
-);
-
-CREATE INDEX idx_ui_tenant_aliases ON fhir.ui_command_aliases(tenant_id, category);
-
--- User command shortcuts
-CREATE TABLE IF NOT EXISTS fhir.ui_user_command_shortcuts (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
-    user_id             VARCHAR(255) NOT NULL,
-    shortcut            VARCHAR(255) NOT NULL,    -- e.g., "my workup"
-    expansion           TEXT NOT NULL,            -- e.g., "order CBC, BMP, lipids, A1c"
-    usage_count         INTEGER DEFAULT 0,
-    last_used_at        TIMESTAMP WITH TIME ZONE,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    CONSTRAINT uk_ui_user_shortcut UNIQUE (tenant_id, user_id, shortcut)
-);
-
-CREATE INDEX idx_ui_user_shortcuts ON fhir.ui_user_command_shortcuts(tenant_id, user_id);
-
--- Tenant branding
-CREATE TABLE IF NOT EXISTS fhir.ui_tenant_branding (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL UNIQUE REFERENCES fhir.fhir_tenant(internal_id),
-    logo_url            VARCHAR(500),
-    primary_color       VARCHAR(7),               -- Hex color
-    secondary_color     VARCHAR(7),
-    accent_color        VARCHAR(7),
-    custom_css          TEXT,
-    config              JSONB,                    -- Additional branding options
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- UI config audit log
-CREATE TABLE IF NOT EXISTS fhir.ui_config_audit_log (
-    id                  BIGSERIAL PRIMARY KEY,
-    tenant_id           VARCHAR(64) NOT NULL,
-    user_id             VARCHAR(255) NOT NULL,
-    action              VARCHAR(50) NOT NULL,     -- 'CREATE', 'UPDATE', 'DELETE'
-    entity_type         VARCHAR(100) NOT NULL,    -- Table name (without schema)
-    entity_id           BIGINT NOT NULL,
-    old_value           JSONB,
-    new_value           JSONB,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX idx_ui_config_audit_tenant ON fhir.ui_config_audit_log(tenant_id, created_at DESC);
-CREATE INDEX idx_ui_config_audit_entity ON fhir.ui_config_audit_log(entity_type, entity_id);
-```
-
-### UI Configuration API
+### Tables Overview
 
 ```
-GET  /api/uiconfig/panels                           # List available panels
-GET  /api/uiconfig/panels/{id}/config               # Get merged config for user
-PUT  /api/uiconfig/panels/{id}/preferences          # Save user preferences
-GET  /api/uiconfig/panels/{id}/data                 # Fetch panel data (FHIR query)
-
-GET  /api/uiconfig/views                            # List user's saved views
-POST /api/uiconfig/views                            # Create saved view
-PUT  /api/uiconfig/views/{id}                       # Update saved view
-DELETE /api/uiconfig/views/{id}                     # Delete saved view
-
-GET  /api/uiconfig/layout/{context}                 # Get layout preferences
-PUT  /api/uiconfig/layout/{context}                 # Save layout preferences
-
-GET  /api/uiconfig/branding                         # Get tenant branding
-
-# Admin endpoints
-PUT  /api/uiconfig/admin/panels/{id}/tenant-config  # Tenant-level config
-PUT  /api/uiconfig/admin/panels/{id}/role-config    # Role-level config
-POST /api/uiconfig/admin/panels/custom              # Create custom panel
-PUT  /api/uiconfig/admin/branding                   # Update branding
-```
-
-### Configuration Merge Logic
-
-```typescript
-function getPanelConfig(panelId: string, context: UserContext): PanelConfig {
-  // Load configurations from each level
-  const systemConfig = loadSystemConfig(panelId);           // YAML files
-  const tenantConfig = loadTenantConfig(panelId, context.tenantId);  // ui_panel_config
-  const roleConfig = loadRoleConfig(panelId, context.tenantId, context.roles);
-  const userConfig = loadUserConfig(panelId, context.tenantId, context.userId);
-
-  // Deep merge: user > role > tenant > system
-  return deepMerge(systemConfig, tenantConfig, roleConfig, userConfig);
-}
+fhir schema (ui_* tables):
+├── ui_panel_config              # Tenant/role panel overrides
+├── ui_user_panel_preferences    # User panel customizations
+├── ui_user_saved_views          # Named view configurations
+├── ui_command_aliases           # Tenant command shortcuts
+├── ui_user_command_shortcuts    # User command shortcuts
+└── ui_tenant_branding           # Tenant branding
 ```
 
 ---
