@@ -395,8 +395,9 @@ Tool responses include contextual hints to guide the agent's next action, reduci
 
 #### 1.4 FHIR Resources as MCP Resources
 
-Expose FHIR data as MCP resources that agents can read directly:
+Expose FHIR data as native MCP "resources" — a read-only data primitive in the MCP protocol separate from tools. This allows host applications to pre-load clinical context before the agent starts reasoning.
 
+**Resource declaration:**
 ```json
 {
   "uri": "fhir://Patient/123",
@@ -406,7 +407,7 @@ Expose FHIR data as MCP resources that agents can read directly:
 }
 ```
 
-Support resource templates for parameterized access:
+**Resource templates for parameterized access:**
 ```json
 {
   "uriTemplate": "fhir://{resourceType}/{id}",
@@ -415,17 +416,84 @@ Support resource templates for parameterized access:
 }
 ```
 
+**Why this matters for agents:**
+
+| Use Case | Without MCP Resources | With MCP Resources |
+|----------|----------------------|-------------------|
+| Context loading | Agent must call `fhir_query` tool | Agent reads `fhir://Patient/123` directly into context |
+| Multi-resource context | Multiple sequential tool calls | Host attaches multiple resources in one request |
+| LLM context window | Agent decides what to fetch | Host application pre-loads relevant resources |
+
+**Example workflow:**
+```
+User: "Summarize this patient's recent care"
+
+Host app (e.g., Claude Desktop) can automatically:
+1. Attach fhir://Patient/123 as context
+2. Attach fhir://Patient/123/$everything as context
+3. Agent sees full patient record WITHOUT making tool calls
+4. Agent focuses on reasoning, not data fetching
+```
+
+**Key benefit:** Reduces round-trips. The host application can pre-populate the agent's context with relevant FHIR data before the agent starts reasoning — no tool calls needed for read-only context.
+
 #### 1.5 Prompt Templates for Clinical Workflows
 
-Pre-built prompt templates for common healthcare AI tasks:
+Pre-built, parameterized prompt templates that agents can invoke for common clinical tasks. The server fetches relevant FHIR data and embeds it into a structured prompt, so the agent doesn't need to understand FHIR queries.
 
-| Template | Description |
-|----------|-------------|
-| `patient_summary` | Generate a clinical summary for a patient |
-| `lab_trends` | Analyze lab result trends over time |
-| `medication_review` | Review active medications for interactions |
-| `care_gap_analysis` | Identify gaps in preventive care |
-| `clinical_timeline` | Build chronological timeline of encounters |
+**Available templates:**
+
+| Template | Description | Parameters |
+|----------|-------------|------------|
+| `patient_summary` | Generate a clinical summary for a patient | `patientId` |
+| `lab_trends` | Analyze lab result trends over time | `patientId`, `labCode`, `timeRange` |
+| `medication_review` | Review active medications for interactions | `patientId` |
+| `care_gap_analysis` | Identify gaps in preventive care | `patientId`, `guidelineSet` |
+| `clinical_timeline` | Build chronological timeline of encounters | `patientId`, `startDate`, `endDate` |
+
+**How agents use templates:**
+
+```
+Agent calls: getPrompt("patient_summary", { patientId: "123" })
+
+Server returns (with FHIR data already embedded):
+{
+  "name": "patient_summary",
+  "description": "Generate clinical summary for patient",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Generate a clinical summary for this patient:\n\n
+        **Patient:** John Smith, 67M, MRN 12345\n
+        **Problems:** Type 2 DM (2019), HTN (2018), HLD (2020)\n
+        **Medications:** Metformin 1000mg BID, Lisinopril 20mg daily, Atorvastatin 40mg QHS\n
+        **Allergies:** Penicillin (rash), Sulfa (anaphylaxis)\n
+        **Recent Labs:** A1c 8.1% (Mar 15), Cr 1.2 (Mar 15), LDL 142 (Mar 15)\n
+        **Recent Visits:** 3 encounters in past 6 months\n\n
+        Summarize current health status, key concerns, and care gaps."
+    }
+  ]
+}
+```
+
+**Why this matters for agents:**
+
+| Benefit | Description |
+|---------|-------------|
+| **Standardization** | Consistent clinical analysis across all agents using the server |
+| **Data embedding** | Server fetches and formats FHIR data; agent doesn't need FHIR knowledge |
+| **Domain expertise** | Templates encode clinical best practices (what data to include, how to analyze) |
+| **Reduced token usage** | Agent doesn't spend tokens figuring out what data to fetch or how to structure queries |
+
+**When to use each MCP primitive:**
+
+| MCP Primitive | Best For | Token Impact |
+|---------------|----------|--------------|
+| **Resources** | Pre-loading context, read-only data access | Reduces tool call overhead |
+| **Prompt Templates** | Standardized clinical workflows, consistent analysis | Reduces reasoning tokens |
+| **Tools** (`fhir_query`, etc.) | Dynamic queries, mutations, complex operations | Full flexibility |
+
+Together, resources and prompts let agents focus on **clinical reasoning** rather than **data fetching** — the server handles FHIR complexity while the agent handles clinical intelligence.
 
 #### 1.6 Transport Support
 
