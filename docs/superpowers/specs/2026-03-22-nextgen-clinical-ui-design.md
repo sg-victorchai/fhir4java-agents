@@ -2,7 +2,7 @@
 
 **Status:** DRAFT - Ready for Review
 **Created:** 2026-03-22
-**Last Updated:** 2026-03-24
+**Last Updated:** 2026-03-25
 
 ---
 
@@ -423,7 +423,7 @@ prescriptions:
 | FHIR Types | @smile-cdr/fhirts | TypeScript FHIR types |
 | Forms | react-hook-form | Form management |
 | Data Grid | @tanstack/react-table | Results tables |
-| Charts | recharts | Clinical data visualization |
+| Charts | recharts | React charting library (D3-based) for clinical data visualization |
 
 ### Backend (Existing + New)
 
@@ -454,9 +454,9 @@ prescriptions:
 
 ## Clinical Note Workflow & Documentation States
 
-### Terminology Alignment (Epic Standard)
+### Terminology Alignment (COTS EHR Standard)
 
-This design uses industry-standard terminology aligned with Epic EHR:
+This design uses industry-standard terminology aligned with commercial EHR systems:
 
 | Term | Definition | When Used |
 |------|------------|-----------|
@@ -473,7 +473,7 @@ Clinical notes are represented using **Composition** (structured content) and **
 
 #### Composition.status (Document Maturity)
 
-| Status | Definition | Epic Equivalent |
+| Status | Definition | COTS EHR Equivalent |
 |--------|------------|-----------------|
 | `partial` | Initial/interim/preliminary; data incomplete | Pended (draft) |
 | `preliminary` | Early verified results, not all final | Pended (some content ready) |
@@ -495,7 +495,7 @@ Clinical notes are represented using **Composition** (structured content) and **
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    CLINICAL NOTE LIFECYCLE                           │
-│            (Epic terminology + FHIR Composition.status)              │
+│            (COTS EHR terminology + FHIR Composition.status)          │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐       │
@@ -517,7 +517,7 @@ Clinical notes are represented using **Composition** (structured content) and **
 
 ### State Mapping Summary
 
-| Workflow State | Epic Term | Composition.status | DocumentReference.docStatus | Encounter.status |
+| Workflow State | COTS EHR Term | Composition.status | DocumentReference.docStatus | Encounter.status |
 |----------------|-----------|-------------------|---------------------------|------------------|
 | Visit started, note begun | Pended | `partial` | `preliminary` | `in-progress` |
 | Awaiting lab results | Pended | `partial` or `preliminary` | `preliminary` | `in-progress` |
@@ -809,9 +809,9 @@ The system supports a complete patient flow from check-in to checkout, with role
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Terminology Alignment (Epic Standard)
+### Terminology Alignment (COTS EHR Standard)
 
-| Epic Term | Our Term | FHIR Mapping | Description |
+| COTS EHR Term | Our Term | FHIR Mapping | Description |
 |-----------|----------|--------------|-------------|
 | Scheduled | Scheduled | `Appointment.status = booked` (Encounter not yet created) | Appointment exists, patient not arrived |
 | Arrived | Arrived | `subjectStatus = arrived` | Patient checked in at front desk |
@@ -1133,48 +1133,233 @@ function useCommandMutation() {
 └────────────────────────────────┘
 ```
 
+### Trending Views
+
+Clinical trending supports tracking chronic conditions, monitoring treatment response, and spotting patterns. Three levels of visualization are available.
+
+#### Level 1: Inline Sparklines
+
+Small trend indicators embedded in result rows:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ RESULTS - Labs                                               [Trend] [▼]│
+├─────────────────────────────────────────────────────────────────────────┤
+│ Test            Latest      Trend (12mo)           Range      Status    │
+│ ─────────────────────────────────────────────────────────────────────── │
+│ A1c             8.1%        ╱‾‾╲__╱‾↗              <7.0%      ⚠️ HIGH   │
+│                 Mar 15      ▔▔▔▔▔▔▔▔                                    │
+│ Creatinine      1.2         ──────────             0.7-1.3    ✓ Normal  │
+│                 Mar 15      ▔▔▔▔▔▔▔▔                                    │
+│ eGFR            68          ╲__──────              >60        ✓ Normal  │
+│                 Mar 15      ▔▔▔▔▔▔▔▔              (was 72)              │
+│ LDL             142         ‾╲_╱‾‾↘               <100        ⚠️ HIGH   │
+│                 Mar 15      ▔▔▔▔▔▔▔▔                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Sparkline Features:**
+- Mini line chart (~80px wide) showing trend direction
+- Arrow indicator (↗ rising, ↘ falling, → stable)
+- Color coding: green (improving), red (worsening), gray (stable)
+
+#### Level 2: Panel Trend View
+
+Expanded chart within a panel:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ RESULTS - Labs                                          [Table] [Trend ●]│
+├─────────────────────────────────────────────────────────────────────────┤
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ A1c Trend                                    [6mo] [1yr ●] [3yr] [All]│
+│ │                                                                      │ │
+│ │  9% ┤                                                                │ │
+│ │     │            ●                                                   │ │
+│ │  8% ┤    ●───────╲──────●───────●                                   │ │
+│ │     │   ╱         ╲    ╱         ╲                                  │ │
+│ │  7% ┤──●───────────●──╱───────────●────── Target: 7.0% ─ ─ ─        │ │
+│ │     │                                                                │ │
+│ │  6% ┤                                                                │ │
+│ │     └────────────────────────────────────────────────────────────── │ │
+│ │       Mar    Jun    Sep    Dec    Mar    Jun    Sep    Dec    Mar   │ │
+│ │       2024   2024   2024   2024   2025   2025   2025   2025   2026  │ │
+│ │                                                                      │ │
+│ │  📍 Annotations:                                                     │ │
+│ │  • Sep 2024: Started Ozempic                                        │ │
+│ │  • Dec 2025: Hospitalization (pneumonia)                            │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Compare with: [+ Add Series]  ☑ Weight  ☐ Creatinine  ☐ eGFR       │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Level 3: Full Trend Dashboard
+
+Disease-specific comprehensive view:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ TREND DASHBOARD: Diabetes Management                      [Export] [✕]  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Time Range: [6mo] [1yr ●] [3yr] [Custom...]     Patient: John Smith     │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ┌────────────────────────────────────┐ ┌────────────────────────────────┐│
+│ │ A1c                                │ │ Weight                          ││
+│ │  9%│      ●                        │ │ 220│  ●                         ││
+│ │  8%│  ●───╲───●───●                │ │ 210│  │╲                        ││
+│ │  7%│─────────────── Target ───     │ │ 200│──│─╲●───●───●──────       ││
+│ │  6%│                               │ │ 190│                            ││
+│ │    └─────────────────────────      │ │    └────────────────────────   ││
+│ └────────────────────────────────────┘ └────────────────────────────────┘│
+│ ┌────────────────────────────────────┐ ┌────────────────────────────────┐│
+│ │ Blood Pressure                     │ │ eGFR (Kidney Function)          ││
+│ │ 160│                               │ │  90│                            ││
+│ │ 140│──●───●───●───●── Systolic     │ │  80│  ●───●                     ││
+│ │ 120│                               │ │  70│──────╲───●───●── ≥60 ──   ││
+│ │  80│──●───●───●───●── Diastolic    │ │  60│        ╲                   ││
+│ │    └─────────────────────────      │ │    └────────────────────────   ││
+│ └────────────────────────────────────┘ └────────────────────────────────┘│
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Timeline: ──●────●────●────●────●── (Med changes, hospitalizations) │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Blood Pressure Trending (Dual-Line)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ VITALS - Blood Pressure Trend                          [3mo ●] [6mo] [1yr]│
+├─────────────────────────────────────────────────────────────────────────┤
+│  180 ┤                                               Hypertensive Crisis │
+│  160 ┤  ●                                                                │
+│  140 ┤──╲●────●────●────●────●────●────●──── Stage 2 HTN ─────────────  │
+│  130 ┤    ╲    ╲                         ╲                Stage 1 HTN   │
+│  120 ┤     ╲────╲───●────●────●────●──────●───────────────────────────  │
+│  100 ┤                                                                   │
+│   80 ┤──●────●────●────●────●────●────●────●── Normal ─────────────────  │
+│   60 ┤                                                                   │
+│      └───────────────────────────────────────────────────────────────── │
+│        Jan 5  Jan 19  Feb 2  Feb 16  Mar 2  Mar 9  Mar 16  Mar 23       │
+│  ● Systolic   ● Diastolic   Average: 138/82   Trend: ↘ Improving        │
+│  📍 Feb 2: Increased Lisinopril 10mg → 20mg                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Command Integration for Trending
+
+| Command | Result |
+|---------|--------|
+| "Show A1c trend" | Opens Level 2 trend for A1c |
+| "Trend last 3 A1c results" | Same, with 3-point focus |
+| "Show diabetes dashboard" | Opens Level 3 with A1c, weight, eGFR |
+| "Compare creatinine and eGFR" | Multi-series correlation view |
+| "Blood pressure over 6 months" | BP trend with time range |
+
 ---
 
 ## Command Workspace
 
-### Full Layout
+### Split Layout with WIP Panel
+
+The command workspace uses a split layout with the WIP (Work-In-Progress) panel on the left for reference and the main activity/documentation area on the right. This follows the consistent spatial model where **left = reference** and **right = action**.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ COMMAND WORKSPACE                                                        │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ ┌─────────────────────────────────────────────────────────────────────┐ │
-│ │ INPUT BAR                                                           │ │
-│ │ ┌─────┐ ┌─────────────────────────────────────────────────┐ ┌─────┐│ │
-│ │ │ 🎤  │ │ Type or speak a command...                      │ │ ⏎   ││ │
-│ │ └─────┘ └─────────────────────────────────────────────────┘ └─────┘│ │
-│ │ [Voice: ON]  [Mode: Ambient Documentation]  Encounter: Today 09:15 │ │
-│ └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│ ┌─────────────────────────────────────────────────────────────────────┐ │
-│ │ ACTIVITY STREAM                                                     │ │
-│ ├─────────────────────────────────────────────────────────────────────┤ │
-│ │ 09:15 [👤 Patient]                                                  │ │
-│ │ "I've been having this chest pain for about two days now."         │ │
-│ │                                                                     │ │
-│ │ 09:16 [🩺 Clinician]                                                │ │
-│ │ "Can you describe the pain? Is it sharp, dull, pressure-like?"     │ │
-│ │                                                                     │ │
-│ │ 09:18 [⚡ Command] "Order troponin, d-dimer, and chest x-ray"       │ │
-│ │ ┌─────────────────────────────────────────────────────────────┐   │ │
-│ │ │ ✓ Orders placed:                                             │   │ │
-│ │ │ • Troponin I (STAT)   • D-dimer (STAT)   • Chest X-ray      │   │ │
-│ │ └─────────────────────────────────────────────────────────────┘   │ │
-│ └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│ ┌─────────────────────────────────────────────────────────────────────┐ │
-│ │ NOTE PREVIEW (Pended)                                    [Expand]  │ │
-│ │ Chief Complaint: Chest pain x 2 days                               │ │
-│ │ HPI: 58yo male presents with chest pain described as an ache...    │ │
-│ │ Assessment & Plan: ⏳ Awaiting cardiac workup results              │ │
-│ └─────────────────────────────────────────────────────────────────────┘ │
+│ ┌───────────────────────┐ ┌───────────────────────────────────────────┐ │
+│ │ ⏳ PENDING WORK   [◀] │ │ INPUT BAR                                  │ │
+│ │                       │ │ ┌─────┐ ┌───────────────────────┐ ┌─────┐ │ │
+│ │ ══ ORDERS ══          │ │ │ 🎤  │ │ Type or speak...      │ │ ⏎   │ │ │
+│ │ ┌───────────────────┐ │ │ └─────┘ └───────────────────────┘ └─────┘ │ │
+│ │ │ Troponin I (STAT) │ │ │ [Voice: ON]  [Mode: Ambient]  Enc: 09:15  │ │
+│ │ │ ⏳ Est. 25 min    │ │ ├───────────────────────────────────────────┤ │
+│ │ │ ░░░░░░░░░▓▓▓▓▓▓▓ │ │ │ ACTIVITY STREAM                           │ │
+│ │ └───────────────────┘ │ │                                            │ │
+│ │ ┌───────────────────┐ │ │ 09:15 [👤] Chest pain for two days        │ │
+│ │ │ D-dimer (STAT)    │ │ │ 09:16 [🩺] Can you describe the pain?     │ │
+│ │ │ ⏳ Est. 25 min    │ │ │ 09:18 [⚡] Order troponin, d-dimer, CXR   │ │
+│ │ │ ░░░░░░░░░▓▓▓▓▓▓▓ │ │ │       ✓ Orders placed successfully        │ │
+│ │ └───────────────────┘ │ │                                            │ │
+│ │ ┌───────────────────┐ │ ├───────────────────────────────────────────┤ │
+│ │ │ Chest X-ray       │ │ │ 📝 NOTE DRAFT                              │ │
+│ │ │ ⏳ Est. 45 min    │ │ │ ┌───────────────────────────────────────┐ │ │
+│ │ │ ░░░▓▓▓▓▓▓▓▓▓▓▓▓▓ │ │ │ │ Chief Complaint: Chest pain x 2 days │ │ │
+│ │ └───────────────────┘ │ │ │ HPI: 58yo male presents with...       │ │ │
+│ │                       │ │ │ Assessment & Plan: [typing...]█       │ │ │
+│ │ ══ RESULTS READY ══   │ │ └───────────────────────────────────────┘ │ │
+│ │ (None yet)            │ │                                            │ │
+│ │                       │ │                                            │ │
+│ │ [Refresh] [Expand All]│ │                                            │ │
+│ └───────────────────────┘ └───────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### When Results Arrive
+
+```
+┌───────────────────────┐ ┌───────────────────────────────────────────┐
+│ ⏳ PENDING WORK   [◀] │ │ ACTIVITY STREAM & DOCUMENTATION            │
+│                       │ │                                            │
+│ ══ RESULTS READY ══   │ │ ...previous activity...                    │
+│ ┌───────────────────┐ │ │                                            │
+│ │ ✅ Troponin I     │ │ │ 09:45 [📊] Result: Troponin I              │
+│ │ 0.02 ng/mL        │ │ │       0.02 ng/mL ✓ Normal                  │
+│ │ ✓ Normal          │ │ │       🤖 "Troponin normal, ACS less likely"│
+│ │ [Insert → A&P]    │ │ │                                            │
+│ └───────────────────┘ │ │ 📝 NOTE DRAFT                              │
+│ ┌───────────────────┐ │ │ ┌────────────────────────────────────────┐ │
+│ │ ✅ D-dimer        │ │ │ │ Assessment & Plan:                     │ │
+│ │ 0.45 µg/mL        │ │ │ │ Chest pain, likely musculoskeletal.   │ │
+│ │ ✓ Normal          │ │ │ │ Cardiac workup negative:               │ │
+│ │ [Insert → A&P]    │ │ │ │ - Troponin 0.02 (normal) ← [clicked]  │ │
+│ └───────────────────┘ │ │ │ - D-dimer 0.45 (normal)                │ │
+│                       │ │ │ █                                       │ │
+│ ══ STILL PENDING ══   │ │ └────────────────────────────────────────┘ │
+│ ┌───────────────────┐ │ │                                            │
+│ │ Chest X-ray       │ │ │                                            │
+│ │ ⏳ Est. 20 min    │ │ │                                            │
+│ └───────────────────┘ │ │                                            │
+└───────────────────────┘ └───────────────────────────────────────────┘
+```
+
+### WIP Panel States
+
+| State | Width | Behavior |
+|-------|-------|----------|
+| **Expanded** | ~250px | Full detail with progress bars |
+| **Collapsed** | ~50px | Icons only with badge counts |
+| **Hidden** | 0px | User preference for distraction-free mode |
+
+### WIP Panel Collapsed State
+
+```
+┌─────┐ ┌────────────────────────────────────────────────────────┐
+│ [▶] │ │ ACTIVITY STREAM & DOCUMENTATION                         │
+│     │ │                                                         │
+│ ⏳  │ │ (Full width for documentation)                          │
+│ 2   │ │                                                         │
+│     │ │                                                         │
+│ ✅  │ │                                                         │
+│ 1   │ │                                                         │
+└─────┘ └────────────────────────────────────────────────────────┘
+```
+
+### Result Insert Actions
+
+When a result is ready, clinicians can:
+- **One-click insert** - "Insert → A&P" adds formatted result to cursor position
+- **Drag-and-drop** - Drag result card into note section
+- **Voice command** - "Insert troponin result" adds contextually
+
+### Notification Behavior
+
+- Results update the left panel silently (no popup interruption)
+- Toast notification only for **critical values** or **all results complete**
+- Progress bars update via WebSocket with estimated completion times
 
 ### Activity Stream Entry Types
 
@@ -1271,6 +1456,177 @@ Common misrecognitions corrected automatically:
 - Medical terminology density → likely clinician
 - Symptom language ("I feel", "It hurts") → likely patient
 - Voice profile matching when calibrated
+
+---
+
+## Configurable Panel System
+
+Panels in the Patient Chart Canvas are fully configurable via a multi-level hierarchy, allowing customization from system defaults down to individual user preferences.
+
+### Configuration Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ SYSTEM DEFAULTS (shipped with application)                              │
+│ • Standard panels: Problems, Meds, Allergies, Vitals, Results          │
+│ • Default layouts and element visibility                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                             ▼ overrides
+┌─────────────────────────────────────────────────────────────────────────┐
+│ TENANT CONFIGURATION (organization-specific)                            │
+│ • Add custom panels (e.g., "Oncology Summary")                          │
+│ • Hide irrelevant panels for specialty                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                             ▼ overrides
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ROLE CONFIGURATION (role-specific defaults)                             │
+│ • Nurse: Vitals prominent, billing hidden                               │
+│ • Physician: Full access, A&P focus                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+                             ▼ overrides
+┌─────────────────────────────────────────────────────────────────────────┐
+│ USER PREFERENCES (individual customization)                             │
+│ • Panel order, collapsed/expanded state                                 │
+│ • Preferred columns, default filters                                    │
+│ • Saved "views" for different workflows                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Panel Configuration Schema
+
+```yaml
+# panel-config/results-panel.yml
+panel:
+  id: results
+  name: Results
+  icon: flask
+
+  # FHIR data source
+  dataSource:
+    resourceType: Observation
+    query:
+      patient: "{{patientId}}"
+      category: laboratory
+      _sort: -date
+      _count: 100
+
+  # Display configuration
+  display:
+    defaultView: table          # list | table | cards
+    groupBy: code               # Group by test type
+    showSparklines: true        # Inline trend visualization
+
+  # Columns/fields to show
+  columns:
+    - id: test
+      label: Test
+      fhirPath: code.coding[0].display
+      width: flex
+      sortable: true
+
+    - id: value
+      label: Result
+      fhirPath: valueQuantity.value
+      width: 100px
+      render: value-with-unit
+      highlight: abnormal
+
+    - id: trend
+      type: sparkline
+      width: 100px
+      dataPoints: 6
+      timeRange: 12months
+
+    - id: date
+      label: Date
+      fhirPath: effectiveDateTime
+      format: date:MMM DD
+      width: 100px
+      sortable: true
+
+    - id: status
+      label: Status
+      fhirPath: interpretation[0].coding[0].code
+      width: 80px
+      render: result-flag
+
+  # Available filters
+  filters:
+    - id: category
+      label: Category
+      type: single-select
+      options:
+        - { value: laboratory, label: Labs, default: true }
+        - { value: vital-signs, label: Vitals }
+        - { value: imaging, label: Imaging }
+
+    - id: date
+      label: Date Range
+      type: date-range
+      presets:
+        - { value: 7d, label: "Last 7 days" }
+        - { value: 30d, label: "Last 30 days" }
+        - { value: 6m, label: "Last 6 months", default: true }
+        - { value: 1y, label: "Last year" }
+
+  # Actions available
+  actions:
+    header:
+      - id: add
+        label: Add Result
+        icon: plus
+        command: "add result"
+        permission: observation:write
+
+  # Trending support
+  trending:
+    enabled: true
+    defaultTimeRange: 12months
+    chartTypes: [line, multi-series]
+    annotationSources: [MedicationRequest, Encounter]
+```
+
+### Runtime User Customization UI
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ⚙️ CUSTOMIZE CHART VIEW                                          [Save] │
+├─────────────────────────────────────────────────────────────────────────┤
+│ PANEL ORDER (drag to reorder)                                           │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ ☰ ☑ Problems    │ ☰ ☑ Medications   │ ☰ ☑ Allergies               │ │
+│ │ ☰ ☑ Vitals      │ ☰ ☑ Results       │ ☰ ☐ Visits                  │ │
+│ │ ☰ ☐ Documents   │ ☰ ☐ Immunizations │ ☰ ☐ Social Hx               │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ RESULTS PANEL - Columns                                                 │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ ☑ Test Name  ☑ Result  ☑ Trend  ☑ Date  ☐ Reference Range         │ │
+│ │ ☐ Ordering Dr  ☐ Specimen  ☐ Lab  ☑ Status                         │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ DEFAULT FILTERS                                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Results: [Last 6 months ▼]   Problems: [Active only ▼]             │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ SAVED VIEWS                                                              │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ [Default]  [Diabetes Review]  [Pre-Op Assessment]  [+ New View]    │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│                                           [Reset to Defaults]  [Cancel] │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration Storage
+
+| Level | Storage | Format |
+|-------|---------|--------|
+| **System** | `/fhir-config/panels/*.yml` | YAML files in repo |
+| **Tenant** | `fhir.ui_panel_config` | JSON in database |
+| **Role** | `fhir.ui_panel_config` (with role_code) | JSON in database |
+| **User** | `fhir.ui_user_panel_preferences` | JSON in database |
 
 ---
 
@@ -1510,6 +1866,231 @@ export default defineConfig({
     },
   },
 });
+```
+
+---
+
+## UI Configuration Database Schema
+
+UI configuration tables are added to the existing `fhir` schema, which already contains cross-cutting concerns (tenant mapping, audit log). Tables are prefixed with `ui_` to distinguish from FHIR data tables.
+
+### Schema Overview
+
+```
+fhir schema:
+├── fhir_resource           # FHIR data (existing)
+├── fhir_search_index       # FHIR data (existing)
+├── fhir_audit_log          # Cross-cutting (existing)
+├── fhir_tenant             # Cross-cutting (existing)
+│
+└── UI CONFIG TABLES (prefixed with 'ui_'):
+    ├── ui_panel_config          # Tenant/role panel overrides
+    ├── ui_user_panel_preferences # User panel customizations
+    ├── ui_user_saved_views      # Named view configurations
+    ├── ui_user_layout_preferences # Pane sizes, positions
+    ├── ui_custom_panel_definitions # Tenant-created panels
+    ├── ui_command_aliases       # Tenant command shortcuts
+    ├── ui_user_command_shortcuts # User command shortcuts
+    ├── ui_tenant_branding       # Tenant branding
+    └── ui_config_audit_log      # UI config change log
+```
+
+### Table Definitions
+
+```sql
+-- ============================================================================
+-- UI CONFIGURATION TABLES (in fhir schema)
+-- ============================================================================
+
+-- Tenant/role-level panel overrides
+CREATE TABLE IF NOT EXISTS fhir.ui_panel_config (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    role_code           VARCHAR(100),             -- NULL = tenant default, value = role-specific
+    panel_id            VARCHAR(100) NOT NULL,
+    config              JSONB NOT NULL,           -- Panel configuration JSON
+    enabled             BOOLEAN DEFAULT TRUE,
+    display_order       INTEGER DEFAULT 0,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_by          VARCHAR(255),
+    updated_by          VARCHAR(255),
+
+    CONSTRAINT uk_ui_panel_config UNIQUE (tenant_id, role_code, panel_id)
+);
+
+CREATE INDEX idx_ui_panel_config_tenant ON fhir.ui_panel_config(tenant_id);
+CREATE INDEX idx_ui_panel_config_role ON fhir.ui_panel_config(tenant_id, role_code);
+
+-- User-level panel preferences
+CREATE TABLE IF NOT EXISTS fhir.ui_user_panel_preferences (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    panel_id            VARCHAR(100) NOT NULL,
+    preferences         JSONB NOT NULL,           -- Column visibility, filters, etc.
+    collapsed           BOOLEAN DEFAULT FALSE,
+    display_order       INTEGER DEFAULT 0,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT uk_ui_user_panel UNIQUE (tenant_id, user_id, panel_id)
+);
+
+CREATE INDEX idx_ui_user_panel_user ON fhir.ui_user_panel_preferences(tenant_id, user_id);
+
+-- User saved views (named configurations)
+CREATE TABLE IF NOT EXISTS fhir.ui_user_saved_views (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    view_name           VARCHAR(100) NOT NULL,
+    view_type           VARCHAR(50) NOT NULL,     -- 'chart', 'queue', 'workspace'
+    config              JSONB NOT NULL,           -- Full view configuration
+    is_default          BOOLEAN DEFAULT FALSE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT uk_ui_user_view UNIQUE (tenant_id, user_id, view_name, view_type)
+);
+
+CREATE INDEX idx_ui_user_views ON fhir.ui_user_saved_views(tenant_id, user_id, view_type);
+
+-- Workspace layout preferences
+CREATE TABLE IF NOT EXISTS fhir.ui_user_layout_preferences (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    layout_context      VARCHAR(50) NOT NULL,     -- 'clinical', 'queue', 'dashboard'
+    preferences         JSONB NOT NULL,           -- Pane sizes, positions, etc.
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT uk_ui_user_layout UNIQUE (tenant_id, user_id, layout_context)
+);
+
+-- Tenant-created custom panels
+CREATE TABLE IF NOT EXISTS fhir.ui_custom_panel_definitions (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    panel_id            VARCHAR(100) NOT NULL,
+    panel_name          VARCHAR(255) NOT NULL,
+    description         TEXT,
+    icon                VARCHAR(50),
+    definition          JSONB NOT NULL,           -- Full panel definition
+    enabled             BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_by          VARCHAR(255),
+    updated_by          VARCHAR(255),
+
+    CONSTRAINT uk_ui_custom_panel UNIQUE (tenant_id, panel_id)
+);
+
+CREATE INDEX idx_ui_custom_panel_tenant ON fhir.ui_custom_panel_definitions(tenant_id);
+
+-- Tenant command aliases
+CREATE TABLE IF NOT EXISTS fhir.ui_command_aliases (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    alias               VARCHAR(255) NOT NULL,    -- e.g., "admission labs"
+    expansion           TEXT NOT NULL,            -- e.g., "order CBC, BMP, UA, CXR"
+    category            VARCHAR(50),              -- 'orders', 'queries', 'navigation'
+    enabled             BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT uk_ui_tenant_alias UNIQUE (tenant_id, alias)
+);
+
+CREATE INDEX idx_ui_tenant_aliases ON fhir.ui_command_aliases(tenant_id, category);
+
+-- User command shortcuts
+CREATE TABLE IF NOT EXISTS fhir.ui_user_command_shortcuts (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL REFERENCES fhir.fhir_tenant(internal_id),
+    user_id             VARCHAR(255) NOT NULL,
+    shortcut            VARCHAR(255) NOT NULL,    -- e.g., "my workup"
+    expansion           TEXT NOT NULL,            -- e.g., "order CBC, BMP, lipids, A1c"
+    usage_count         INTEGER DEFAULT 0,
+    last_used_at        TIMESTAMP WITH TIME ZONE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT uk_ui_user_shortcut UNIQUE (tenant_id, user_id, shortcut)
+);
+
+CREATE INDEX idx_ui_user_shortcuts ON fhir.ui_user_command_shortcuts(tenant_id, user_id);
+
+-- Tenant branding
+CREATE TABLE IF NOT EXISTS fhir.ui_tenant_branding (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL UNIQUE REFERENCES fhir.fhir_tenant(internal_id),
+    logo_url            VARCHAR(500),
+    primary_color       VARCHAR(7),               -- Hex color
+    secondary_color     VARCHAR(7),
+    accent_color        VARCHAR(7),
+    custom_css          TEXT,
+    config              JSONB,                    -- Additional branding options
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- UI config audit log
+CREATE TABLE IF NOT EXISTS fhir.ui_config_audit_log (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           VARCHAR(64) NOT NULL,
+    user_id             VARCHAR(255) NOT NULL,
+    action              VARCHAR(50) NOT NULL,     -- 'CREATE', 'UPDATE', 'DELETE'
+    entity_type         VARCHAR(100) NOT NULL,    -- Table name (without schema)
+    entity_id           BIGINT NOT NULL,
+    old_value           JSONB,
+    new_value           JSONB,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_ui_config_audit_tenant ON fhir.ui_config_audit_log(tenant_id, created_at DESC);
+CREATE INDEX idx_ui_config_audit_entity ON fhir.ui_config_audit_log(entity_type, entity_id);
+```
+
+### UI Configuration API
+
+```
+GET  /api/uiconfig/panels                           # List available panels
+GET  /api/uiconfig/panels/{id}/config               # Get merged config for user
+PUT  /api/uiconfig/panels/{id}/preferences          # Save user preferences
+GET  /api/uiconfig/panels/{id}/data                 # Fetch panel data (FHIR query)
+
+GET  /api/uiconfig/views                            # List user's saved views
+POST /api/uiconfig/views                            # Create saved view
+PUT  /api/uiconfig/views/{id}                       # Update saved view
+DELETE /api/uiconfig/views/{id}                     # Delete saved view
+
+GET  /api/uiconfig/layout/{context}                 # Get layout preferences
+PUT  /api/uiconfig/layout/{context}                 # Save layout preferences
+
+GET  /api/uiconfig/branding                         # Get tenant branding
+
+# Admin endpoints
+PUT  /api/uiconfig/admin/panels/{id}/tenant-config  # Tenant-level config
+PUT  /api/uiconfig/admin/panels/{id}/role-config    # Role-level config
+POST /api/uiconfig/admin/panels/custom              # Create custom panel
+PUT  /api/uiconfig/admin/branding                   # Update branding
+```
+
+### Configuration Merge Logic
+
+```typescript
+function getPanelConfig(panelId: string, context: UserContext): PanelConfig {
+  // Load configurations from each level
+  const systemConfig = loadSystemConfig(panelId);           // YAML files
+  const tenantConfig = loadTenantConfig(panelId, context.tenantId);  // ui_panel_config
+  const roleConfig = loadRoleConfig(panelId, context.tenantId, context.roles);
+  const userConfig = loadUserConfig(panelId, context.tenantId, context.userId);
+
+  // Deep merge: user > role > tenant > system
+  return deepMerge(systemConfig, tenantConfig, roleConfig, userConfig);
+}
 ```
 
 ---
