@@ -65,7 +65,7 @@ cd /path/to/fhir4java-agents
 ./mvnw clean package -DskipTests
 
 # 2. Build Docker image
-docker build -t fhir4java-app .
+docker compose build
 
 # 3. Deploy infrastructure (creates ECR repository)
 cd infrastructure
@@ -85,8 +85,8 @@ ECR_URI=$(aws cloudformation describe-stacks \
 # Login to ECR
 aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin $ECR_URI
 
-# Tag and push
-docker tag fhir4java-app:latest $ECR_URI:latest
+# Tag and push (image name from docker compose is <project>-fhir-server)
+docker tag fhir4java-agents-fhir-server:latest $ECR_URI:latest
 docker push $ECR_URI:latest
 
 # 5. Force ECS to pull the new image
@@ -109,8 +109,8 @@ cdk deploy -c appName=fhir4java -c environment=dev ...
 ```bash
 # Rebuild and push new image
 ./mvnw clean package -DskipTests
-docker build -t fhir4java-app .
-docker tag fhir4java-app:latest $ECR_URI:latest
+docker compose build
+docker tag fhir4java-agents-fhir-server:latest $ECR_URI:latest
 docker push $ECR_URI:latest
 
 # Force ECS to redeploy with new image

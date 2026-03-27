@@ -6,6 +6,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -23,6 +24,13 @@ export class VpcEndpointAutomationConstruct extends Construct {
 
     const prefix = props.resourcePrefix;
 
+    // Explicit log group so it's deleted with the stack
+    const logGroup = new logs.LogGroup(this, 'LambdaLogGroup', {
+      logGroupName: `/aws/lambda/${prefix}-vpce-target-updater`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     this.lambda = new lambda.Function(this, 'UpdateTargetsLambda', {
       functionName: `${prefix}-vpce-target-updater`,
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -34,6 +42,7 @@ export class VpcEndpointAutomationConstruct extends Construct {
         TARGET_PORT: '443',
       },
       timeout: cdk.Duration.seconds(30),
+      logGroup,
     });
 
     // Grant permissions
