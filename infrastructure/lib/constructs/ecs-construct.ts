@@ -31,6 +31,8 @@ export interface EcsConstructProps {
   apiGatewayDomain: string;
   /** Enable database auto-initialization on first deployment. Set to false after schema is created. */
   dbAutoInit?: boolean;
+  /** Set to true for initial deployment when ECR is empty. Sets desiredCount to 0. */
+  skipTaskDeployment?: boolean;
 }
 
 export class EcsConstruct extends Construct {
@@ -144,7 +146,8 @@ export class EcsConstruct extends Construct {
         serviceName: `${prefix}-${svc.name}`,
         cluster: this.cluster,
         taskDefinition,
-        desiredCount: svc.desiredCount,
+        // Set to 0 on initial deployment when ECR is empty
+        desiredCount: props.skipTaskDeployment ? 0 : svc.desiredCount,
         securityGroups: [this.taskSecurityGroup],
         vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
         enableExecuteCommand: true,

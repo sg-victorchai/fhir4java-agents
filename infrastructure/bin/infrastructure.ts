@@ -18,6 +18,9 @@ const hostedZoneId = app.node.tryGetContext('hostedZoneId');
 // Database initialization (set to true for first deployment, false afterwards)
 const dbAutoInit = app.node.tryGetContext('dbAutoInit') !== 'false';
 
+// Skip ECS task deployment (set to true for initial deployment when ECR is empty)
+const skipTaskDeployment = app.node.tryGetContext('skipTaskDeployment') === 'true';
+
 const stackName = `${appName}-${environment}-stack`;
 
 new Fhir4JavaInfrastructureStack(app, stackName, {
@@ -29,6 +32,7 @@ new Fhir4JavaInfrastructureStack(app, stackName, {
   vpnCidr,
   hostedZoneId,
   dbAutoInit,
+  skipTaskDeployment,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',

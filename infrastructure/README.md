@@ -37,9 +37,11 @@ Pass parameters using `-c` or `--context` flag:
 | `hostedZoneId` | **Yes** | - | Route 53 hosted zone ID for DNS records |
 | `vpnCidr` | No | `10.100.0.0/16` | CIDR range for VPN access to admin ALB |
 | `dbAutoInit` | No | `true` | Enable database schema auto-initialization |
+| `skipTaskDeployment` | No | `false` | Skip ECS task deployment (use for initial deploy when ECR is empty) |
 
 ### Example Deploy Command
 
+**Initial deployment** (ECR empty, skip task deployment):
 ```bash
 cdk deploy \
   -c appName=fhir4java \
@@ -47,8 +49,18 @@ cdk deploy \
   -c domainName=dev.openfhir.example.com \
   -c certificateArn=arn:aws:acm:us-east-1:123456789012:certificate/abc123 \
   -c hostedZoneId=Z1234567890ABC \
-  -c vpnCidr=10.100.0.0/16 \
-  -c dbAutoInit=true
+  -c skipTaskDeployment=true
+```
+
+**Subsequent deployments** (after image is in ECR):
+```bash
+cdk deploy \
+  -c appName=fhir4java \
+  -c environment=dev \
+  -c domainName=dev.openfhir.example.com \
+  -c certificateArn=arn:aws:acm:us-east-1:123456789012:certificate/abc123 \
+  -c hostedZoneId=Z1234567890ABC \
+  -c dbAutoInit=false
 ```
 
 ## Deployment Workflow
@@ -57,23 +69,24 @@ cdk deploy \
 
 `cdk deploy` only deploys **infrastructure** (VPC, RDS, ECS services, etc.). It does **not** compile or package your Java application.
 
-### Full Deployment Steps
+### Full Deployment Steps (First Time)
 
 ```bash
-# 1. Build and package the Java application
-cd /path/to/fhir4java-agents
-./mvnw clean package -DskipTests
-
-# 2. Build Docker image
-docker compose build
-
-# 3. Deploy infrastructure (creates ECR repository)
+# 1. Deploy infrastructure with skipTaskDeployment=true (ECR is empty)
 cd infrastructure
 npm install
 cdk deploy -c appName=fhir4java -c environment=dev \
   -c domainName=dev.example.com \
   -c certificateArn=arn:aws:acm:... \
-  -c hostedZoneId=Z...
+  -c hostedZoneId=Z... \
+  -c skipTaskDeployment=true
+
+# 2. Build and package the Java application
+cd ..
+./mvnw clean package -DskipTests
+
+# 3. Build Docker image
+docker compose build
 
 # 4. Tag and push Docker image to ECR
 # Get ECR repository URI from stack outputs
@@ -89,11 +102,12 @@ aws ecr get-login-password --region <region> | docker login --username AWS --pas
 docker tag fhir4java-agents-fhir-server:latest $ECR_URI:latest
 docker push $ECR_URI:latest
 
-# 5. Force ECS to pull the new image
-aws ecs update-service \
-  --cluster fhir4java-dev-cluster \
-  --service fhir4java-dev-fhir-api \
-  --force-new-deployment
+# 5. Deploy again to start ECS tasks (now that image is in ECR)
+cd infrastructure
+cdk deploy -c appName=fhir4java -c environment=dev \
+  -c domainName=dev.example.com \
+  -c certificateArn=arn:aws:acm:... \
+  -c hostedZoneId=Z...
 ```
 
 ### Updating an Existing Stack

@@ -25,6 +25,8 @@ export interface Fhir4JavaInfrastructureStackProps extends cdk.StackProps {
   hostedZoneId: string;
   /** Enable database auto-initialization on first deployment. Default: true */
   dbAutoInit?: boolean;
+  /** Skip ECS task deployment (set desiredCount to 0). Use for initial deployment when ECR is empty. */
+  skipTaskDeployment?: boolean;
 }
 
 export class Fhir4JavaInfrastructureStack extends cdk.Stack {
@@ -116,6 +118,7 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
       cacheSecretArn: cacheConstruct.secret.secretArn,
       apiGatewayDomain: props.domainName,
       dbAutoInit: props.dbAutoInit ?? true,
+      skipTaskDeployment: props.skipTaskDeployment ?? false,
       services: [
         {
           name: 'fhir-api',
