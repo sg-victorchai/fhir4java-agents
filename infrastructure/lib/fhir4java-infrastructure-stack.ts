@@ -23,6 +23,8 @@ export interface Fhir4JavaInfrastructureStackProps extends cdk.StackProps {
   certificateArn: string;
   vpnCidr: string;
   hostedZoneId: string;
+  /** Enable database auto-initialization on first deployment. Default: true */
+  dbAutoInit?: boolean;
 }
 
 export class Fhir4JavaInfrastructureStack extends cdk.Stack {
@@ -99,7 +101,8 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
     const ecrRepository = new ecr.Repository(this, 'EcrRepository', {
       repositoryName: `${resourcePrefix}-app`,
       imageScanOnPush: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      emptyOnDelete: true,
     });
 
     // ECS Services
@@ -109,9 +112,10 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
       ecrRepository,
       rdsEndpoint: rdsConstruct.instance.dbInstanceEndpointAddress,
       rdsSecretName: `${resourcePrefix}/rds`,
-      cacheEndpoint: cacheConstruct.cluster.attrPrimaryEndPointAddress,
+      cacheEndpoint: cacheConstruct.cluster.attrConfigurationEndPointAddress,
       cacheSecretArn: cacheConstruct.secret.secretArn,
       apiGatewayDomain: props.domainName,
+      dbAutoInit: props.dbAutoInit ?? true,
       services: [
         {
           name: 'fhir-api',
@@ -192,7 +196,7 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
     // Outputs
     new cdk.CfnOutput(this, 'VpcId', { value: vpcConstruct.vpc.vpcId });
     new cdk.CfnOutput(this, 'RdsEndpoint', { value: rdsConstruct.instance.dbInstanceEndpointAddress });
-    new cdk.CfnOutput(this, 'CacheEndpoint', { value: cacheConstruct.cluster.attrPrimaryEndPointAddress });
+    new cdk.CfnOutput(this, 'CacheEndpoint', { value: cacheConstruct.cluster.attrConfigurationEndPointAddress });
     new cdk.CfnOutput(this, 'PublicAlbDns', { value: publicAlbConstruct.alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'ApiGatewayEndpoint', { value: apiGatewayConstruct.httpApi.apiEndpoint });
     new cdk.CfnOutput(this, 'EcrRepositoryUri', { value: ecrRepository.repositoryUri });

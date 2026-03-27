@@ -29,6 +29,8 @@ export interface EcsConstructProps {
   cacheEndpoint: string;
   cacheSecretArn: string;
   apiGatewayDomain: string;
+  /** Enable database auto-initialization on first deployment. Set to false after schema is created. */
+  dbAutoInit?: boolean;
 }
 
 export class EcsConstruct extends Construct {
@@ -113,6 +115,8 @@ export class EcsConstruct extends Construct {
           ELASTICACHE_PORT: '6379',
           API_GATEWAY_DOMAIN: props.apiGatewayDomain,
           AWS_REGION: cdk.Stack.of(this).region,
+          // Only fhir-api service handles DB initialization to avoid race conditions
+          DB_AUTO_INIT: (svc.name === 'fhir-api' && props.dbAutoInit) ? 'true' : 'false',
         },
         secrets: {
           ELASTICACHE_AUTH_TOKEN: ecs.Secret.fromSecretsManager(

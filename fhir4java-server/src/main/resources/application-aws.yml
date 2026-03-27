@@ -48,6 +48,12 @@ fhir4java:
   server:
     base-url: https://${API_GATEWAY_DOMAIN}/fhir
 
+  db:
+    # Set to true for first deployment to initialize schema, then set to false
+    # Can be controlled via environment variable: DB_AUTO_INIT=true
+    auto-init: ${DB_AUTO_INIT:false}
+    init-script: db/init/01-init-schema.sql
+
   endpoints:
     enabled: ${FHIR4JAVA_ENDPOINTS_ENABLED:all}
 

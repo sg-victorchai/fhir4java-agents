@@ -15,6 +15,9 @@ const certificateArn = app.node.tryGetContext('certificateArn');
 const vpnCidr = app.node.tryGetContext('vpnCidr') || '10.100.0.0/16';
 const hostedZoneId = app.node.tryGetContext('hostedZoneId');
 
+// Database initialization (set to true for first deployment, false afterwards)
+const dbAutoInit = app.node.tryGetContext('dbAutoInit') !== 'false';
+
 const stackName = `${appName}-${environment}-stack`;
 
 new Fhir4JavaInfrastructureStack(app, stackName, {
@@ -25,6 +28,7 @@ new Fhir4JavaInfrastructureStack(app, stackName, {
   certificateArn,
   vpnCidr,
   hostedZoneId,
+  dbAutoInit,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
