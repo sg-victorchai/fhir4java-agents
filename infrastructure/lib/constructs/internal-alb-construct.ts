@@ -42,7 +42,7 @@ export class InternalAlbConstruct extends Construct {
       protocol: elbv2.ApplicationProtocol.HTTP,
       port: 8080,
       healthCheck: {
-        path: '/fhir/r5/metadata',
+        path: '/actuator/health/readiness',
         healthyHttpCodes: '200',
         interval: cdk.Duration.seconds(30),
       },

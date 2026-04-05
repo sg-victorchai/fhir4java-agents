@@ -62,7 +62,7 @@ export class NlbConstruct extends Construct {
       healthCheckEnabled: true,
       healthCheckProtocol: 'HTTP',
       healthCheckPort: '80',
-      healthCheckPath: '/actuator/health',
+      healthCheckPath: '/actuator/health/ping',
       healthCheckIntervalSeconds: 30,
       healthCheckTimeoutSeconds: 6,
       healthyThresholdCount: 2,
