@@ -51,26 +51,35 @@ export class NlbConstruct extends Construct {
     });
 
     // Target group pointing to Internal ALB
-    // Using TCP health check for basic connectivity verification
-    const targetGroup = new elbv2.NetworkTargetGroup(this, 'AlbTargetGroup', {
-      targetGroupName: `${prefix}-nlb-alb-tg`,
-      vpc: props.vpc,
-      targetType: elbv2.TargetType.ALB,
+    // Note: CloudFormation requires HTTP/HTTPS health check for ALB target type (TCP not supported)
+    // Using /fhir/r5/metadata as a lightweight health check endpoint
+    const cfnTargetGroup = new elbv2.CfnTargetGroup(this, 'AlbTargetGroup', {
+      name: `${prefix}-nlb-alb-tg`,
+      vpcId: props.vpc.vpcId,
+      targetType: 'alb',
       port: 80,
-      protocol: elbv2.Protocol.TCP,
-      healthCheck: {
-        enabled: true,
-        protocol: elbv2.Protocol.TCP,
-        port: 'traffic-port',
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(10),
-        healthyThresholdCount: 2,
-        unhealthyThresholdCount: 2,
+      protocol: 'TCP',
+      healthCheckEnabled: true,
+      healthCheckProtocol: 'HTTP',
+      healthCheckPort: '80',
+      healthCheckPath: '/fhir/r5/metadata',
+      healthCheckIntervalSeconds: 30,
+      healthCheckTimeoutSeconds: 6,
+      healthyThresholdCount: 2,
+      unhealthyThresholdCount: 2,
+      matcher: {
+        httpCode: '200',
       },
+      targets: [{
+        id: props.internalAlb.loadBalancerArn,
+        port: 80,
+      }],
     });
 
-    // Use CDK's built-in AlbTarget for proper ALB target registration
-    targetGroup.addTarget(new elbv2_targets.AlbTarget(props.internalAlb, 80));
+    // Create L2 wrapper for the target group to use with listener
+    const targetGroup = elbv2.NetworkTargetGroup.fromTargetGroupAttributes(this, 'AlbTargetGroupL2', {
+      targetGroupArn: cfnTargetGroup.ref,
+    });
 
     this.listener = this.nlb.addListener('TcpListener', {
       port: 80,
