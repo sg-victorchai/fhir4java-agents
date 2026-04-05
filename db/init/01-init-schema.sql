@@ -901,50 +901,12 @@ Usage: SELECT create_fhir_schema(''my_new_schema'');';
 -- ============================================================================
 -- PART 10: PERMISSIONS
 -- ============================================================================
+-- NOTE: This script runs as the application user (e.g., fhir4java_dev_app).
+-- All created objects are owned by CURRENT_USER, so explicit grants are not needed.
+-- The search path is set for the current session.
 
--- Grant permissions on all schemas
-GRANT ALL PRIVILEGES ON SCHEMA fhir TO fhir4java;
-GRANT ALL PRIVILEGES ON SCHEMA careplan TO fhir4java;
-GRANT ALL PRIVILEGES ON SCHEMA masterdata TO fhir4java;
-GRANT ALL PRIVILEGES ON SCHEMA patientdata TO fhir4java;
-GRANT ALL PRIVILEGES ON SCHEMA operationdata TO fhir4java;
-GRANT ALL PRIVILEGES ON SCHEMA public TO fhir4java;
-
--- Grant permissions on all existing tables
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA fhir TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA careplan TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA masterdata TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA patientdata TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA operationdata TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO fhir4java;
-
--- Grant permissions on all sequences
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA fhir TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA careplan TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA masterdata TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA patientdata TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA operationdata TO fhir4java;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO fhir4java;
-
--- Grant default privileges for future objects
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL PRIVILEGES ON TABLES TO fhir4java;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fhir GRANT EXECUTE ON FUNCTIONS TO fhir4java;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA careplan GRANT ALL PRIVILEGES ON TABLES TO fhir4java;
-ALTER DEFAULT PRIVILEGES IN SCHEMA careplan GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA masterdata GRANT ALL PRIVILEGES ON TABLES TO fhir4java;
-ALTER DEFAULT PRIVILEGES IN SCHEMA masterdata GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA patientdata GRANT ALL PRIVILEGES ON TABLES TO fhir4java;
-ALTER DEFAULT PRIVILEGES IN SCHEMA patientdata GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA operationdata GRANT ALL PRIVILEGES ON TABLES TO fhir4java;
-ALTER DEFAULT PRIVILEGES IN SCHEMA operationdata GRANT ALL PRIVILEGES ON SEQUENCES TO fhir4java;
-
--- Set default search path for the application user
-ALTER ROLE fhir4java SET search_path TO fhir, public;
+-- Set search path for current user session
+SET search_path TO fhir, public;
 
 -- ============================================================================
 -- PART 11: SCHEMA DOCUMENTATION

@@ -14,6 +14,7 @@ import software.amazon.awssdk.services.rds.RdsUtilities;
 import software.amazon.awssdk.services.rds.model.GenerateAuthenticationTokenRequest;
 
 import javax.sql.DataSource;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -31,7 +32,7 @@ public class RdsIamAuthConfig {
     @Value("${RDS_PORT:5432}")
     private int rdsPort;
 
-    @Value("${RDS_USERNAME:fhir4java_app}")
+    @Value("${RDS_USERNAME}")
     private String rdsUsername;
 
     @Value("${AWS_REGION:us-east-1}")
@@ -39,8 +40,18 @@ public class RdsIamAuthConfig {
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
+    /**
+     * Creates the DataSource with RDS IAM authentication.
+     * The Optional<DatabaseBootstrapConfig> parameter ensures that if the bootstrap config exists,
+     * it will be fully initialized (including @PostConstruct) before this DataSource is created.
+     */
     @Bean
-    public DataSource dataSource(DataSourceProperties properties) {
+    public DataSource dataSource(DataSourceProperties properties,
+                                  Optional<DatabaseBootstrapConfig> bootstrapConfig) {
+        // Log whether bootstrap ran
+        bootstrapConfig.ifPresent(config ->
+            log.info("DatabaseBootstrapConfig was initialized before DataSource creation"));
+
         HikariDataSource dataSource = properties.initializeDataSourceBuilder()
                 .type(HikariDataSource.class)
                 .build();

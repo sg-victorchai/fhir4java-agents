@@ -9,10 +9,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.util.StreamUtils;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 
 /**
  * Database initialization configuration for AWS deployments.
@@ -22,12 +25,12 @@ import javax.sql.DataSource;
  *
  * The initialization only runs when:
  * 1. The 'aws' profile is active
- * 2. fhir4java.db.auto-init is set to true
+ * 2. DB_AUTO_INIT is set to true
  * 3. The 'fhir' schema does not exist OR the 'fhir_resource' table does not exist
  */
 @Configuration
 @Profile("aws")
-@ConditionalOnProperty(name = "fhir4java.db.auto-init", havingValue = "true")
+@ConditionalOnProperty(name = "DB_AUTO_INIT", havingValue = "true")
 public class DatabaseInitializationConfig {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseInitializationConfig.class);
@@ -38,11 +41,13 @@ public class DatabaseInitializationConfig {
     /**
      * Custom Flyway migration strategy that runs the init script before Flyway migrations
      * if the database schema has not been initialized.
+     *
+     * Uses raw JDBC instead of JdbcTemplate to avoid circular dependency with Flyway.
      */
     @Bean
-    public FlywayMigrationStrategy flywayMigrationStrategy(DataSource dataSource, JdbcTemplate jdbcTemplate) {
+    public FlywayMigrationStrategy flywayMigrationStrategy(DataSource dataSource) {
         return flyway -> {
-            if (shouldInitializeSchema(jdbcTemplate)) {
+            if (shouldInitializeSchema(dataSource)) {
                 initializeSchema(dataSource);
             }
             // Run Flyway migrations after schema initialization
@@ -50,28 +55,30 @@ public class DatabaseInitializationConfig {
         };
     }
 
-    private boolean shouldInitializeSchema(JdbcTemplate jdbcTemplate) {
-        try {
-            // Check if the 'fhir' schema exists
-            Boolean schemaExists = jdbcTemplate.queryForObject(
-                "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'fhir')",
-                Boolean.class
-            );
+    /**
+     * Check if schema initialization is required using raw JDBC.
+     * This avoids circular dependency with JdbcTemplate/Flyway.
+     */
+    private boolean shouldInitializeSchema(DataSource dataSource) {
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
 
-            if (!Boolean.TRUE.equals(schemaExists)) {
-                log.info("Schema 'fhir' does not exist, initialization required");
-                return true;
+            // Check if the 'fhir' schema exists
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'fhir')")) {
+                if (rs.next() && !rs.getBoolean(1)) {
+                    log.info("Schema 'fhir' does not exist, initialization required");
+                    return true;
+                }
             }
 
             // Check if the main table exists (indicates schema was fully initialized)
-            Boolean tableExists = jdbcTemplate.queryForObject(
-                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'fhir' AND table_name = 'fhir_resource')",
-                Boolean.class
-            );
-
-            if (!Boolean.TRUE.equals(tableExists)) {
-                log.info("Table 'fhir.fhir_resource' does not exist, initialization required");
-                return true;
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'fhir' AND table_name = 'fhir_resource')")) {
+                if (rs.next() && !rs.getBoolean(1)) {
+                    log.info("Table 'fhir.fhir_resource' does not exist, initialization required");
+                    return true;
+                }
             }
 
             log.info("Database schema already initialized, skipping initialization");
@@ -83,17 +90,34 @@ public class DatabaseInitializationConfig {
         }
     }
 
+    /**
+     * Initialize database schema using raw JDBC.
+     *
+     * Uses direct JDBC execution instead of ResourceDatabasePopulator to properly handle
+     * PostgreSQL PL/pgSQL functions with dollar-quoted strings ($$...$$).
+     * ResourceDatabasePopulator incorrectly splits on semicolons inside function bodies.
+     */
     private void initializeSchema(DataSource dataSource) {
         log.info("Initializing database schema from: {}", initScriptPath);
         try {
-            ResourceDatabasePopulator populator = new ResourceDatabasePopulator();
-            populator.addScript(new ClassPathResource(initScriptPath));
-            populator.setSeparator(";");
-            populator.setContinueOnError(false);
-            populator.execute(dataSource);
-            log.info("Database schema initialization completed successfully");
+            // Read the entire SQL script
+            ClassPathResource resource = new ClassPathResource(initScriptPath);
+            String sqlScript = StreamUtils.copyToString(resource.getInputStream(), StandardCharsets.UTF_8);
+
+            log.info("Read SQL script: {}, length: {} characters", initScriptPath, sqlScript.length());
+
+            // Execute the script using JDBC - PostgreSQL handles the parsing correctly
+            try (Connection conn = dataSource.getConnection();
+                 Statement stmt = conn.createStatement()) {
+
+                // PostgreSQL can execute multiple statements in one call
+                // This properly handles dollar-quoted PL/pgSQL functions
+                stmt.execute(sqlScript);
+
+                log.info("Database schema initialization completed successfully");
+            }
         } catch (Exception e) {
-            log.error("Failed to initialize database schema", e);
+            log.error("Failed to initialize database schema: {}", e.getMessage());
             throw new RuntimeException("Database schema initialization failed", e);
         }
     }

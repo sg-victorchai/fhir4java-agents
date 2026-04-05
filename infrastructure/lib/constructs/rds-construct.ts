@@ -31,10 +31,13 @@ export class RdsConstruct extends Construct {
       allowAllOutbound: false,
     });
 
+    // Master user for RDS administration (separate from IAM app user)
+    // Master user: fhir4java_dev_admin (password auth)
+    // IAM app user: fhir4java_dev_app (IAM auth, created by bootstrap)
     this.secret = new secretsmanager.Secret(this, 'RdsSecret', {
       secretName: `${prefix}/rds`,
       generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: `${prefix.replace(/-/g, '_')}_app` }),
+        secretStringTemplate: JSON.stringify({ username: `${prefix.replace(/-/g, '_')}_admin` }),
         generateStringKey: 'password',
         excludeCharacters: '/@"\\\'',
         passwordLength: 32,

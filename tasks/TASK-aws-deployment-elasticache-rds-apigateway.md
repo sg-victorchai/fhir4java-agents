@@ -107,7 +107,7 @@ The implementation maintains backward compatibility with local development using
 
 ## 2. Target Architecture
 
-### 2.1 Architecture Diagram
+### 2.1 Architecture Diagram (Simplified)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
@@ -116,8 +116,7 @@ The implementation maintains backward compatibility with local development using
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │                              Route 53                                            │ │
 │  │  ┌─────────────────────────────────────────────────────────────────────────┐    │ │
-│  │  │  fhir.example.com ────────────────────► Public ALB                      │    │ │
-│  │  │  fhir-admin.internal.example.com ─────► Internal ALB (Admin)           │    │ │
+│  │  │  fhir4java-dev.example.com ───────────► Public ALB                      │    │ │
 │  │  └─────────────────────────────────────────────────────────────────────────┘    │ │
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 │                                         │                                             │
@@ -147,10 +146,8 @@ The implementation maintains backward compatibility with local development using
 │  │                                      │                                           │ │
 │  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
 │  │  │                    Private API Gateway (HTTP API)                          │  │ │
-│  │  │                    Custom Domain: fhir.example.com                         │  │ │
-│  │  │                    Routes:                                                 │  │ │
-│  │  │                      /fhir/{version}/metadata → fhir-metadata service      │  │ │
-│  │  │                      /fhir/{proxy+}          → fhir-api service            │  │ │
+│  │  │                    Custom Domain: fhir4java-dev.example.com                │  │ │
+│  │  │                    Routes: ALL → Internal ALB                              │  │ │
 │  │  │                    Features: Throttling, Request Validation, API Keys      │  │ │
 │  │  │                    VPC Link Target: NLB                                    │  │ │
 │  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
@@ -158,41 +155,30 @@ The implementation maintains backward compatibility with local development using
 │  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
 │  │  │                         NLB (Internal)                                     │  │ │
 │  │  │                         Static IPs, Cross-zone LB enabled                  │  │ │
-│  │  │                         Target: ALB Ingress IPs                            │  │ │
+│  │  │                         Target: Internal ALB                               │  │ │
 │  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
 │  │                                      │                                           │ │
 │  │  ┌───────────────────────────────────▼───────────────────────────────────────┐  │ │
-│  │  │                    ALB Ingress Controller (Internal ALB)                   │  │ │
-│  │  │                    Path-based routing to services:                         │  │ │
-│  │  │                      /fhir/*/metadata → fhir-metadata (1-2 tasks)          │  │ │
-│  │  │                      /fhir/*          → fhir-api (2-10 tasks)              │  │ │
+│  │  │                    Internal ALB (Single Target Group)                      │  │ │
+│  │  │                    All traffic → ecs-tg → ECS Service                      │  │ │
+│  │  │                    Health Check: /actuator/health                          │  │ │
 │  │  └───────────────────────────────────┬───────────────────────────────────────┘  │ │
 │  │                                      │                                           │ │
-│  │          ┌───────────────────────────┼───────────────────────────────┐          │ │
-│  │          │                           │                               │          │ │
-│  │          ▼                           ▼                               ▼          │ │
-│  │  ┌──────────────┐           ┌──────────────┐                ┌──────────────┐   │ │
-│  │  │  fhir-api    │           │fhir-metadata │                │fhir-actuator │   │ │
-│  │  │  (2-10)      │           │   (1-2)      │                │    (1)       │   │ │
-│  │  │  /fhir/*     │           │  /metadata   │                │  /actuator/* │   │ │
-│  │  └──────────────┘           └──────────────┘                └──────────────┘   │ │
-│  │                                                                                 │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────────┐  │ │
-│  │  │                    Internal ALB (Admin/Ops - VPN Only)                    │  │ │
-│  │  │                    fhir-admin.internal.example.com                        │  │ │
-│  │  │                    Routes: /actuator/*, /api/admin/*                      │  │ │
-│  │  └───────────────────────────────────┬──────────────────────────────────────┘  │ │
-│  │                                      │                                          │ │
-│  │                               ┌──────┴──────┐                                   │ │
-│  │                               ▼             ▼                                   │ │
-│  │                        ┌────────────┐ ┌────────────┐                           │ │
-│  │                        │fhir-admin  │ │fhir-actuator│                          │ │
-│  │                        │   (1)      │ │   (1)       │                          │ │
-│  │                        │/api/admin/*│ │ /actuator/* │                          │ │
-│  │                        └────────────┘ └─────────────┘                          │ │
-│  │                                                                                 │ │
-│  │                    ECS Fargate or EKS Fargate (Configurable)                   │ │
-│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│  │                                      ▼                                           │ │
+│  │                        ┌─────────────────────────────┐                          │ │
+│  │                        │       fhir-api Service      │                          │ │
+│  │                        │         (2-10 tasks)        │                          │ │
+│  │                        │   4 vCPU, 8 GB Memory each  │                          │ │
+│  │                        │                             │                          │ │
+│  │                        │   Endpoints Enabled:        │                          │ │
+│  │                        │   • /fhir/*     (FHIR API)  │                          │ │
+│  │                        │   • /fhir/*/metadata        │                          │ │
+│  │                        │   • /actuator/* (Health)    │                          │ │
+│  │                        │   • /api/admin/* (Admin)    │                          │ │
+│  │                        └─────────────────────────────┘                          │ │
+│  │                                                                                  │ │
+│  │                    ECS Fargate (ARM64)                                          │ │
+│  └──────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │                           Database Subnets (Isolated)                           │ │
@@ -200,8 +186,8 @@ The implementation maintains backward compatibility with local development using
 │  │  ┌──────────────────────────────┐    ┌──────────────────────────────┐          │ │
 │  │  │      RDS PostgreSQL          │    │      Amazon ElastiCache      │          │ │
 │  │  │      (Multi-AZ)              │    │      (Redis/Valkey Cluster)  │          │ │
-│  │  │      db.r6g.large            │    │      cache.r6g.large         │          │ │
-│  │  │      Auth: IAM or Secrets    │    │      2 shards, 1 replica     │          │ │
+│  │  │      db.r7g.large            │    │      cache.r6g.large         │          │ │
+│  │  │      Auth: IAM               │    │      2 shards, 1 replica     │          │ │
 │  │  └──────────────────────────────┘    └──────────────────────────────┘          │ │
 │  │                                                                                  │ │
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
@@ -213,33 +199,53 @@ The implementation maintains backward compatibility with local development using
 
 | Component | AWS Service | Configuration |
 |-----------|-------------|---------------|
+| DNS | Amazon Route 53 | A Record (ALIAS) → Public ALB |
 | Edge Protection | Public ALB + AWS WAF | Internet-facing, OWASP rules |
 | API Gateway | Amazon API Gateway (Private HTTP API) | Custom domain, VPC Link to NLB |
-| Load Balancer (API GW) | NLB (Internal) | Static IPs, VPC Link target |
-| Load Balancer (Services) | ALB Ingress (Internal) | Path-based routing |
-| Compute | ECS Fargate or EKS Fargate | Toggle via CDK parameter |
-| Database | Amazon RDS PostgreSQL | Multi-AZ, IAM auth or Secrets Manager |
+| Load Balancer (VPC Link) | NLB (Internal) | Static IPs, targets Internal ALB |
+| Load Balancer (ECS) | Internal ALB | Single target group (ecs-tg) |
+| Compute | ECS Fargate (ARM64) | Single service, 4 vCPU, 8 GB |
+| Database | Amazon RDS PostgreSQL | Multi-AZ, IAM authentication |
 | Cache | Amazon ElastiCache (Valkey/Redis) | Cluster Mode, r6g.large |
-| Secrets | AWS Secrets Manager | Auto-rotation enabled |
-| DNS | Amazon Route 53 | Custom domains |
-| Monitoring | CloudWatch, X-Ray | Full observability |
+| Secrets | AWS Secrets Manager | RDS master credentials, cache auth token |
+| Monitoring | CloudWatch | Container Insights, logs, metrics |
 
-### 2.3 Multi-Service Architecture
+### 2.3 Simplified Single-Service Architecture
 
-Single Docker image deployed as 4 isolated services with endpoint filtering:
+**Architecture Change (April 2026):** Consolidated from 4 separate ECS services to a single service for simplicity and cost optimization.
 
-| Service | Endpoints | Network Access | Scaling | Purpose |
-|---------|-----------|----------------|---------|---------|
-| `fhir-api` | `/fhir/*` | Public (via API GW) | 2-10 tasks | Main FHIR CRUD operations |
-| `fhir-metadata` | `/fhir/*/metadata` | Public (via API GW) | 1-2 tasks | CapabilityStatement |
-| `fhir-actuator` | `/actuator/*` | Private (VPN only) | 1 task | Health, metrics, prometheus |
-| `fhir-admin` | `/api/admin/*` | Private (VPN only) | 1 task | Admin operations |
+Single Docker image deployed as **one unified service** handling all endpoints:
 
-**Benefits:**
-- **Security isolation**: Admin/actuator never exposed publicly
-- **Independent scaling**: Scale FHIR API separately from metadata
-- **Blast radius reduction**: Service failure doesn't affect others
-- **Single codebase**: Same image, different runtime configurations
+| Service | Endpoints Enabled | Scaling | Resources | Purpose |
+|---------|-------------------|---------|-----------|---------|
+| `fhir-api` | `fhir,metadata,actuator,admin` | 2-10 tasks | 4 vCPU, 8 GB | All FHIR operations |
+
+**Endpoint Routing:**
+
+| Path Pattern | Handler | Description |
+|--------------|---------|-------------|
+| `/fhir/*` | FhirResourceController | FHIR CRUD operations |
+| `/fhir/*/metadata` | MetadataController | CapabilityStatement |
+| `/actuator/*` | Spring Actuator | Health checks, metrics |
+| `/api/admin/*` | AdminController | Admin operations |
+
+**Benefits of Simplified Architecture:**
+- **Reduced complexity**: Single service, single target group, single ALB
+- **Lower cost**: ~60% reduction in compute costs (one service vs four)
+- **Easier operations**: Single deployment unit, simpler monitoring
+- **Simplified networking**: No path-based routing required at ALB level
+- **Faster deployments**: Only one service to update
+
+**Infrastructure Removed:**
+- ~~Admin ALB~~ (no longer needed)
+- ~~Multiple target groups~~ (fhir-api-tg, fhir-meta-tg, actuator-tg, admin-tg)
+- ~~Path-based routing~~ at Internal ALB level
+
+**Current Target Group:**
+
+| Target Group | Port | Health Check | Target |
+|--------------|------|--------------|--------|
+| `{prefix}-ecs-tg` | 8080 | `/actuator/health` | ECS Service (IP) |
 
 ### 2.4 Compute Platform Toggle (ECS vs EKS)
 
@@ -291,16 +297,19 @@ VPC:
 
 #### 3.1.2 Security Groups
 
+> **Updated April 2026:** Simplified security groups after removing Admin ALB.
+
 | Security Group | Inbound Rules | Outbound Rules |
 |----------------|---------------|----------------|
 | `sg-public-alb` | HTTPS (443) from Internet | HTTPS (443) to `sg-vpc-endpoint` |
 | `sg-vpc-endpoint` | HTTPS (443) from `sg-public-alb` | All to VPC |
 | `sg-nlb` | TCP (80/443) from API Gateway | TCP (80/443) to `sg-internal-alb` |
-| `sg-internal-alb` | HTTP (80) from `sg-nlb`, `sg-admin-alb` | HTTP (8080) to `sg-ecs-tasks` |
-| `sg-admin-alb` | HTTPS (443) from VPN CIDR only | HTTP (8080) to `sg-ecs-tasks` |
+| `sg-internal-alb` | HTTP (80) from `sg-nlb` | HTTP (8080) to `sg-ecs-tasks` |
 | `sg-ecs-tasks` | HTTP (8080) from `sg-internal-alb` | All to VPC |
 | `sg-rds` | PostgreSQL (5432) from `sg-ecs-tasks` | None |
 | `sg-elasticache` | Redis (6379) from `sg-ecs-tasks` | None |
+
+**Removed:** `sg-admin-alb` (Admin ALB no longer exists)
 
 ### 3.2 Amazon RDS PostgreSQL Setup
 
@@ -765,7 +774,9 @@ NLB:
       target: internal-alb-arn
 ```
 
-#### 3.5.3 Internal ALB (Service Routing)
+#### 3.5.3 Internal ALB (Simplified - Single Target Group)
+
+> **Updated April 2026:** Simplified from multiple target groups with path-based routing to a single target group forwarding all traffic to the ECS service.
 
 ```yaml
 InternalALB:
@@ -776,86 +787,38 @@ InternalALB:
   listeners:
     - port: 80
       protocol: HTTP
-      rules:
-        - priority: 10
-          conditions:
-            - pathPattern: /fhir/*/metadata
-          action:
-            type: forward
-            targetGroup: fhir-metadata-tg
-
-        - priority: 20
-          conditions:
-            - pathPattern: /fhir/*
-          action:
-            type: forward
-            targetGroup: fhir-api-tg
-
-        - priority: 100
-          conditions:
-            - pathPattern: /*
-          action:
-            type: fixed-response
-            statusCode: 404
+      defaultAction:
+        type: forward
+        targetGroup: ecs-tg  # Single target group for all traffic
 
   targetGroups:
-    - name: fhir-api-tg
+    - name: ecs-tg
       targetType: ip
       protocol: HTTP
       port: 8080
       healthCheck:
-        path: /actuator/health/liveness
-
-    - name: fhir-metadata-tg
-      targetType: ip
-      protocol: HTTP
-      port: 8080
-      healthCheck:
-        path: /actuator/health/liveness
+        path: /actuator/health
+        healthyHttpCodes: "200"
+        interval: 30
 ```
 
-#### 3.5.4 Admin ALB (VPN Only)
+**Key Changes from Previous Architecture:**
+- No path-based routing at ALB level (all traffic goes to single target group)
+- Single target group (`ecs-tg`) instead of multiple (`fhir-api-tg`, `fhir-meta-tg`)
+- Health check path updated to `/actuator/health`
 
-```yaml
-AdminALB:
-  scheme: internal
-  securityGroups: [sg-admin-alb]
-  subnets: [private-subnet-1, private-subnet-2, private-subnet-3]
+#### 3.5.4 Admin ALB - REMOVED
 
-  listeners:
-    - port: 443
-      protocol: HTTPS
-      certificate: arn:aws:acm:...:certificate/xxx
-      rules:
-        - priority: 10
-          conditions:
-            - pathPattern: /actuator/*
-          action:
-            type: forward
-            targetGroup: fhir-actuator-tg
+> **Removed April 2026:** The Admin ALB has been removed in the simplified architecture. All endpoints (including `/actuator/*` and `/api/admin/*`) are now served by the single `fhir-api` ECS service through the Internal ALB.
 
-        - priority: 20
-          conditions:
-            - pathPattern: /api/admin/*
-          action:
-            type: forward
-            targetGroup: fhir-admin-tg
+~~Previously, the Admin ALB provided VPN-only access to admin and actuator endpoints. This has been consolidated into the main service.~~
 
-  targetGroups:
-    - name: fhir-actuator-tg
-      targetType: ip
-      protocol: HTTP
-      port: 8080
-      healthCheck:
-        path: /actuator/health/liveness
-
-    - name: fhir-admin-tg
-      targetType: ip
-      protocol: HTTP
-      port: 8080
-      healthCheck:
-        path: /actuator/health/liveness
-```
+**Migration Notes:**
+- Admin/actuator endpoints are now accessible via the main API path
+- For VPN-only access to sensitive endpoints, consider:
+  - API Gateway resource policies to restrict access
+  - Security group rules limiting source IPs
+  - Application-level authentication/authorization
 
 ### 3.6 Infrastructure as Code (AWS CDK)
 

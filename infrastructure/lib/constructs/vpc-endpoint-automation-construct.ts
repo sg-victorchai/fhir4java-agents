@@ -54,9 +54,15 @@ export class VpcEndpointAutomationConstruct extends Construct {
       resources: ['*'],
     }));
 
+    // DescribeTargetHealth requires * as resource (doesn't support resource-level permissions)
+    this.lambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['elasticloadbalancing:DescribeTargetHealth'],
+      resources: ['*'],
+    }));
+
+    // RegisterTargets and DeregisterTargets can be scoped to specific target group
     this.lambda.addToRolePolicy(new iam.PolicyStatement({
       actions: [
-        'elasticloadbalancing:DescribeTargetHealth',
         'elasticloadbalancing:RegisterTargets',
         'elasticloadbalancing:DeregisterTargets',
       ],
@@ -77,16 +83,25 @@ export class VpcEndpointAutomationConstruct extends Construct {
 
     rule.addTarget(new targets.LambdaFunction(this.lambda));
 
-    // Initialize targets on stack deployment
+    // Initialize targets on stack deployment (runs on create and every update)
     new cr.AwsCustomResource(this, 'InitTargets', {
       onCreate: {
         service: 'Lambda',
         action: 'invoke',
         parameters: {
           FunctionName: this.lambda.functionName,
-          Payload: JSON.stringify({ init: true }),
+          Payload: JSON.stringify({ trigger: 'onCreate' }),
         },
-        physicalResourceId: cr.PhysicalResourceId.of('InitTargets'),
+        physicalResourceId: cr.PhysicalResourceId.of(Date.now().toString()),
+      },
+      onUpdate: {
+        service: 'Lambda',
+        action: 'invoke',
+        parameters: {
+          FunctionName: this.lambda.functionName,
+          Payload: JSON.stringify({ trigger: 'onUpdate' }),
+        },
+        physicalResourceId: cr.PhysicalResourceId.of(Date.now().toString()),
       },
       policy: cr.AwsCustomResourcePolicy.fromStatements([
         new iam.PolicyStatement({
