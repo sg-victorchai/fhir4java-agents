@@ -29,11 +29,16 @@ export class NlbConstruct extends Construct {
       allowAllOutbound: false,
     });
 
-    // Allow inbound HTTP traffic on port 80
+    // Allow inbound HTTP traffic on port 80 from all sources (IPv4 and IPv6)
     this.securityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
       ec2.Port.tcp(80),
-      'Allow HTTP inbound'
+      'Allow HTTP inbound from IPv4'
+    );
+    this.securityGroup.addIngressRule(
+      ec2.Peer.anyIpv6(),
+      ec2.Port.tcp(80),
+      'Allow HTTP inbound from IPv6'
     );
 
     this.nlb = new elbv2.NetworkLoadBalancer(this, 'Nlb', {

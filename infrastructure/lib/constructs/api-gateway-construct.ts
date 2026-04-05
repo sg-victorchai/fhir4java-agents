@@ -12,6 +12,8 @@ export interface ApiGatewayConstructProps {
   nlb: elbv2.INetworkLoadBalancer;
   domainName: string;
   certificateArn: string;
+  /** Environment name used as API Gateway deployment stage (e.g., 'dev', 'prod') */
+  environment: string;
 }
 
 export class ApiGatewayConstruct extends Construct {
@@ -60,8 +62,11 @@ export class ApiGatewayConstruct extends Construct {
           }),
         ],
       }),
+      // Note: PRIVATE REST APIs do not support custom domain names (AWS limitation).
+      // Custom domains only work with REGIONAL or EDGE endpoint types.
+      // The custom domain is handled by Public ALB + Route 53 in this architecture.
       deployOptions: {
-        stageName: 'prod',
+        stageName: props.environment,  // Stage name matches environment (e.g., 'dev', 'prod')
         throttlingBurstLimit: 1000,
         throttlingRateLimit: 500,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,

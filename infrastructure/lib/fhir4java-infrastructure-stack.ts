@@ -76,6 +76,7 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
       nlb: nlbConstruct.nlb,
       domainName: props.domainName,
       certificateArn: props.certificateArn,
+      environment: props.environment,
     });
 
     // Public ALB

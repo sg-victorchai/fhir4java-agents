@@ -143,8 +143,10 @@ This document describes the simplified AWS deployment architecture for FHIR4Java
 | Endpoint Type | PRIVATE |
 | VPC Endpoint | execute-api VPC Endpoint |
 | VPC Link | VPC Link (Legacy) targeting NLB |
-| Stage | prod |
+| Stage | Matches environment (e.g., `dev`, `prod`) |
 | Routes | /fhir/*, /actuator/*, /api/admin/* |
+
+> **Note:** PRIVATE REST APIs do not support custom domain names (AWS limitation). Custom domains only work with REGIONAL or EDGE endpoint types. In this architecture, the custom domain (e.g., `fhir4java-dev.seedideation.com`) is handled by Route 53 + Public ALB with the ACM certificate.
 
 ### ECS Service
 
@@ -181,12 +183,15 @@ This document describes the simplified AWS deployment architecture for FHIR4Java
 │ 0.0.0.0/0            │ Public ALB SG        │ 443   │ HTTPS from internet    │
 │ Public ALB SG        │ VPC Endpoint SG      │ 443   │ To API Gateway         │
 │ 0.0.0.0/0            │ NLB SG               │ 80    │ HTTP from VPC Link     │
-│ NLB SG               │ Internal ALB SG      │ 80    │ NLB to ALB             │
+│ ::/0                 │ NLB SG               │ 80    │ HTTP from VPC Link     │
+│ NLB SG               │ Internal ALB SG      │ 80    │ NLB to ALB (egress)    │
 │ Internal ALB SG      │ ECS Tasks SG         │ 8080  │ ALB to ECS             │
 │ ECS Tasks SG         │ RDS SG               │ 5432  │ ECS to PostgreSQL      │
 │ ECS Tasks SG         │ ElastiCache SG       │ 6379  │ ECS to Redis           │
 └──────────────────────┴──────────────────────┴───────┴────────────────────────┘
 ```
+
+> **Note:** NLB security group has `allowAllOutbound: false` with explicit egress rule to Internal ALB security group on port 80.
 
 ## VPC Endpoints
 
