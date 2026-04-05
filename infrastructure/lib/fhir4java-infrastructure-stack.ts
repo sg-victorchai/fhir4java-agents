@@ -145,7 +145,14 @@ export class Fhir4JavaInfrastructureStack extends cdk.Stack {
       'Allow Redis from ECS tasks'
     );
 
-    // Internal ALB needs to receive traffic from NLB security group
+    // NLB needs to send traffic to Internal ALB on port 80 (egress)
+    nlbConstruct.securityGroup.addEgressRule(
+      internalAlbConstruct.securityGroup,
+      ec2.Port.tcp(80),
+      'Allow HTTP to Internal ALB'
+    );
+
+    // Internal ALB needs to receive traffic from NLB security group (ingress)
     internalAlbConstruct.securityGroup.addIngressRule(
       nlbConstruct.securityGroup,
       ec2.Port.tcp(80),

@@ -21,11 +21,12 @@ export class NlbConstruct extends Construct {
     const prefix = props.resourcePrefix;
 
     // Security group for NLB
+    // Note: allowAllOutbound is false; explicit egress rules are added in the infrastructure stack
     this.securityGroup = new ec2.SecurityGroup(this, 'NlbSecurityGroup', {
       vpc: props.vpc,
       securityGroupName: `${prefix}-nlb-sg`,
       description: `Security group for ${prefix} NLB`,
-      allowAllOutbound: true,
+      allowAllOutbound: false,
     });
 
     // Allow inbound HTTP traffic on port 80
