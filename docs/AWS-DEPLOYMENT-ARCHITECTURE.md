@@ -146,7 +146,17 @@ This document describes the simplified AWS deployment architecture for FHIR4Java
 | Stage | Matches environment (e.g., `dev`, `prod`) |
 | Routes | /fhir/*, /actuator/*, /api/admin/* |
 
-> **Note:** PRIVATE REST APIs do not support custom domain names (AWS limitation). Custom domains only work with REGIONAL or EDGE endpoint types. In this architecture, the custom domain (e.g., `fhir4java-dev.seedideation.com`) is handled by Route 53 + Public ALB with the ACM certificate.
+#### Custom Domain Configuration
+
+| Setting | Value |
+|---------|-------|
+| Domain Name | `{appName}-{environment}.{hostedZoneName}` (e.g., `fhir4java-dev.seedideation.com`) |
+| Endpoint Type | REGIONAL |
+| Security Policy | TLS 1.2 |
+| Certificate | ACM certificate (same as `certificateArn` context parameter) |
+| Base Path Mapping | Maps to REST API deployment stage |
+
+The custom domain is configured with a REGIONAL endpoint type and mapped to the PRIVATE REST API via base path mapping. Route 53 can point to the custom domain's regional domain name.
 
 ### ECS Service
 

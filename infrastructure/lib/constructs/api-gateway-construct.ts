@@ -19,6 +19,7 @@ export interface ApiGatewayConstructProps {
 export class ApiGatewayConstruct extends Construct {
   public readonly restApi: apigateway.RestApi;
   public readonly vpcLink: apigateway.VpcLink;
+  public readonly customDomain: apigateway.DomainName;
 
   constructor(scope: Construct, id: string, props: ApiGatewayConstructProps) {
     super(scope, id);
@@ -62,9 +63,8 @@ export class ApiGatewayConstruct extends Construct {
           }),
         ],
       }),
-      // Note: PRIVATE REST APIs do not support custom domain names (AWS limitation).
-      // Custom domains only work with REGIONAL or EDGE endpoint types.
-      // The custom domain is handled by Public ALB + Route 53 in this architecture.
+      // Custom domain is configured separately with REGIONAL endpoint type
+      // and mapped to this API via BasePathMapping
       deployOptions: {
         stageName: props.environment,  // Stage name matches environment (e.g., 'dev', 'prod')
         throttlingBurstLimit: 1000,
@@ -166,10 +166,41 @@ export class ApiGatewayConstruct extends Construct {
       },
     });
 
-    // Output the API endpoint
+    // Custom Domain Name configuration
+    const certificate = certificatemanager.Certificate.fromCertificateArn(
+      this,
+      'Certificate',
+      props.certificateArn
+    );
+
+    this.customDomain = new apigateway.DomainName(this, 'CustomDomain', {
+      domainName: props.domainName,
+      certificate,
+      endpointType: apigateway.EndpointType.REGIONAL,
+      securityPolicy: apigateway.SecurityPolicy.TLS_1_2,
+    });
+
+    // Base path mapping - maps the custom domain to the REST API deployment stage
+    new apigateway.BasePathMapping(this, 'BasePathMapping', {
+      domainName: this.customDomain,
+      restApi: this.restApi,
+      stage: this.restApi.deploymentStage,
+    });
+
+    // Outputs
     new cdk.CfnOutput(this, 'PrivateApiEndpoint', {
       value: this.restApi.url,
       description: 'Private REST API endpoint (accessible via VPC Endpoint)',
+    });
+
+    new cdk.CfnOutput(this, 'CustomDomainTarget', {
+      value: this.customDomain.domainNameAliasDomainName,
+      description: 'Custom domain target for Route 53 alias record',
+    });
+
+    new cdk.CfnOutput(this, 'CustomDomainHostedZoneId', {
+      value: this.customDomain.domainNameAliasHostedZoneId,
+      description: 'Custom domain hosted zone ID for Route 53 alias record',
     });
   }
 }
