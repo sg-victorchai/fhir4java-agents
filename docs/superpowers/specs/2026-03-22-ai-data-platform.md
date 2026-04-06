@@ -43,7 +43,6 @@ Pillars 7-9 serve the **clinical web UI** and its backend requirements.
 | Gap | Impact |
 |-----|--------|
 | No MCP server interface | AI agents can't discover or call FHIR operations natively |
-| No OpenAPI/machine-readable API spec | Agents can't auto-generate correct API calls |
 | No event streaming (SSE/WebSocket) | Agents can't react to real-time data changes |
 | No semantic/vector search | Agents can't do natural language queries over clinical data |
 | No agent-scoped auth (OAuth2 + scopes) | No fine-grained agent authorization |
@@ -3567,33 +3566,32 @@ fhir4java:
 
 ## Implementation Priority & Phasing
 
-### Phase 1: Foundation (Weeks 1-4) - "Agents Can Discover"
+### Phase 1: Foundation (Weeks 1-3) - "Auth & Discovery Ready"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
-| OpenAPI 3.1 generation (with FHIR customizer) | fhir4java-api | P0 | 1 week |
+| OAuth2 resource server (SMART on FHIR) | fhir4java-server | P0 | 1 week |
+| Agent API key auth | fhir4java-plugin | P0 | 1 week |
 | DiscoveryService (internal, powers `fhir_discover`) | fhir4java-core | P0 | 1 week |
-| Enhanced CapabilityStatement | fhir4java-api | P1 | 3 days |
-| OAuth2 resource server | fhir4java-server | P0 | 1 week |
-| Agent API key auth | fhir4java-plugin | P1 | 1 week |
 
-**Outcome:** REST developers have OpenAPI docs, FHIR systems have enhanced CapabilityStatement, and DiscoveryService is ready to back the `fhir_discover` MCP tool in Phase 2.
+> **Note:** OpenAPI is available via standard `springdoc-openapi` dependency. CapabilityStatement already exists in FHIR4Java. These are standard features, not AI-specific deliverables.
 
-### Phase 2: MCP Integration (Weeks 5-8) - "Agents Can Use Tools"
+**Outcome:** Auth infrastructure ready for agents. DiscoveryService ready to back the `fhir_discover` MCP tool in Phase 2.
+
+### Phase 2: MCP Integration (Weeks 4-7) - "Agents Can Use Tools"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
-| MCP server module (3 unified tools) | fhir4java-mcp (NEW) | P0 | 2 weeks |
-| `fhir_discover` tool (backed by Discovery API) | fhir4java-mcp | P0 | 3 days |
+| MCP server module (Streamable HTTP transport) | fhir4java-mcp (NEW) | P0 | 1 week |
+| `fhir_discover` tool (backed by DiscoveryService) | fhir4java-mcp | P0 | 3 days |
 | `fhir_query` tool (read/search/history/ops) | fhir4java-mcp | P0 | 1 week |
 | `fhir_mutate` tool (create/update/patch/delete/ops) | fhir4java-mcp | P0 | 1 week |
+| Dry-run mode for mutations | fhir4java-mcp | P0 | 3 days |
 | Smart response enrichment (hints) | fhir4java-mcp | P1 | 3 days |
-| MCP resource providers | fhir4java-mcp | P1 | 3 days |
-| Prompt templates | fhir4java-mcp | P2 | 3 days |
 
 **Outcome:** AI agents can connect via MCP and use 3 tools to discover, query, and mutate any FHIR resource.
 
-### Phase 3: Real-Time (Weeks 9-12) - "Agents Can React"
+### Phase 3: Real-Time (Weeks 8-11) - "Agents Can React"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
@@ -3603,7 +3601,7 @@ fhir4java:
 
 **Outcome:** Agents can subscribe to real-time clinical data changes.
 
-### Phase 4: Intelligence (Weeks 13-18) - "Agents Can Understand"
+### Phase 4: Intelligence (Weeks 12-17) - "Agents Can Understand"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
@@ -3614,7 +3612,7 @@ fhir4java:
 
 **Outcome:** Agents can query data using natural language and process bulk datasets.
 
-### Phase 5: Orchestration (Weeks 19-24) - "Agents Can Orchestrate"
+### Phase 5: Orchestration (Weeks 18-23) - "Agents Can Orchestrate"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
@@ -3625,7 +3623,7 @@ fhir4java:
 
 **Outcome:** Agents can execute complex clinical workflows and efficiently query data.
 
-### Phase 6: Clinical UI Backend (Weeks 25-32) - "Clinicians Can Command"
+### Phase 6: Clinical UI Backend (Weeks 24-31) - "Clinicians Can Command"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
@@ -3639,7 +3637,7 @@ fhir4java:
 
 **Outcome:** Backend services ready for clinical UI integration. Clinicians can execute commands, manage queues, and track note states.
 
-### Phase 7: UI Configuration (Weeks 33-36) - "Organizations Can Customize"
+### Phase 7: UI Configuration (Weeks 32-35) - "Organizations Can Customize"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
@@ -3652,7 +3650,7 @@ fhir4java:
 
 **Outcome:** Multi-level UI configuration system operational. Tenants, roles, and users can customize panels and workflows.
 
-### Phase 8: Clinical UI Frontend (Weeks 37-48) - "Clinicians Can Work"
+### Phase 8: Clinical UI Frontend (Weeks 36-47) - "Clinicians Can Work"
 
 | Component | Module | Priority | Effort |
 |-----------|--------|----------|--------|
@@ -4111,7 +4109,6 @@ Phase 1 (Foundation)                    Phase 2 (MCP)                      Phase
 | Dry-run works | `fhir_mutate(dryRun: true)` validates without persisting | Unit test |
 | OAuth2 protects endpoints | Unauthenticated requests return 401 | Security test |
 | API key auth works | Valid API key grants access | Integration test |
-| OpenAPI docs available | `/v3/api-docs` returns valid OpenAPI spec | Smoke test |
 | SSE events stream | Resource changes appear on SSE stream | Integration test |
 | Audit logs captured | All MCP calls logged to database | Query audit table |
 | Multi-tenant isolation | Agent A cannot access Tenant B data | Security test |
