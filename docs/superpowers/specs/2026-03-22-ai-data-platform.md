@@ -2,28 +2,29 @@
 
 **Status:** DRAFT - Ready for Review
 **Created:** 2026-03-22
-**Last Updated:** 2026-03-25
+**Last Updated:** 2026-04-06
 
 ## Executive Summary
 
 This document proposes the enhancements needed to transform FHIR4Java from a traditional FHIR server into a **fully AI-ready data and API platform** that natively integrates within AI agent ecosystems and supports a next-generation clinical UI.
 
-The design covers **ten pillars**:
+The design covers **eleven pillars**:
 
 | # | Pillar | Purpose |
 |---|--------|---------|
-| 1 | **MCP Server** | Expose FHIR as AI tools (3 unified tools: discover, query, mutate) |
+| 1 | **MCP Server** | Expose FHIR as AI tools (3 unified tools: discover, query, mutate) + safety features (dry-run, risk-level, terminology validation) |
 | 2 | **API Discovery** | OpenAPI + enhanced CapabilityStatement for all consumers |
 | 3 | **Event-Driven Architecture** | Real-time updates via FHIR Subscriptions, SSE, WebSocket |
-| 4 | **Semantic Search** | Natural language queries + vector search for clinical narratives |
-| 5 | **Agent-Friendly Auth** | OAuth2/SMART on FHIR + API keys with scoped authorization |
-| 6 | **Bulk Data Processing** | $export + NDJSON streaming for large datasets |
+| 4 | **Semantic Search** | Natural language queries + vector search with medical embeddings + hybrid search |
+| 5 | **Agent-Friendly Auth** | OAuth2/SMART + API keys + Consent enforcement + Provenance tracking + data localization |
+| 6 | **Bulk Data Processing** | $export + NDJSON streaming + de-identification profiles |
 | 7 | **AI Orchestration** | Composite workflows, CDS Hooks, GraphQL |
 | 8 | **Command API** | Natural language command interface for clinical UI |
 | 9 | **UI Configuration** | Multi-level config system (system → tenant → role → user) |
 | 10 | **Clinical Workflow** | Queue management, note lifecycle, pending results tracking |
+| 11 | **Observability** | MCP audit logging, explainability metadata, immutable audit trail, metrics |
 
-Pillars 1-7 serve **AI agents** (Claude, GPT, custom agents).
+Pillars 1-7 and 11 serve **AI agents** (Claude, GPT, custom agents).
 Pillars 8-10 serve the **clinical web UI** and its backend requirements.
 
 ---
@@ -518,6 +519,231 @@ Since unified tools have a broader input surface, the tool executor performs run
 ```
 
 This compensates for the lack of per-resource schema validation by providing discovery-guided error recovery.
+
+#### 1.8 Dry-Run Mode for Safe Mutations
+
+The `fhir_mutate` tool supports a `dryRun` parameter that validates and simulates the mutation without persisting changes:
+
+```json
+{
+  "name": "fhir_mutate",
+  "inputSchema": {
+    "properties": {
+      "dryRun": {
+        "type": "boolean",
+        "description": "If true, validate the mutation and return what would happen without persisting. Use this to preview changes before committing.",
+        "default": false
+      }
+      // ... other existing properties
+    }
+  }
+}
+```
+
+**Dry-run response includes:**
+```json
+{
+  "dryRun": true,
+  "wouldCreate": {
+    "resourceType": "MedicationRequest",
+    "id": "(generated)",
+    "status": "active",
+    "...": "..."
+  },
+  "validation": {
+    "valid": true,
+    "warnings": [
+      {
+        "severity": "warning",
+        "code": "informational",
+        "details": "No allergy check performed - patient has no recorded allergies"
+      }
+    ]
+  },
+  "riskAssessment": {
+    "level": "MEDIUM",
+    "factors": ["medication-order", "no-prior-prescription"]
+  },
+  "terminologyValidation": {
+    "valid": true,
+    "checkedCodes": [
+      { "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "313782", "display": "Lisinopril 10 MG", "status": "VALID" }
+    ]
+  },
+  "_hints": {
+    "toCommit": "Call fhir_mutate again with dryRun: false to persist this change"
+  }
+}
+```
+
+**Why dry-run matters for agents:**
+- Prevents accidental mutations from misinterpretation
+- Allows human review before committing high-risk changes
+- Enables "what-if" exploration without side effects
+- Provides validation feedback before persistence
+
+#### 1.9 Risk-Level Tagging
+
+All tool responses include a risk assessment to help agents and downstream systems understand the safety implications:
+
+**Response header:**
+```
+X-MCP-Risk-Level: MEDIUM
+```
+
+**Response body:**
+```json
+{
+  "result": { "..." },
+  "_meta": {
+    "riskLevel": "MEDIUM",
+    "riskFactors": ["creates-order", "controlled-substance"],
+    "requiresReview": true
+  }
+}
+```
+
+**Risk levels:**
+
+| Level | Definition | Examples | Agent Behavior |
+|-------|------------|----------|----------------|
+| **NONE** | Read-only, no side effects | `fhir_discover`, `fhir_query` (search/read) | Proceed automatically |
+| **LOW** | Routine data modification | Update demographics, add note | Proceed with audit |
+| **MEDIUM** | Clinical data modification | Create observation, update condition | Consider human review |
+| **HIGH** | Order entry, prescriptions | Create MedicationRequest, ServiceRequest | Recommend confirmation |
+| **CRITICAL** | Irreversible or high-impact | Delete resources, administer controlled substance | Require explicit confirmation |
+
+**Risk assessment factors:**
+
+```java
+public class RiskAssessor {
+
+    public RiskAssessment assess(McpToolInvocation invocation) {
+        List<String> factors = new ArrayList<>();
+        RiskLevel level = RiskLevel.NONE;
+
+        // Tool-based risk
+        if ("fhir_mutate".equals(invocation.getTool())) {
+            level = RiskLevel.LOW;
+            factors.add("mutates-data");
+
+            // Action-based escalation
+            if ("delete".equals(invocation.getAction())) {
+                level = RiskLevel.CRITICAL;
+                factors.add("delete-operation");
+            }
+        }
+
+        // Resource-based escalation
+        String resourceType = invocation.getResourceType();
+        if (HIGH_RISK_RESOURCES.contains(resourceType)) {
+            level = level.escalate();
+            factors.add("high-risk-resource:" + resourceType);
+        }
+
+        // Content-based escalation (e.g., controlled substances)
+        if (involvesControlledSubstance(invocation)) {
+            level = RiskLevel.HIGH;
+            factors.add("controlled-substance");
+        }
+
+        return new RiskAssessment(level, factors, level.compareTo(RiskLevel.MEDIUM) >= 0);
+    }
+
+    private static final Set<String> HIGH_RISK_RESOURCES = Set.of(
+        "MedicationRequest", "MedicationAdministration",
+        "ServiceRequest", "Procedure", "Immunization"
+    );
+}
+```
+
+#### 1.10 Terminology Validation
+
+Before persisting mutations that include coded values, validate against standard terminologies to prevent hallucinated or invalid codes:
+
+**Validated terminology systems:**
+
+| System | URI | Validation Method |
+|--------|-----|-------------------|
+| LOINC | `http://loinc.org` | Local lookup table + API fallback |
+| SNOMED CT | `http://snomed.info/sct` | Local lookup table + API fallback |
+| RxNorm | `http://www.nlm.nih.gov/research/umls/rxnorm` | Local lookup table + API fallback |
+| ICD-10 | `http://hl7.org/fhir/sid/icd-10` | Local lookup table |
+| CPT | `http://www.ama-assn.org/go/cpt` | Local lookup table |
+
+**Validation response:**
+```json
+{
+  "terminologyValidation": {
+    "valid": false,
+    "checkedCodes": [
+      {
+        "path": "code.coding[0]",
+        "system": "http://loinc.org",
+        "code": "2339-0",
+        "display": "Glucose [Mass/volume] in Blood",
+        "status": "VALID"
+      },
+      {
+        "path": "code.coding[1]",
+        "system": "http://loinc.org",
+        "code": "99999-9",
+        "display": "Invalid Test",
+        "status": "INVALID",
+        "error": "Code not found in LOINC",
+        "suggestions": ["2339-0 (Glucose)", "2345-7 (Glucose [Mass/volume] in Serum)"]
+      }
+    ]
+  }
+}
+```
+
+**Configuration:**
+```yaml
+fhir4java:
+  mcp:
+    terminology-validation:
+      enabled: true
+      strict-mode: false          # false = warn on invalid, true = reject
+      systems:
+        - http://loinc.org
+        - http://snomed.info/sct
+        - http://www.nlm.nih.gov/research/umls/rxnorm
+      fallback-api:
+        enabled: true
+        url: https://tx.fhir.org/r4  # Public terminology server
+```
+
+**Implementation:**
+```java
+@Service
+public class TerminologyValidator {
+
+    @Autowired
+    private TerminologyLookupService lookupService;
+
+    public TerminologyValidationResult validate(IBaseResource resource) {
+        List<CodeValidation> results = new ArrayList<>();
+
+        // Extract all coded elements from resource
+        List<CodedElement> codes = extractCodes(resource);
+
+        for (CodedElement code : codes) {
+            if (isConfiguredForValidation(code.getSystem())) {
+                CodeValidation validation = lookupService.validateCode(
+                    code.getSystem(),
+                    code.getCode(),
+                    code.getDisplay()
+                );
+                results.add(validation);
+            }
+        }
+
+        boolean allValid = results.stream().allMatch(CodeValidation::isValid);
+        return new TerminologyValidationResult(allValid, results);
+    }
+}
+```
 
 ---
 
@@ -1021,6 +1247,251 @@ fhir4java:
         - description
 ```
 
+### 4.4 Medical-Domain Embedding Providers (SPI)
+
+General-purpose embedding models (OpenAI, Ollama) may not capture clinical semantics as well as domain-specific models. The embedding system uses a **pluggable SPI** to support medical-domain models:
+
+**Available providers:**
+
+| Provider | Model | Strengths | Use Case |
+|----------|-------|-----------|----------|
+| `openai` | text-embedding-3-small/large | General purpose, high quality | Default, broad coverage |
+| `clinical-bert` | ClinicalBERT | Trained on clinical notes (MIMIC-III) | Discharge summaries, clinical narratives |
+| `bio-bert` | BioBERT | Trained on PubMed, PMC | Research, medical literature |
+| `pubmed-bert` | PubMedBERT | Domain-specific pre-training | Biomedical text |
+| `ollama` | Any local model | Privacy, no external API calls | On-premise deployments |
+| `custom` | User-provided | Organization-specific fine-tuning | Custom requirements |
+
+**Embedding Provider SPI:**
+```java
+public interface EmbeddingProvider {
+
+    /**
+     * Provider identifier used in configuration
+     */
+    String getProviderId();
+
+    /**
+     * Generate embeddings for text
+     */
+    float[] embed(String text);
+
+    /**
+     * Batch embedding for efficiency
+     */
+    List<float[]> embedBatch(List<String> texts);
+
+    /**
+     * Embedding dimensions (needed for table schema)
+     */
+    int getDimensions();
+
+    /**
+     * Whether this provider supports clinical text optimization
+     */
+    default boolean isClinicalOptimized() {
+        return false;
+    }
+}
+
+// Implementation example: ClinicalBERT via HuggingFace
+@Component
+@ConditionalOnProperty(name = "fhir4java.ai.embeddings.provider", havingValue = "clinical-bert")
+public class ClinicalBertEmbeddingProvider implements EmbeddingProvider {
+
+    private final HuggingFaceClient hfClient;
+
+    @Override
+    public String getProviderId() { return "clinical-bert"; }
+
+    @Override
+    public float[] embed(String text) {
+        // Call HuggingFace Inference API or local model
+        return hfClient.embed("emilyalsentzer/Bio_ClinicalBERT", text);
+    }
+
+    @Override
+    public int getDimensions() { return 768; }
+
+    @Override
+    public boolean isClinicalOptimized() { return true; }
+}
+```
+
+**Configuration for medical embeddings:**
+```yaml
+fhir4java:
+  ai:
+    embeddings:
+      enabled: true
+      provider: clinical-bert        # Use ClinicalBERT for clinical narratives
+      dimensions: 768
+      providers:
+        clinical-bert:
+          endpoint: https://api-inference.huggingface.co/models/emilyalsentzer/Bio_ClinicalBERT
+          api-key: ${HF_API_KEY}
+        bio-bert:
+          endpoint: https://api-inference.huggingface.co/models/dmis-lab/biobert-base-cased-v1.2
+          api-key: ${HF_API_KEY}
+        ollama:
+          endpoint: http://localhost:11434
+          model: medllama2
+```
+
+### 4.5 Hybrid Search Architecture
+
+Combine multiple search strategies for robust clinical queries:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         HYBRID SEARCH PIPELINE                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+User Query: "diabetic patient with poorly controlled blood sugar and neuropathy"
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  QUERY ANALYZER                                                          │
+│  • Extract clinical concepts: diabetes, blood sugar, neuropathy          │
+│  • Identify FHIR search params: condition code, observation code         │
+│  • Generate vector embedding for semantic search                         │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│ STRUCTURED      │ │ KEYWORD         │ │ VECTOR          │
+│ FHIR SEARCH     │ │ SEARCH          │ │ SEARCH          │
+│                 │ │                 │ │                 │
+│ Condition?code= │ │ Full-text on    │ │ Semantic        │
+│ 73211009        │ │ narrative       │ │ similarity on   │
+│ (diabetes)      │ │ fields          │ │ embeddings      │
+│                 │ │                 │ │                 │
+│ Observation?    │ │ "poorly         │ │ cosine > 0.75   │
+│ code=4548-4     │ │ controlled"     │ │                 │
+│ (HbA1c)         │ │ "neuropathy"    │ │                 │
+└────────┬────────┘ └────────┬────────┘ └────────┬────────┘
+         │                   │                   │
+         └───────────────────┼───────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  RESULT FUSION (Reciprocal Rank Fusion)                                  │
+│  • Combine results from all three search paths                          │
+│  • Score: RRF(d) = Σ 1/(k + rank(d)) across all result lists            │
+│  • Boost matches that appear in multiple search paths                   │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  RESULT RANKING                                                          │
+│  • Apply clinical relevance boosting (recent results, severity, etc.)   │
+│  • Filter by tenant, access control                                      │
+│  • Return top-k with explanation of why each matched                    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Hybrid search endpoint:**
+```
+POST /api/ai/hybrid-search
+{
+  "query": "diabetic patient with poorly controlled blood sugar",
+  "searchModes": ["structured", "keyword", "vector"],  // Enable specific modes
+  "resourceTypes": ["Patient", "Condition", "Observation"],
+  "fusionMethod": "rrf",                              // reciprocal rank fusion
+  "maxResults": 20,
+  "explain": true                                     // Include match explanations
+}
+
+Response:
+{
+  "results": [
+    {
+      "resource": { "resourceType": "Patient", "id": "123", "..." },
+      "score": 0.92,
+      "matchSources": ["structured", "vector"],
+      "explanation": {
+        "structured": "Matched Condition with code 73211009 (Diabetes mellitus)",
+        "vector": "Semantic similarity 0.87 to clinical note mentioning poor glycemic control"
+      }
+    }
+  ],
+  "searchMetrics": {
+    "structuredMatches": 45,
+    "keywordMatches": 23,
+    "vectorMatches": 38,
+    "fusedResults": 20,
+    "executionTimeMs": 85
+  }
+}
+```
+
+**Implementation:**
+```java
+@Service
+public class HybridSearchService {
+
+    @Autowired private FhirResourceService fhirService;       // Structured FHIR search
+    @Autowired private FullTextSearchService textService;     // Keyword search
+    @Autowired private VectorSearchService vectorService;     // Embedding search
+
+    public HybridSearchResult search(HybridSearchRequest request) {
+        // Execute searches in parallel
+        CompletableFuture<List<ScoredResult>> structuredFuture =
+            CompletableFuture.supplyAsync(() -> executeStructuredSearch(request));
+
+        CompletableFuture<List<ScoredResult>> keywordFuture =
+            CompletableFuture.supplyAsync(() -> executeKeywordSearch(request));
+
+        CompletableFuture<List<ScoredResult>> vectorFuture =
+            CompletableFuture.supplyAsync(() -> executeVectorSearch(request));
+
+        // Wait for all and fuse
+        List<List<ScoredResult>> allResults = CompletableFuture.allOf(
+            structuredFuture, keywordFuture, vectorFuture
+        ).thenApply(v -> List.of(
+            structuredFuture.join(),
+            keywordFuture.join(),
+            vectorFuture.join()
+        )).join();
+
+        // Apply Reciprocal Rank Fusion
+        return fuseResults(allResults, request.getFusionMethod());
+    }
+
+    private List<ScoredResult> fuseResults(List<List<ScoredResult>> resultLists, String method) {
+        if ("rrf".equals(method)) {
+            return reciprocalRankFusion(resultLists, 60); // k=60 is standard RRF constant
+        }
+        // Other fusion methods...
+        return resultLists.get(0);
+    }
+}
+```
+
+### 4.6 Clinical Narrative Mode
+
+Optimized search for clinical documents like discharge summaries, progress notes, and consult reports:
+
+```yaml
+fhir4java:
+  ai:
+    semantic-search:
+      clinical-narrative-mode:
+        enabled: true
+        resource-types:
+          - DocumentReference
+          - DiagnosticReport
+          - Composition
+        preprocessing:
+          - remove-html           # Strip HTML tags from text.div
+          - normalize-whitespace  # Clean up formatting
+          - expand-abbreviations  # "pt" → "patient", "hx" → "history"
+        section-weighting:        # Boost certain sections in notes
+          assessment: 1.5
+          plan: 1.5
+          history: 1.2
+          physical-exam: 1.0
+```
+
 ---
 
 ## Pillar 5: Agent-Friendly Authentication & Authorization
@@ -1098,6 +1569,372 @@ ALTER TABLE fhir_audit_log ADD COLUMN tool_invocation_id VARCHAR(256);
 ALTER TABLE fhir_audit_log ADD COLUMN mcp_request_id VARCHAR(256);
 ```
 
+### 5.5 FHIR Consent Enforcement
+
+Automatically enforce FHIR Consent resources before any data access. This ensures patient privacy preferences are respected by AI agents.
+
+**Consent check flow:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  MCP Tool Call (e.g., fhir_query for Patient/123)               │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  ConsentEnforcementFilter                                        │
+│  1. Find active Consent resources for target patient            │
+│  2. Check if requesting agent/actor is permitted                │
+│  3. Apply data use limitations (e.g., no research use)          │
+│  4. Filter response to exclude restricted data categories       │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+   ┌──────────┐       ┌──────────┐       ┌──────────┐
+   │ PERMIT   │       │ DENY     │       │ FILTER   │
+   │          │       │          │       │          │
+   │ Full     │       │ Return   │       │ Return   │
+   │ access   │       │ 403      │       │ filtered │
+   │ granted  │       │          │       │ data     │
+   └──────────┘       └──────────┘       └──────────┘
+```
+
+**Consent categories supported:**
+
+| Category | Code | Effect |
+|----------|------|--------|
+| Research use | `research` | Block agent access if purpose is research |
+| Treatment | `treatment` | Allow clinical agents |
+| Mental health | `MH` | Redact mental health records unless explicitly permitted |
+| Substance use | `SUD` | Redact substance use records (42 CFR Part 2) |
+| HIV | `HIV` | Redact HIV-related records |
+| Genetic | `GENETIC` | Redact genetic information (GINA compliance) |
+
+**Implementation:**
+```java
+@Component
+public class ConsentEnforcementPlugin implements AuthorizationPlugin {
+
+    @Autowired
+    private ConsentService consentService;
+
+    @Override
+    public PluginResult authorize(PluginContext context, IBaseResource resource) {
+        if (resource == null) return PluginResult.CONTINUE;
+
+        // Get patient reference from resource
+        String patientId = extractPatientReference(resource);
+        if (patientId == null) return PluginResult.CONTINUE;
+
+        // Find active consents
+        List<Consent> consents = consentService.findActiveConsents(patientId);
+
+        // Check if access is permitted for this agent/purpose
+        ConsentDecision decision = consentService.evaluate(
+            consents,
+            context.getAgentId(),
+            context.getAccessPurpose(),
+            resource
+        );
+
+        switch (decision.getOutcome()) {
+            case PERMIT:
+                return PluginResult.CONTINUE;
+            case DENY:
+                return PluginResult.abort(403, "Access denied by patient consent");
+            case FILTER:
+                // Apply data filtering
+                context.setResponseFilter(decision.getFilter());
+                return PluginResult.CONTINUE;
+        }
+        return PluginResult.CONTINUE;
+    }
+}
+```
+
+**Configuration:**
+```yaml
+fhir4java:
+  auth:
+    consent:
+      enabled: true
+      default-policy: permit              # permit or deny when no consent exists
+      sensitive-categories:
+        - MH
+        - SUD
+        - HIV
+        - GENETIC
+      agent-purpose-mapping:
+        clinical-summary-agent: treatment
+        research-agent: research
+```
+
+### 5.6 AI Provenance Tracking
+
+Automatically create FHIR Provenance resources for all AI-generated or AI-modified content. This is **critical for regulatory compliance** and clinical accountability.
+
+**Auto-generated Provenance:**
+```json
+{
+  "resourceType": "Provenance",
+  "target": [
+    { "reference": "Observation/obs-789" }
+  ],
+  "recorded": "2026-03-25T10:30:00Z",
+  "activity": {
+    "coding": [{
+      "system": "http://terminology.hl7.org/CodeSystem/v3-DataOperation",
+      "code": "CREATE"
+    }]
+  },
+  "agent": [
+    {
+      "type": {
+        "coding": [{
+          "system": "http://fhir4java.org/CodeSystem/provenance-agent-type",
+          "code": "ai-agent",
+          "display": "AI Agent"
+        }]
+      },
+      "who": {
+        "identifier": {
+          "system": "http://fhir4java.org/agent-id",
+          "value": "clinical-summary-agent"
+        },
+        "display": "Clinical Summary Agent"
+      }
+    },
+    {
+      "type": {
+        "coding": [{
+          "system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type",
+          "code": "author"
+        }]
+      },
+      "who": {
+        "reference": "Practitioner/dr-smith"
+      }
+    }
+  ],
+  "entity": [
+    {
+      "role": "source",
+      "what": {
+        "identifier": {
+          "system": "http://fhir4java.org/llm-model",
+          "value": "claude-3-opus"
+        }
+      }
+    }
+  ],
+  "extension": [
+    {
+      "url": "http://fhir4java.org/StructureDefinition/ai-confidence-score",
+      "valueDecimal": 0.92
+    },
+    {
+      "url": "http://fhir4java.org/StructureDefinition/ai-prompt-version",
+      "valueString": "patient-summary-v2.1"
+    },
+    {
+      "url": "http://fhir4java.org/StructureDefinition/ai-reviewed-by-human",
+      "valueBoolean": true
+    }
+  ]
+}
+```
+
+**Implementation:**
+```java
+@Component
+public class AiProvenancePlugin implements FhirPlugin {
+
+    @Override
+    public PluginPhase getPhase() { return PluginPhase.AFTER; }
+
+    @Override
+    public PluginResult execute(PluginContext context, IBaseResource resource) {
+        if (!context.isFromAiAgent()) return PluginResult.CONTINUE;
+        if (!isMutationOperation(context)) return PluginResult.CONTINUE;
+
+        // Create Provenance resource
+        Provenance provenance = new Provenance();
+        provenance.addTarget(new Reference(resource.getIdElement()));
+        provenance.setRecorded(new Date());
+
+        // Add AI agent
+        ProvenanceAgentComponent aiAgent = provenance.addAgent();
+        aiAgent.setType(aiAgentType());
+        aiAgent.setWho(new Reference()
+            .setIdentifier(new Identifier()
+                .setSystem("http://fhir4java.org/agent-id")
+                .setValue(context.getAgentId())));
+
+        // Add supervising human if present
+        if (context.getSupervisingUser() != null) {
+            ProvenanceAgentComponent human = provenance.addAgent();
+            human.setType(authorType());
+            human.setWho(new Reference(context.getSupervisingUser()));
+        }
+
+        // Add AI metadata extensions
+        provenance.addExtension(confidenceExtension(context.getConfidenceScore()));
+        provenance.addExtension(modelExtension(context.getLlmModel()));
+        provenance.addExtension(promptVersionExtension(context.getPromptVersion()));
+
+        // Persist provenance
+        provenanceRepository.save(provenance);
+
+        return PluginResult.CONTINUE;
+    }
+}
+```
+
+### 5.7 Relationship-Based Access Control
+
+Fine-grained scopes that consider the relationship between the requesting agent and the target data:
+
+**Extended scope syntax:**
+```
+{context}/{resourceType}.{interaction}:{qualifier}
+```
+
+| Scope | Meaning |
+|-------|---------|
+| `patient/Patient.read` | Read Patient resources in patient context |
+| `patient/Observation.read:own` | Read only observations authored by the patient themselves |
+| `user/MedicationRequest.write:ai-suggested` | Create AI-suggested medication orders (requires human approval) |
+| `system/Observation.read:anonymous` | Read anonymized/de-identified observations only |
+| `patient/*.read:care-team` | Read all resources where agent is part of care team |
+
+**Qualifier definitions:**
+
+| Qualifier | Effect |
+|-----------|--------|
+| `:own` | Only resources created by/belonging to the authenticated user |
+| `:care-team` | Resources for patients where agent/user is in the CareTeam |
+| `:ai-suggested` | Resource is marked as AI-suggested, pending human review |
+| `:anonymous` | Only de-identified data |
+| `:emergency` | Break-the-glass access with elevated audit |
+
+**Implementation:**
+```java
+@Service
+public class RelationshipScopeValidator {
+
+    public boolean validate(String scope, AuthContext auth, IBaseResource resource) {
+        ScopeParts parts = parseScope(scope);
+
+        if (parts.getQualifier() == null) {
+            return validateBasicScope(parts, auth, resource);
+        }
+
+        switch (parts.getQualifier()) {
+            case "own":
+                return isOwnedBy(resource, auth.getUserId());
+            case "care-team":
+                return isInCareTeam(resource, auth.getUserId());
+            case "ai-suggested":
+                return isAiSuggested(resource) && pendingHumanReview(resource);
+            case "anonymous":
+                return isDeIdentified(resource);
+            case "emergency":
+                auditBreakTheGlass(auth, resource);
+                return true;
+            default:
+                return false;
+        }
+    }
+}
+```
+
+### 5.8 Data Localization
+
+Support regional data protection requirements by enforcing data residency and access controls:
+
+**Supported regulations:**
+
+| Region | Regulation | Key Requirements |
+|--------|------------|------------------|
+| Singapore | PDPA | Consent required, data transfer restrictions |
+| China | PIPL / DSL | Data localization, cross-border transfer rules |
+| EU | GDPR | Lawful basis, data minimization, right to erasure |
+| USA | HIPAA | Minimum necessary, access controls |
+
+**Configuration:**
+```yaml
+fhir4java:
+  auth:
+    data-localization:
+      enabled: true
+      default-region: sg                    # Singapore
+      regions:
+        sg:
+          regulation: PDPA
+          data-residency: required          # Data must stay in region
+          cross-border-transfer: consent    # Requires explicit consent
+        cn:
+          regulation: PIPL
+          data-residency: required
+          cross-border-transfer: assessment # Requires security assessment
+          sensitive-categories:             # Extra restrictions
+            - biometric
+            - health
+            - financial
+        us:
+          regulation: HIPAA
+          data-residency: optional
+          cross-border-transfer: baa        # Business Associate Agreement
+```
+
+**Enforcement:**
+```java
+@Component
+public class DataLocalizationFilter implements AuthorizationPlugin {
+
+    @Override
+    public PluginResult authorize(PluginContext context, IBaseResource resource) {
+        String patientRegion = getPatientRegion(resource);
+        String requestRegion = context.getRequestRegion();
+        RegionConfig config = getRegionConfig(patientRegion);
+
+        // Check data residency
+        if (config.isDataResidencyRequired() && !requestRegion.equals(patientRegion)) {
+            // Check if cross-border transfer is allowed
+            CrossBorderDecision decision = evaluateCrossBorder(
+                context, patientRegion, requestRegion
+            );
+
+            if (!decision.isAllowed()) {
+                return PluginResult.abort(403,
+                    "Cross-border data access not permitted for " + patientRegion + " data");
+            }
+
+            // Log cross-border access
+            auditCrossBorderAccess(context, resource, decision);
+        }
+
+        return PluginResult.CONTINUE;
+    }
+}
+```
+
+**Tenant-specific region binding:**
+```sql
+-- Add region to tenant configuration
+ALTER TABLE fhir.fhir_tenant ADD COLUMN data_region VARCHAR(10);
+ALTER TABLE fhir.fhir_tenant ADD COLUMN localization_config JSONB;
+
+-- Example: Bind Singapore hospital to SG region
+UPDATE fhir.fhir_tenant
+SET data_region = 'sg',
+    localization_config = '{
+      "cross_border_consent_required": true,
+      "audit_all_access": true
+    }'
+WHERE tenant_code = 'HOSP-SG';
+```
+
 ---
 
 ## Pillar 6: Bulk Data & Batch Processing for Agents
@@ -1153,6 +1990,182 @@ Transfer-Encoding: chunked
 {"resourceType":"Observation","id":"obs-1",...}
 {"resourceType":"Observation","id":"obs-2",...}
 ...
+```
+
+### 6.4 De-Identification for Bulk Export
+
+Support de-identification profiles in the `$export` operation for research, analytics, and AI training use cases:
+
+```
+POST /fhir/r5/$export
+  ?_type=Patient,Observation,Condition
+  &_since=2026-01-01
+  &_deidentify=safe-harbor
+  &_outputFormat=application/ndjson
+
+→ 202 Accepted
+  Content-Location: /api/bulk/status/job-123
+```
+
+**De-identification profiles:**
+
+| Profile | Method | Removes/Masks |
+|---------|--------|---------------|
+| `safe-harbor` | HIPAA Safe Harbor | 18 identifiers (names, dates, locations, etc.) |
+| `limited` | HIPAA Limited Data Set | Names, contact info, but keeps dates and zip codes |
+| `expert` | Expert Determination | Custom rules based on statistical analysis |
+| `k-anonymity` | k-Anonymity | Generalize quasi-identifiers to ensure k=5 |
+| `custom` | Tenant-defined | Custom rules per tenant |
+
+**Safe Harbor de-identification (18 HIPAA identifiers):**
+
+```java
+public class SafeHarborDeidentifier implements DeidentificationProfile {
+
+    @Override
+    public IBaseResource deidentify(IBaseResource resource) {
+        // 1. Names
+        removeNames(resource);
+
+        // 2. Geographic data smaller than state
+        generalizeAddress(resource);  // Keep state, remove city/zip
+
+        // 3. Dates (except year) - shift or generalize
+        shiftDates(resource);  // Random shift within year
+
+        // 4. Phone numbers
+        removePhones(resource);
+
+        // 5. Fax numbers
+        removeFax(resource);
+
+        // 6. Email addresses
+        removeEmails(resource);
+
+        // 7. Social Security numbers
+        removeSSN(resource);
+
+        // 8. Medical record numbers
+        hashMRN(resource);  // Replace with hashed value
+
+        // 9. Health plan beneficiary numbers
+        removeInsuranceIds(resource);
+
+        // 10. Account numbers
+        removeAccountNumbers(resource);
+
+        // 11. Certificate/license numbers
+        removeLicenses(resource);
+
+        // 12. Vehicle identifiers
+        removeVehicleIds(resource);
+
+        // 13. Device identifiers
+        removeDeviceIds(resource);
+
+        // 14. Web URLs
+        removeURLs(resource);
+
+        // 15. IP addresses
+        removeIPAddresses(resource);
+
+        // 16. Biometric identifiers
+        removeBiometrics(resource);
+
+        // 17. Full-face photographs
+        removePhotos(resource);
+
+        // 18. Unique identifying numbers
+        hashUniqueIds(resource);
+
+        return resource;
+    }
+}
+```
+
+**Date shifting strategy:**
+```java
+public class DateShiftingService {
+
+    /**
+     * Shift all dates for a patient by a consistent random offset.
+     * Preserves temporal relationships (intervals between events).
+     */
+    public void shiftDates(IBaseResource resource, String patientId) {
+        // Get or generate consistent shift for this patient
+        int shiftDays = getPatientShift(patientId);  // -365 to +365 days
+
+        // Find and shift all date/dateTime fields
+        FhirPath.evaluate(resource, "descendants().ofType(date) | descendants().ofType(dateTime)")
+            .forEach(date -> shiftDate(date, shiftDays));
+    }
+
+    private int getPatientShift(String patientId) {
+        // Consistent hash-based shift (same patient always gets same shift)
+        return Math.abs(patientId.hashCode()) % 730 - 365;
+    }
+}
+```
+
+**Bulk export with de-identification response:**
+```json
+{
+  "output": [
+    {
+      "type": "Patient",
+      "url": "/api/bulk/download/job-123/Patient.ndjson",
+      "count": 10000
+    }
+  ],
+  "deidentification": {
+    "profile": "safe-harbor",
+    "recordsProcessed": 10000,
+    "fieldsRemoved": 45230,
+    "dateShiftApplied": true,
+    "auditId": "audit-456"
+  }
+}
+```
+
+**Configuration:**
+```yaml
+fhir4java:
+  bulk:
+    deidentification:
+      enabled: true
+      default-profile: null             # Must be explicitly requested
+      allowed-profiles:
+        - safe-harbor
+        - limited
+        - custom
+      date-shifting:
+        enabled: true
+        range-days: 365                 # +/- 365 days
+        preserve-year: false
+      custom-profiles:
+        tenant-research:
+          remove:
+            - name
+            - address
+            - telecom
+          mask:
+            - identifier[type=MRN]      # Hash MRN
+          generalize:
+            - birthDate                 # Keep year only
+```
+
+**Access control for de-identified exports:**
+```yaml
+fhir4java:
+  auth:
+    agents:
+      - id: research-agent
+        scopes:
+          - "system/*.read:anonymous"   # Can only access de-identified data
+        bulk-export:
+          allowed: true
+          require-deidentify: true      # Must use de-identification
+          allowed-profiles: ["safe-harbor", "limited"]
 ```
 
 ---
@@ -1828,6 +2841,335 @@ public class ResultNotificationService {
 
 ---
 
+## Pillar 11: Observability & Explainability
+
+### Goal
+Provide comprehensive audit, tracing, and explainability infrastructure for AI agent interactions. This is **critical for healthcare deployments** where regulatory compliance (HIPAA, PDPA, etc.) requires complete audit trails of AI-assisted clinical decisions.
+
+### 11.1 MCP Interaction Logging
+
+Every MCP tool call generates a structured audit record:
+
+```sql
+CREATE TABLE mcp_interaction_log (
+    id                    BIGSERIAL PRIMARY KEY,
+    interaction_id        UUID NOT NULL UNIQUE,        -- Unique ID for this interaction
+    trace_id              VARCHAR(64),                 -- Correlation ID across multiple calls
+    tenant_id             VARCHAR(64) NOT NULL,
+    agent_id              VARCHAR(128) NOT NULL,       -- From auth context
+    session_id            VARCHAR(128),                -- MCP session ID
+
+    -- Tool invocation details
+    tool_name             VARCHAR(50) NOT NULL,        -- fhir_discover, fhir_query, fhir_mutate
+    action                VARCHAR(50),                 -- read, search, create, update, etc.
+    resource_type         VARCHAR(64),
+    resource_id           VARCHAR(128),
+
+    -- Input/Output (for debugging and replay)
+    input_params          JSONB,                       -- Tool input parameters
+    output_summary        JSONB,                       -- Summary of output (not full payload)
+    affected_resources    TEXT[],                      -- Resource references affected
+
+    -- Risk and validation
+    risk_level            VARCHAR(20),                 -- NONE, LOW, MEDIUM, HIGH, CRITICAL
+    validation_errors     JSONB,                       -- Any validation issues
+    terminology_checks    JSONB,                       -- LOINC/SNOMED validation results
+
+    -- Performance
+    latency_ms            INTEGER,
+    token_usage           JSONB,                       -- {input: n, output: n} if LLM involved
+
+    -- Status
+    status                VARCHAR(20) NOT NULL,        -- SUCCESS, FAILED, REJECTED, DRY_RUN
+    error_code            VARCHAR(50),
+    error_message         TEXT,
+
+    -- Metadata
+    client_ip             INET,
+    user_agent            TEXT,
+    created_at            TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT fk_mcp_log_tenant FOREIGN KEY (tenant_id)
+        REFERENCES fhir.fhir_tenant(internal_id)
+);
+
+-- Indexes for common queries
+CREATE INDEX idx_mcp_log_tenant_time ON mcp_interaction_log(tenant_id, created_at DESC);
+CREATE INDEX idx_mcp_log_agent ON mcp_interaction_log(agent_id, created_at DESC);
+CREATE INDEX idx_mcp_log_trace ON mcp_interaction_log(trace_id);
+CREATE INDEX idx_mcp_log_resource ON mcp_interaction_log(resource_type, resource_id);
+CREATE INDEX idx_mcp_log_status ON mcp_interaction_log(status, created_at DESC);
+```
+
+### 11.2 Explainability Metadata
+
+For mutations and clinical decisions, capture reasoning context:
+
+```sql
+CREATE TABLE mcp_decision_context (
+    id                    BIGSERIAL PRIMARY KEY,
+    interaction_id        UUID NOT NULL REFERENCES mcp_interaction_log(interaction_id),
+
+    -- What prompted this action
+    user_prompt           TEXT,                        -- Original natural language input (if any)
+    interpreted_intent    VARCHAR(100),                -- Extracted intent
+    interpretation_source VARCHAR(20),                 -- CACHE, PATTERN, SEMANTIC, LLM
+    confidence_score      DECIMAL(3,2),                -- 0.00 to 1.00
+
+    -- AI reasoning (when LLM involved)
+    reasoning_steps       JSONB,                       -- Chain-of-thought if captured
+    alternative_actions   JSONB,                       -- Other options considered
+
+    -- Clinical context
+    patient_context       JSONB,                       -- Relevant patient data considered
+    clinical_guidelines   TEXT[],                      -- Referenced guidelines/protocols
+
+    created_at            TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_decision_context_interaction ON mcp_decision_context(interaction_id);
+```
+
+### 11.3 Audit API Endpoints
+
+```
+GET /mcp/audit                                        # Query MCP interaction logs
+    ?agent_id={id}                                    # Filter by agent
+    ?trace_id={id}                                    # Filter by trace
+    ?resource_type={type}                             # Filter by resource type
+    ?status={status}                                  # Filter by status
+    ?from={datetime}&to={datetime}                    # Time range
+    &include_context=true                             # Include decision context
+
+GET /mcp/audit/{interaction_id}                       # Get single interaction detail
+GET /mcp/audit/{interaction_id}/context               # Get decision context
+GET /mcp/audit/trace/{trace_id}                       # Get all interactions in trace
+
+GET /mcp/audit/stats                                  # Aggregated statistics
+    ?agent_id={id}
+    ?period=day|week|month
+
+    Response:
+    {
+      "period": "2026-03-01 to 2026-03-31",
+      "totalInteractions": 15420,
+      "byTool": {
+        "fhir_discover": 2100,
+        "fhir_query": 11500,
+        "fhir_mutate": 1820
+      },
+      "byStatus": {
+        "SUCCESS": 15100,
+        "FAILED": 180,
+        "DRY_RUN": 140
+      },
+      "avgLatencyMs": 45,
+      "riskDistribution": {
+        "NONE": 12000,
+        "LOW": 2500,
+        "MEDIUM": 800,
+        "HIGH": 120
+      }
+    }
+```
+
+### 11.4 Logging Implementation
+
+```java
+@Component
+public class McpAuditLogger {
+
+    @Autowired
+    private McpInteractionLogRepository logRepository;
+
+    @Autowired
+    private McpDecisionContextRepository contextRepository;
+
+    /**
+     * Log every MCP tool invocation
+     */
+    public void logInteraction(McpToolInvocation invocation, McpToolResult result) {
+        McpInteractionLog log = McpInteractionLog.builder()
+            .interactionId(UUID.randomUUID())
+            .traceId(MDC.get("traceId"))
+            .tenantId(invocation.getTenantId())
+            .agentId(invocation.getAgentId())
+            .sessionId(invocation.getSessionId())
+            .toolName(invocation.getToolName())
+            .action(invocation.getAction())
+            .resourceType(invocation.getResourceType())
+            .resourceId(invocation.getResourceId())
+            .inputParams(sanitizeInput(invocation.getParams()))
+            .outputSummary(summarizeOutput(result))
+            .affectedResources(result.getAffectedResources())
+            .riskLevel(result.getRiskLevel())
+            .validationErrors(result.getValidationErrors())
+            .terminologyChecks(result.getTerminologyChecks())
+            .latencyMs(result.getLatencyMs())
+            .status(result.getStatus())
+            .errorCode(result.getErrorCode())
+            .errorMessage(result.getErrorMessage())
+            .clientIp(invocation.getClientIp())
+            .userAgent(invocation.getUserAgent())
+            .build();
+
+        logRepository.save(log);
+
+        // If decision context is available (e.g., from LLM interpretation)
+        if (invocation.hasDecisionContext()) {
+            logDecisionContext(log.getInteractionId(), invocation.getDecisionContext());
+        }
+    }
+
+    private JsonNode sanitizeInput(JsonNode params) {
+        // Remove PHI from logged params (keep structure, mask values)
+        // This depends on your data retention policy
+        return params;
+    }
+
+    private JsonNode summarizeOutput(McpToolResult result) {
+        // Don't log full FHIR resources - just summary
+        return Json.object()
+            .put("resourceCount", result.getResourceCount())
+            .put("bundleType", result.getBundleType())
+            .put("totalMatches", result.getTotalMatches());
+    }
+}
+```
+
+### 11.5 Trace Correlation
+
+All MCP interactions within a logical workflow share a `trace_id`:
+
+```java
+@Component
+public class TraceIdFilter implements McpRequestFilter {
+
+    @Override
+    public void filter(McpRequest request) {
+        // Check for incoming trace ID
+        String traceId = request.getHeader("X-Trace-ID");
+
+        if (traceId == null) {
+            // Generate new trace ID for this workflow
+            traceId = "mcp-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+
+        // Set in MDC for logging throughout the request
+        MDC.put("traceId", traceId);
+
+        // Include in response headers
+        request.setResponseHeader("X-Trace-ID", traceId);
+    }
+}
+```
+
+### 11.6 Immutable Audit Trail
+
+For regulatory compliance, audit logs must be immutable:
+
+```sql
+-- Prevent updates and deletes on audit tables
+CREATE OR REPLACE FUNCTION prevent_audit_modification()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Audit logs are immutable and cannot be modified';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER no_update_mcp_log
+    BEFORE UPDATE OR DELETE ON mcp_interaction_log
+    FOR EACH ROW EXECUTE FUNCTION prevent_audit_modification();
+
+CREATE TRIGGER no_update_decision_context
+    BEFORE UPDATE OR DELETE ON mcp_decision_context
+    FOR EACH ROW EXECUTE FUNCTION prevent_audit_modification();
+```
+
+### 11.7 Monitoring Metrics
+
+Key metrics exposed via Micrometer (Prometheus-compatible):
+
+```java
+@Component
+public class McpMetrics {
+
+    private final MeterRegistry registry;
+
+    // Counters
+    private final Counter interactionsTotal;
+    private final Counter interactionsByTool;
+    private final Counter interactionsByStatus;
+    private final Counter validationFailures;
+
+    // Timers
+    private final Timer toolLatency;
+
+    // Gauges
+    private final AtomicInteger activeConnections;
+
+    public McpMetrics(MeterRegistry registry) {
+        this.registry = registry;
+
+        this.interactionsTotal = Counter.builder("mcp.interactions.total")
+            .description("Total MCP tool invocations")
+            .register(registry);
+
+        this.toolLatency = Timer.builder("mcp.tool.latency")
+            .description("MCP tool execution time")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(registry);
+
+        this.activeConnections = registry.gauge("mcp.connections.active",
+            new AtomicInteger(0));
+    }
+
+    public void recordInteraction(String tool, String status, long latencyMs) {
+        interactionsTotal.increment();
+
+        registry.counter("mcp.interactions.by_tool", "tool", tool).increment();
+        registry.counter("mcp.interactions.by_status", "status", status).increment();
+
+        toolLatency.record(latencyMs, TimeUnit.MILLISECONDS);
+    }
+}
+```
+
+### 11.8 Grafana Dashboard Templates
+
+Pre-built dashboard JSON for common monitoring scenarios:
+
+```yaml
+# monitoring/grafana/mcp-dashboard.json
+# Panels:
+# - MCP Interactions Over Time (by tool)
+# - Error Rate by Agent
+# - Latency Percentiles (p50, p95, p99)
+# - Risk Level Distribution
+# - Top Agents by Volume
+# - Failed Interactions (with drill-down)
+# - Terminology Validation Failures
+```
+
+Dashboard panels configuration shipped with the server, importable via Grafana provisioning.
+
+### 11.9 Future: OpenTelemetry Integration
+
+The logging-based approach can be enhanced with full OpenTelemetry tracing in a future phase:
+
+```yaml
+# Future configuration
+fhir4java:
+  observability:
+    mode: logging              # logging (current) or opentelemetry (future)
+    opentelemetry:
+      enabled: false
+      endpoint: ""
+      service-name: fhir4java-mcp
+```
+
+---
+
 ## Implementation Priority & Phasing
 
 ### Phase 1: Foundation (Weeks 1-4) - "Agents Can Discover"
@@ -2174,17 +3516,289 @@ fhir4java:
 
 ---
 
+## Testing Strategy
+
+### Clinical Scenario Coverage
+
+Testing AI-integrated healthcare systems requires coverage of clinical edge cases that go beyond typical software testing. The test suite should include:
+
+**BDD Feature Categories:**
+
+| Category | Coverage | Example Scenarios |
+|----------|----------|-------------------|
+| **Normal workflows** | Common clinical paths | Patient lookup, lab ordering, result viewing |
+| **Edge cases** | Unusual but valid scenarios | 90+ year old patient, multiple allergies, complex conditions |
+| **Error handling** | System failures and recovery | Database timeout during order, network failure mid-mutation |
+| **Consent enforcement** | Privacy compliance | Patient with mental health consent restrictions |
+| **AI safety** | Agent guardrails | Hallucinated LOINC code, high-risk medication order |
+| **Multi-tenant isolation** | Data separation | Agent from Tenant A cannot access Tenant B data |
+
+### Clinical Edge Case Test Scenarios
+
+The BDD test suite should include 500+ scenarios covering:
+
+**Patient Demographics:**
+- Neonates (< 1 month old) - weight-based dosing
+- Pediatric (1-18 years) - age-specific reference ranges
+- Geriatric (65+ years) - polypharmacy risks
+- Pregnant patients - medication contraindications
+- Patients with no recorded allergies vs. unknown allergies
+
+**Clinical Complexity:**
+- Multiple active diagnoses (5+ conditions)
+- Polypharmacy (10+ active medications)
+- Drug-drug interactions (mild, moderate, severe)
+- Drug-allergy cross-reactivity
+- Renal/hepatic impairment affecting drug dosing
+- Critical lab values requiring immediate action
+
+**AI-Specific Edge Cases:**
+```gherkin
+@ai-safety
+Scenario: Agent attempts to use hallucinated LOINC code
+  Given a clinical-summary-agent is connected via MCP
+  When the agent calls fhir_mutate to create an Observation
+  And the Observation uses LOINC code "99999-0" which does not exist
+  Then the response should include terminologyValidation.valid = false
+  And the response should suggest valid alternatives
+  And the mutation should be rejected if strict-mode is enabled
+
+@ai-safety
+Scenario: Agent attempts high-risk order without confirmation
+  Given a clinical-summary-agent with standard scopes
+  When the agent calls fhir_mutate to create a MedicationRequest
+  And the medication is a controlled substance
+  Then the response should include riskLevel = "HIGH"
+  And the response should include requiresReview = true
+  And the mutation should require explicit confirmation
+
+@consent
+Scenario: Agent queries patient with mental health consent restriction
+  Given Patient/123 has a Consent restricting mental health records
+  When a research-agent queries for Condition resources for Patient/123
+  Then mental health conditions should be excluded from results
+  And a consent-filter-applied audit entry should be created
+
+@multi-tenant
+Scenario: Agent cannot access data from other tenant
+  Given clinical-summary-agent is authorized for tenant "hospital-a"
+  When the agent queries for Patient resources
+  Then only patients from "hospital-a" are returned
+  And attempting to read Patient/999 from "hospital-b" returns 403
+```
+
+### Test Data Generation
+
+**Synthetic patient generator:**
+```java
+@Component
+public class ClinicalTestDataGenerator {
+
+    /**
+     * Generate realistic synthetic patients with various clinical profiles
+     */
+    public List<Patient> generatePatientCohort(CohortConfig config) {
+        List<Patient> patients = new ArrayList<>();
+
+        // Age distribution (pediatric, adult, geriatric)
+        for (AgeGroup group : config.getAgeGroups()) {
+            patients.addAll(generateForAgeGroup(group, config.getCountPerGroup()));
+        }
+
+        // Add clinical complexity
+        patients.forEach(p -> {
+            addConditions(p, randomize(1, 5));
+            addMedications(p, randomize(0, 10));
+            addAllergies(p, randomize(0, 3));
+            addLabHistory(p, randomize(10, 50));
+        });
+
+        return patients;
+    }
+
+    /**
+     * Generate edge case scenarios
+     */
+    public void generateEdgeCases() {
+        // Neonatal patient with rare condition
+        createNeonatalEdgeCase();
+
+        // Geriatric with polypharmacy
+        createPolypharmacyEdgeCase();
+
+        // Patient with complex consent restrictions
+        createConsentEdgeCase();
+
+        // Patient with critical pending results
+        createCriticalLabEdgeCase();
+    }
+}
+```
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/clinical-tests.yml
+clinical-tests:
+  runs-on: ubuntu-latest
+  steps:
+    - name: Run BDD Clinical Scenarios
+      run: ./mvnw test -pl fhir4java-server -Dtest=ClinicalCucumberIT
+
+    - name: Run AI Safety Tests
+      run: ./mvnw test -pl fhir4java-mcp -Dtest=AiSafetyIT
+
+    - name: Run Consent Enforcement Tests
+      run: ./mvnw test -pl fhir4java-server -Dtest=ConsentEnforcementIT
+
+    - name: Run Multi-Tenant Isolation Tests
+      run: ./mvnw test -pl fhir4java-server -Dtest=TenantIsolationIT
+
+    - name: Generate Clinical Test Report
+      run: ./mvnw surefire-report:report
+```
+
+---
+
+## MVP Definition
+
+### MVP Scope (Phases 1-3)
+
+The Minimum Viable Product includes the foundational capabilities for AI agent integration:
+
+| Pillar | MVP Components | Deferred to Later |
+|--------|----------------|-------------------|
+| **1. MCP Server** | 3 tools (discover, query, mutate), Streamable HTTP transport, Basic response hints | MCP Resources, Prompt Templates, SSE/stdio transports |
+| **1. Safety** | Dry-run mode, Risk-level tagging | Full terminology validation (use warnings not rejections) |
+| **2. API Discovery** | OpenAPI 3.1 generation, Basic CapabilityStatement | Full FHIR-aware OpenAPI customization |
+| **3. Events** | SSE endpoint for resource changes | Full FHIR Subscriptions, Webhook registry |
+| **4. Semantic Search** | NL-to-FHIR translation (rule-based) | Vector search, Medical embeddings, Hybrid search |
+| **5. Auth** | OAuth2 resource server, API key auth, Basic scopes | Consent enforcement, Provenance tracking, Data localization |
+| **6. Bulk Data** | Basic $export | De-identification, NDJSON streaming |
+| **7. Orchestration** | - | Composite workflows, CDS Hooks, GraphQL |
+| **8-10. Clinical UI** | - | All deferred to later phases |
+| **11. Observability** | Basic MCP audit logging | Full metrics, Grafana dashboards, Decision context |
+
+### MVP Dependency Map
+
+```
+Phase 1 (Foundation)                    Phase 2 (MCP)                      Phase 3 (Events)
+─────────────────────                   ────────────────                   ────────────────
+
+┌──────────────────┐                   ┌──────────────────┐               ┌──────────────────┐
+│ OpenAPI 3.1      │                   │ fhir_discover    │◀──────────────│ SSE Events       │
+│ Generation       │                   │ tool             │               │                  │
+└────────┬─────────┘                   └────────┬─────────┘               └──────────────────┘
+         │                                      │
+         ��                                      │
+┌────────▼─────────┐                   ┌────────▼─────────┐
+│ DiscoveryService │──────────────────▶│ fhir_query tool  │
+│ (internal)       │                   │                  │
+└────────┬─────────┘                   └────────┬─────────┘
+         │                                      │
+         │                                      │
+┌────────▼─────────┐                   ┌────────▼─────────┐
+│ OAuth2 Resource  │──────────────────▶│ fhir_mutate tool │
+│ Server           │                   │ + dry-run        │
+└──────────────────┘                   └──────────────────┘
+
+┌──────────────────┐                   ┌──────────────────┐
+│ API Key Auth     │──────────────────▶│ MCP Audit        │
+│                  │                   │ Logging          │
+└──────────────────┘                   └──────────────────┘
+```
+
+### MVP Success Criteria
+
+| Criterion | Target | Validation |
+|-----------|--------|------------|
+| Agent can discover capabilities | `fhir_discover(topic: "all")` returns valid response | Integration test |
+| Agent can query data | `fhir_query(action: "search")` returns FHIR Bundle | Integration test |
+| Agent can mutate data | `fhir_mutate(action: "create")` persists resource | Integration test |
+| Dry-run works | `fhir_mutate(dryRun: true)` validates without persisting | Unit test |
+| OAuth2 protects endpoints | Unauthenticated requests return 401 | Security test |
+| API key auth works | Valid API key grants access | Integration test |
+| OpenAPI docs available | `/v3/api-docs` returns valid OpenAPI spec | Smoke test |
+| SSE events stream | Resource changes appear on SSE stream | Integration test |
+| Audit logs captured | All MCP calls logged to database | Query audit table |
+| Multi-tenant isolation | Agent A cannot access Tenant B data | Security test |
+
+### Post-MVP Roadmap
+
+| Phase | Focus | Key Deliverables |
+|-------|-------|------------------|
+| **Phase 4** | Intelligence | Vector search, NL query with LLM, Medical embeddings |
+| **Phase 5** | Orchestration | Composite workflows, CDS Hooks, GraphQL |
+| **Phase 6** | Clinical UI Backend | Command API, Queue management, Note lifecycle |
+| **Phase 7** | Configuration | UI config service, Multi-level preferences |
+| **Phase 8** | Clinical UI Frontend | React app, Patient chart, Queue dashboard |
+| **Phase 9** | Compliance | Full consent enforcement, Provenance, Data localization |
+| **Phase 10** | Operations | Grafana dashboards, Advanced metrics, OpenTelemetry |
+
+---
+
+## Localization Considerations
+
+### Multi-Language Support
+
+For deployment in Asia (Singapore, China) and other regions, consider:
+
+**Prompt Templates:**
+```yaml
+# mcp-prompts/patient-summary.yml
+name: patient_summary
+description:
+  en: "Generate a clinical summary for a patient"
+  zh: "为患者生成临床摘要"
+messages:
+  - role: user
+    content:
+      en: "Generate a clinical summary for this patient: ..."
+      zh: "为此患者生成临床摘要：..."
+```
+
+**Terminology Mappings:**
+```yaml
+fhir4java:
+  terminology:
+    mappings:
+      snomed-ct:
+        edition: international        # or zh-cn for Chinese edition
+        fallback: international
+      icd-10:
+        version: icd-10-cm           # or icd-10-zh for Chinese version
+```
+
+**Configuration:**
+```yaml
+fhir4java:
+  localization:
+    default-locale: en
+    supported-locales:
+      - en
+      - zh-CN
+      - zh-TW
+    terminology:
+      snomed-chinese-edition: true
+      icd-10-chinese-version: true
+```
+
+---
+
 ## Summary
 
 This design transforms FHIR4Java from a **FHIR server** into a **complete AI-ready clinical platform** serving two audiences:
 
-**For AI Agents (Pillars 1-7):**
+**For AI Agents (Pillars 1-7, 11):**
 - MCP integration with 3 unified tools (discover, query, mutate) keeps the interface lean and scalable
+- Safety features: dry-run mode, risk-level tagging, terminology validation prevent accidental or hallucinated mutations
 - `fhir_discover` enables runtime capability learning
 - OpenAPI serves REST consumers, enhanced CapabilityStatement serves FHIR systems
 - Event streaming (SSE, WebSocket, FHIR Subscriptions) enables real-time agent reactions
-- Semantic search allows natural language queries over clinical narratives
-- Agent-friendly auth with OAuth2/SMART scopes ensures secure, fine-grained access
+- Semantic search with medical-domain embeddings (ClinicalBERT, BioBERT) and hybrid search (structured + keyword + vector)
+- Agent-friendly auth with OAuth2/SMART scopes, Consent enforcement, AI Provenance tracking, and data localization
+- Bulk data export with de-identification profiles (Safe Harbor, k-anonymity) for research use cases
+- Comprehensive observability with MCP audit logging, explainability metadata, and immutable audit trails for regulatory compliance
 
 **For Clinical UI (Pillars 8-10):**
 - Command API provides natural language interface for clinicians (voice/text)
@@ -2193,9 +3807,22 @@ This design transforms FHIR4Java from a **FHIR server** into a **complete AI-rea
 - Queue management supports full ambulatory workflow (scheduled → arrived → roomed → ready → consultation → checkout)
 - Note lifecycle service manages pended/signed/addendum states with pending results coordination
 
+**Compliance & Security:**
+- FHIR Consent resource enforcement ensures patient privacy preferences are respected
+- AI Provenance tracking creates audit trail for all AI-generated content (model, confidence, human review status)
+- Relationship-based access control with qualifiers (`:own`, `:care-team`, `:ai-suggested`)
+- Data localization support for regional regulations (Singapore PDPA, China PIPL/DSL, EU GDPR, US HIPAA)
+
+**Testing & Quality:**
+- Comprehensive BDD test suite with 500+ clinical scenarios
+- AI safety tests covering hallucinated codes, high-risk orders, consent enforcement
+- Multi-tenant isolation verification
+- Synthetic patient data generation for edge case testing
+
 **Integration Points:**
 - Command API reuses interpretation logic from MCP tools internally
 - Clinical events (result-received, queue-updated, etc.) flow through the same event infrastructure as agent events
 - UI configuration tables share the `fhir` schema with tenant configuration
+- Observability (Pillar 11) captures all MCP interactions across all pillars
 
-The 8-phase implementation ensures production stability while incrementally delivering value: Phases 1-5 focus on AI agent capabilities, Phases 6-8 add clinical UI support.
+The 8-phase implementation ensures production stability while incrementally delivering value: Phases 1-3 deliver the MVP (MCP tools, basic auth, events), Phases 4-5 add intelligence and orchestration, Phases 6-8 add clinical UI support. See the MVP Definition section for scope details.
