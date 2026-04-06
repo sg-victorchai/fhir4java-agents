@@ -745,6 +745,92 @@ public class TerminologyValidator {
 }
 ```
 
+#### 1.11 Rate Limiting
+
+> **Infrastructure Note:** Rate limiting for MCP endpoints is handled at the **API Gateway layer**, not within the application.
+
+**Architecture:**
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   AI Agent      │────▶│  API Gateway    │────▶│  FHIR4Java      │
+│                 │     │  (Rate Limit)   │     │  MCP Server     │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                              │
+                              ▼
+                        ┌─────────────────┐
+                        │ Rate limit by:  │
+                        │ - API Key       │
+                        │ - Agent ID      │
+                        │ - Tenant        │
+                        │ - IP Address    │
+                        └─────────────────┘
+```
+
+**API Gateway handles:**
+- Per-agent rate limits (configured via agent API key metadata)
+- Per-tenant aggregate limits
+- Burst handling with token bucket algorithm
+- Distributed rate limiting across multiple gateway instances
+- Standard 429 Too Many Requests response with `Retry-After` header
+
+**Application-level configuration** (used by API Gateway for policy lookup):
+```yaml
+fhir4java:
+  auth:
+    api-keys:
+      agents:
+        - id: clinical-summary-agent
+          rate-limit: 100/minute      # Enforced by API Gateway
+          burst-limit: 20             # Max requests in burst window
+        - id: bulk-export-agent
+          rate-limit: 10/minute       # Lower rate for heavy operations
+          burst-limit: 5
+```
+
+This separation ensures rate limiting scales horizontally without application-level coordination overhead.
+
+#### 1.12 Mutation Safety & Data Integrity
+
+> **Design Note:** The `fhir_mutate` tool does **not expose DELETE operations** at the application level. All data modifications follow an immutable, version-based pattern.
+
+**Mutation Model:**
+
+| Operation | Behavior | Data Impact |
+|-----------|----------|-------------|
+| `create` | Insert new resource | New row in `fhir_resource`, version 1 |
+| `update` | Insert new version | Current row marked `is_current=false`, new row with incremented version |
+| `patch` | Insert new version | Same as update, with JSON Patch applied |
+| `delete` | **Not exposed via MCP** | Agents cannot delete resources |
+
+**Why no DELETE for AI agents:**
+
+1. **Clinical data integrity**: Medical records should never be permanently deleted; they require complete audit trails
+2. **Regulatory compliance**: HIPAA, PDPA, and other regulations require data retention
+3. **Agent safety**: Prevents accidental bulk deletion from misinterpreted commands
+
+**Soft delete pattern (admin-only, not via MCP):**
+```sql
+-- Resources are never physically deleted
+-- "Deletion" is a status change with full history preserved
+UPDATE fhir_resource
+SET is_deleted = true,
+    deleted_at = NOW(),
+    deleted_by = :admin_user
+WHERE resource_id = :id;
+
+-- History table preserves all versions indefinitely
+INSERT INTO fhir_resource_history
+SELECT * FROM fhir_resource WHERE resource_id = :id;
+```
+
+**Version history guarantees:**
+- Every `update` and `patch` creates a new version in `fhir_resource_history`
+- Previous versions remain accessible via `vread` (`fhir_query` with `action: "vread"`)
+- Complete audit trail from creation through all modifications
+- `_history` endpoint returns full version chain
+
+This architecture ensures AI agents **cannot cause data loss** — they can only create new versions of existing data.
+
 ---
 
 ## Pillar 2: API Discovery (OpenAPI + Enhanced CapabilityStatement)
@@ -1110,6 +1196,90 @@ alerts/critical              # All critical value alerts (tenant-wide)
 notes/{id}/updates           # Real-time note updates
 ```
 
+#### WebSocket Authentication
+
+WebSocket connections cannot include OAuth2 tokens in headers after the initial handshake. Use **ticket-based authentication**:
+
+**Authentication Flow:**
+```
+┌─────────────┐    1. Request ticket (with OAuth token)    ┌──────────────┐
+│   Client    │ ─────────────────────────────────────────▶ │  REST API    │
+│             │ ◀───────────────────────────────────────── │              │
+│             │    2. Return one-time ticket (JWT, 30s)    │              │
+└─────────────┘                                            └──────────────┘
+       │
+       │ 3. Connect WebSocket with ticket
+       │    ws://server/ws/events?ticket=eyJhbG...
+       ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  WebSocket Server                                                        │
+│  4. Validate ticket (signature, expiry, one-time use)                   │
+│  5. Extract user context (tenant, user, scopes)                         │
+│  6. Establish authenticated session                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Ticket endpoint:**
+```
+POST /api/auth/ws-ticket
+Authorization: Bearer <oauth_token>
+
+Response:
+{
+  "ticket": "eyJhbGciOiJIUzI1NiIs...",
+  "expiresIn": 30,
+  "websocketUrl": "wss://server/ws/events"
+}
+```
+
+**Ticket validation:**
+```java
+@Component
+public class WebSocketTicketValidator {
+
+    private final Set<String> usedTickets = ConcurrentHashMap.newKeySet();
+
+    public AuthContext validateTicket(String ticket) {
+        // 1. Verify JWT signature
+        Claims claims = Jwts.parserBuilder()
+            .setSigningKey(secretKey)
+            .build()
+            .parseClaimsJws(ticket)
+            .getBody();
+
+        // 2. Check expiry (30 second window)
+        if (claims.getExpiration().before(new Date())) {
+            throw new AuthenticationException("Ticket expired");
+        }
+
+        // 3. Ensure one-time use
+        String ticketId = claims.getId();
+        if (!usedTickets.add(ticketId)) {
+            throw new AuthenticationException("Ticket already used");
+        }
+
+        // 4. Extract auth context
+        return AuthContext.builder()
+            .tenantId(claims.get("tenant_id", String.class))
+            .userId(claims.getSubject())
+            .scopes(claims.get("scopes", List.class))
+            .build();
+    }
+}
+```
+
+**Configuration:**
+```yaml
+fhir4java:
+  websocket:
+    auth:
+      ticket-expiry-seconds: 30
+      require-https: true
+    endpoints:
+      events: /ws/events
+      clinical: /ws/clinical
+```
+
 #### WebSocket Handler
 
 ```java
@@ -1336,6 +1506,71 @@ fhir4java:
         ollama:
           endpoint: http://localhost:11434
           model: medllama2
+```
+
+**Dimension Handling & Provider Migration:**
+
+Different embedding providers produce vectors of different dimensions:
+
+| Provider | Dimensions |
+|----------|------------|
+| OpenAI text-embedding-3-small | 1536 |
+| OpenAI text-embedding-3-large | 3072 |
+| ClinicalBERT | 768 |
+| BioBERT | 768 |
+| PubMedBERT | 768 |
+
+The `fhir_resource_embedding` table stores `model_id` alongside embeddings to handle this:
+
+```sql
+-- Schema supports multiple embedding dimensions
+CREATE TABLE fhir_resource_embedding (
+    ...
+    embedding vector,                    -- Dynamic dimension based on model
+    model_id VARCHAR(100) NOT NULL,      -- Tracks which model generated this embedding
+    dimensions INTEGER NOT NULL,         -- Actual dimension count
+    ...
+);
+
+-- Index per model (different dimensions require separate indexes)
+CREATE INDEX idx_embedding_openai ON fhir_resource_embedding
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
+    WHERE model_id = 'openai:text-embedding-3-small';
+
+CREATE INDEX idx_embedding_clinical_bert ON fhir_resource_embedding
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
+    WHERE model_id = 'clinical-bert';
+```
+
+**Provider migration strategy:**
+
+When switching embedding providers (e.g., from OpenAI to ClinicalBERT), existing embeddings become incompatible. Options:
+
+1. **Re-embed all data** (Recommended for small datasets):
+   ```bash
+   # CLI command to trigger re-embedding
+   ./fhir4java-cli embeddings migrate --from openai --to clinical-bert --batch-size 100
+   ```
+
+2. **Gradual migration** (For large datasets):
+   - New/updated resources use new provider
+   - Background job re-embeds existing resources
+   - Queries check `model_id` and use appropriate index
+
+3. **Dual embeddings** (For evaluation):
+   - Store embeddings from both providers temporarily
+   - Compare search quality before committing to migration
+
+```yaml
+fhir4java:
+  ai:
+    embeddings:
+      migration:
+        enabled: false
+        source-provider: openai
+        target-provider: clinical-bert
+        batch-size: 100
+        parallel-workers: 4
 ```
 
 ### 4.5 Hybrid Search Architecture
@@ -1975,6 +2210,106 @@ The existing `BundleController` handles batch/transaction bundles. Enhance with:
 - **Partial failure handling** - Continue on error with detailed per-entry results
 - **Size limits configurable per agent** - Higher limits for trusted agents
 
+**Timeout and Lifecycle Configuration:**
+
+```yaml
+fhir4java:
+  bulk:
+    export:
+      max-duration: 4h                    # Maximum runtime for export job
+      status-expiry: 24h                  # How long to keep completed job status
+      file-expiry: 72h                    # How long to keep generated files
+      max-concurrent-exports: 5           # Limit concurrent exports per tenant
+      checkpoint-interval: 1000           # Save progress every N resources
+    batch:
+      sync-timeout: 30s                   # Timeout for synchronous batches
+      async-threshold: 100                # Switch to async if > N entries
+      max-entries: 10000                  # Maximum entries per batch
+      retry-failed: false                 # Retry failed entries automatically
+```
+
+**Job Lifecycle:**
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  QUEUED     │───▶│  RUNNING    │───▶│  COMPLETED  │───▶│  EXPIRED    │
+│             │    │             │    │             │    │  (cleaned)  │
+│ Job created │    │ Processing  │    │ Files ready │    │             │
+│ awaiting    │    │ resources   │    │ for 72h     │    │             │
+│ worker      │    │             │    │             │    │             │
+└─────────────┘    └──────┬──────┘    └─────────────┘    └─────────────┘
+                          │
+                          ▼
+                   ┌─────────────┐
+                   │  FAILED     │
+                   │             │
+                   │ Error after │
+                   │ max retries │
+                   └─────────────┘
+```
+
+**Handling Long-Running Export Failures:**
+
+```java
+@Service
+public class BulkExportService {
+
+    public void processExport(BulkExportJob job) {
+        try {
+            int processed = 0;
+            int checkpoint = config.getCheckpointInterval();
+
+            for (IBaseResource resource : resourceIterator(job)) {
+                writeToNdjson(job, resource);
+                processed++;
+
+                // Periodic checkpoint to enable resume
+                if (processed % checkpoint == 0) {
+                    saveCheckpoint(job, processed);
+                }
+
+                // Check timeout
+                if (job.isExpired()) {
+                    job.setStatus(JobStatus.FAILED);
+                    job.setError("Export exceeded maximum duration of " + config.getMaxDuration());
+                    break;
+                }
+            }
+
+            job.setStatus(JobStatus.COMPLETED);
+        } catch (Exception e) {
+            job.setStatus(JobStatus.FAILED);
+            job.setError(e.getMessage());
+            job.setLastCheckpoint(processed);  // Enable partial recovery
+        }
+    }
+}
+```
+
+**Status Response with Progress:**
+
+```json
+GET /api/bulk/status/job-123
+
+{
+  "jobId": "job-123",
+  "status": "RUNNING",
+  "progress": {
+    "resourcesProcessed": 45000,
+    "resourcesTotal": 120000,
+    "percentComplete": 37.5,
+    "currentResourceType": "Observation"
+  },
+  "timing": {
+    "startedAt": "2026-03-25T10:00:00Z",
+    "estimatedCompletion": "2026-03-25T10:45:00Z",
+    "maxDuration": "4h",
+    "elapsed": "15m"
+  },
+  "output": []  // Populated when COMPLETED
+}
+```
+
 ### 6.3 NDJSON Streaming
 
 Support NDJSON (Newline Delimited JSON) for streaming large result sets:
@@ -2212,6 +2547,135 @@ POST /api/ai/workflows/patient-intake
 }
 ```
 
+**Workflow Execution & Failure Handling:**
+
+Workflows support three failure modes, configurable per workflow:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `transaction` | All-or-nothing; rollback on any failure | Critical workflows requiring atomicity |
+| `compensating` | Auto-execute compensating actions on failure | Workflows with defined undo operations |
+| `partial` | Continue on failure; return partial results | Best-effort workflows |
+
+**Workflow configuration with failure handling:**
+
+```yaml
+workflow:
+  name: patient-intake
+  description: "Complete patient intake workflow"
+  failureMode: compensating              # transaction | compensating | partial
+
+  steps:
+    - name: create-patient
+      operation: create
+      resourceType: Patient
+      output: patientId
+      compensate:                        # Undo action if later step fails
+        operation: delete
+        resourceType: Patient
+        id: "${patientId}"
+
+    - name: create-encounter
+      operation: create
+      resourceType: Encounter
+      input:
+        subject: "Patient/${patientId}"
+      output: encounterId
+      compensate:
+        operation: delete
+        resourceType: Encounter
+        id: "${encounterId}"
+
+    - name: record-vitals
+      operation: create
+      resourceType: Observation
+      input:
+        subject: "Patient/${patientId}"
+        encounter: "Encounter/${encounterId}"
+      # No compensate - if this fails, previous steps are rolled back
+```
+
+**Workflow execution engine:**
+
+```java
+@Service
+public class WorkflowExecutor {
+
+    public WorkflowResult execute(WorkflowDefinition workflow, Map<String, Object> inputs) {
+        List<StepResult> completedSteps = new ArrayList<>();
+
+        try {
+            for (WorkflowStep step : workflow.getSteps()) {
+                StepResult result = executeStep(step, inputs, completedSteps);
+                completedSteps.add(result);
+
+                // Update inputs with step outputs for next step
+                inputs.putAll(result.getOutputs());
+            }
+
+            return WorkflowResult.success(completedSteps);
+
+        } catch (StepExecutionException e) {
+            return handleFailure(workflow, completedSteps, e);
+        }
+    }
+
+    private WorkflowResult handleFailure(
+            WorkflowDefinition workflow,
+            List<StepResult> completedSteps,
+            StepExecutionException error) {
+
+        switch (workflow.getFailureMode()) {
+            case TRANSACTION:
+                // Rollback via database transaction (all in same tx)
+                throw new WorkflowRollbackException(error);
+
+            case COMPENSATING:
+                // Execute compensating actions in reverse order
+                List<CompensationResult> compensations = new ArrayList<>();
+                for (int i = completedSteps.size() - 1; i >= 0; i--) {
+                    StepResult step = completedSteps.get(i);
+                    if (step.hasCompensation()) {
+                        CompensationResult comp = executeCompensation(step);
+                        compensations.add(comp);
+                    }
+                }
+                return WorkflowResult.compensated(completedSteps, compensations, error);
+
+            case PARTIAL:
+                // Return what succeeded
+                return WorkflowResult.partial(completedSteps, error);
+
+            default:
+                throw new IllegalStateException("Unknown failure mode");
+        }
+    }
+}
+```
+
+**Workflow response with failure details:**
+
+```json
+{
+  "workflowId": "wf-789",
+  "status": "COMPENSATED",
+  "completedSteps": [
+    { "name": "create-patient", "status": "SUCCESS", "resourceId": "Patient/123" },
+    { "name": "create-encounter", "status": "SUCCESS", "resourceId": "Encounter/456" },
+    { "name": "record-vitals", "status": "FAILED", "error": "Invalid observation code" }
+  ],
+  "compensations": [
+    { "step": "create-encounter", "status": "COMPENSATED", "action": "Deleted Encounter/456" },
+    { "step": "create-patient", "status": "COMPENSATED", "action": "Deleted Patient/123" }
+  ],
+  "error": {
+    "step": "record-vitals",
+    "message": "Invalid observation code",
+    "code": "INVALID_CODE"
+  }
+}
+```
+
 ### 7.2 Clinical Decision Support Hooks
 
 Implement [CDS Hooks](https://cds-hooks.hl7.org/) for AI-powered clinical decision support:
@@ -2277,6 +2741,57 @@ The Command API is designed for **human clinicians using the web UI**, while MCP
 
 - **Command API** adds: confirmation flows, risk assessment, activity streams, note integration, voice input support
 - **MCP tools** focus on: structured tool calling, agent-friendly responses, MCP protocol compliance
+
+**Clear Boundary Definition:**
+
+| Aspect | Command API | MCP Tools |
+|--------|-------------|-----------|
+| **Authentication** | User session (OAuth2 user token) | Agent credentials (API key or OAuth2 client credentials) |
+| **Authorization context** | Human user identity | Agent identity |
+| **Confirmation flows** | Yes - UI shows previews, requires clicks | No - agent decides autonomously |
+| **Risk assessment** | Displayed to human for decision | Returned in response metadata |
+| **Activity stream** | Yes - shows in UI sidebar | No - agents don't need visual feedback |
+| **Voice input** | Supported | Not applicable |
+| **Audit attribution** | Logged as user action | Logged as agent action |
+
+**Can AI agents use the Command API?**
+
+**No.** The Command API is restricted to authenticated human users only. Reasons:
+
+1. **Audit clarity**: Actions must be attributed to either a human or an agent, not ambiguously both
+2. **Security model**: Command API assumes human-in-the-loop for risk decisions; agents should use dry-run mode via MCP instead
+3. **Design intent**: Agents have structured tools (`fhir_query`, `fhir_mutate`) optimized for programmatic access; natural language interpretation is overhead for agents that already understand structured calls
+
+**Shared components:**
+
+The Command API and MCP tools share these internal services (but expose them differently):
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Shared Internal Services                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ InterpretationService - Pattern matching, semantic search, LLM   │   │
+│  │ FhirResourceService - CRUD operations on FHIR resources          │   │
+│  │ TerminologyService - Code validation, suggestions                │   │
+│  │ RiskAssessmentService - Evaluate risk level of operations        │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+          ▲                                           ▲
+          │                                           │
+┌─────────┴─────────┐                     ┌──────────┴──────────┐
+│   Command API     │                     │    MCP Tools        │
+│   /api/command    │                     │    fhir_*           │
+│                   │                     │                     │
+│ + Confirmation UI │                     │ + Structured I/O    │
+│ + Activity stream │                     │ + Response hints    │
+│ + Voice input     │                     │ + Dry-run mode      │
+│ + User session    │                     │ + Agent session     │
+└───────────────────┘                     └─────────────────────┘
+        ▲                                           ▲
+        │                                           │
+   Human User                                  AI Agent
+   (via Clinical UI)                           (via MCP Client)
+```
 
 ### 8.1 Command Endpoint
 
