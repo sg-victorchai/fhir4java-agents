@@ -6,6 +6,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -23,6 +24,13 @@ export class VpcEndpointAutomationConstruct extends Construct {
 
     const prefix = props.resourcePrefix;
 
+    // Explicit log group so it's deleted with the stack
+    const logGroup = new logs.LogGroup(this, 'LambdaLogGroup', {
+      logGroupName: `/aws/lambda/${prefix}-vpce-target-updater`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     this.lambda = new lambda.Function(this, 'UpdateTargetsLambda', {
       functionName: `${prefix}-vpce-target-updater`,
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -34,6 +42,7 @@ export class VpcEndpointAutomationConstruct extends Construct {
         TARGET_PORT: '443',
       },
       timeout: cdk.Duration.seconds(30),
+      logGroup,
     });
 
     // Grant permissions
@@ -45,9 +54,15 @@ export class VpcEndpointAutomationConstruct extends Construct {
       resources: ['*'],
     }));
 
+    // DescribeTargetHealth requires * as resource (doesn't support resource-level permissions)
+    this.lambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['elasticloadbalancing:DescribeTargetHealth'],
+      resources: ['*'],
+    }));
+
+    // RegisterTargets and DeregisterTargets can be scoped to specific target group
     this.lambda.addToRolePolicy(new iam.PolicyStatement({
       actions: [
-        'elasticloadbalancing:DescribeTargetHealth',
         'elasticloadbalancing:RegisterTargets',
         'elasticloadbalancing:DeregisterTargets',
       ],
@@ -68,16 +83,25 @@ export class VpcEndpointAutomationConstruct extends Construct {
 
     rule.addTarget(new targets.LambdaFunction(this.lambda));
 
-    // Initialize targets on stack deployment
+    // Initialize targets on stack deployment (runs on create and every update)
     new cr.AwsCustomResource(this, 'InitTargets', {
       onCreate: {
         service: 'Lambda',
         action: 'invoke',
         parameters: {
           FunctionName: this.lambda.functionName,
-          Payload: JSON.stringify({ init: true }),
+          Payload: JSON.stringify({ trigger: 'onCreate' }),
         },
-        physicalResourceId: cr.PhysicalResourceId.of('InitTargets'),
+        physicalResourceId: cr.PhysicalResourceId.of(Date.now().toString()),
+      },
+      onUpdate: {
+        service: 'Lambda',
+        action: 'invoke',
+        parameters: {
+          FunctionName: this.lambda.functionName,
+          Payload: JSON.stringify({ trigger: 'onUpdate' }),
+        },
+        physicalResourceId: cr.PhysicalResourceId.of(Date.now().toString()),
       },
       policy: cr.AwsCustomResourcePolicy.fromStatements([
         new iam.PolicyStatement({

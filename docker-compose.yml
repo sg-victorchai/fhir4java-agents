@@ -11,8 +11,8 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/fhir4java
-      - SPRING_DATASOURCE_USERNAME=fhir4java
-      - SPRING_DATASOURCE_PASSWORD=fhir4java
+      - SPRING_DATASOURCE_USERNAME=fhir4java_app
+      - SPRING_DATASOURCE_PASSWORD=fhir4java_app
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
     depends_on:
@@ -37,8 +37,8 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_DB=fhir4java
-      - POSTGRES_USER=fhir4java
-      - POSTGRES_PASSWORD=fhir4java
+      - POSTGRES_USER=fhir4java_app
+      - POSTGRES_PASSWORD=fhir4java_app
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
@@ -46,7 +46,7 @@ services:
       - fhir-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fhir4java -d fhir4java"]
+      test: ["CMD-SHELL", "pg_isready -U fhir4java_app -d fhir4java"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -5,8 +5,8 @@ spring:
       on-profile: aws-iam
 
   datasource:
-    url: jdbc:postgresql://${RDS_ENDPOINT}:${RDS_PORT:5432}/${RDS_DATABASE:fhir4java_prod}
-    username: ${RDS_USERNAME:fhir4java_app}
+    url: jdbc:postgresql://${RDS_ENDPOINT}:${RDS_PORT:5432}/${RDS_DATABASE}?sslmode=require
+    username: ${RDS_USERNAME}
     hikari:
       pool-name: fhir4java-iam-pool
       minimum-idle: 5

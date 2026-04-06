@@ -16,6 +16,7 @@ export interface ServiceConfig {
   maxCount: number;
   cpu: number;
   memory: number;
+  /** Target group for ALB routing */
   targetGroup: elbv2.IApplicationTargetGroup;
 }
 
@@ -25,10 +26,16 @@ export interface EcsConstructProps {
   services: ServiceConfig[];
   ecrRepository: ecr.IRepository;
   rdsEndpoint: string;
+  rdsDatabase: string;
   rdsSecretName: string;
+  rdsSecretArn: string;
   cacheEndpoint: string;
   cacheSecretArn: string;
   apiGatewayDomain: string;
+  /** Enable database auto-initialization. Default: false. Set to true only for first deployment. */
+  dbAutoInit?: boolean;
+  /** Set to true for initial deployment when ECR is empty. Sets desiredCount to 0. */
+  skipTaskDeployment?: boolean;
 }
 
 export class EcsConstruct extends Construct {
@@ -76,7 +83,7 @@ export class EcsConstruct extends Construct {
 
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: ['secretsmanager:GetSecretValue'],
-      resources: [props.cacheSecretArn],
+      resources: [props.cacheSecretArn, props.rdsSecretArn],
     }));
 
     // Log group
@@ -94,6 +101,18 @@ export class EcsConstruct extends Construct {
         memoryLimitMiB: svc.memory,
         executionRole,
         taskRole,
+        runtimePlatform: {
+          cpuArchitecture: ecs.CpuArchitecture.ARM64,
+          operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+        },
+      });
+
+      // Linux parameters with tmpfs for writable /tmp (works with read-only root filesystem)
+      const linuxParameters = new ecs.LinuxParameters(this, `${svc.name}LinuxParams`);
+      linuxParameters.addTmpfs({
+        containerPath: '/tmp',
+        size: 256, // 256 MiB
+        mountOptions: [ecs.TmpfsMountOption.RW],
       });
 
       const container = taskDefinition.addContainer(`${svc.name}Container`, {
@@ -107,45 +126,47 @@ export class EcsConstruct extends Construct {
           FHIR4JAVA_ENDPOINTS_ENABLED: svc.enabledEndpoints,
           RDS_ENDPOINT: props.rdsEndpoint,
           RDS_PORT: '5432',
-          RDS_DATABASE: 'fhir4java_prod',
-          RDS_USERNAME: 'fhir4java_app',
+          RDS_DATABASE: props.rdsDatabase,
+          RDS_USERNAME: `${props.resourcePrefix.replace(/-/g, '_')}_app`,
           ELASTICACHE_ENDPOINT: props.cacheEndpoint,
           ELASTICACHE_PORT: '6379',
           API_GATEWAY_DOMAIN: props.apiGatewayDomain,
           AWS_REGION: cdk.Stack.of(this).region,
+          // Only fhir-api service handles DB initialization to avoid race conditions
+          DB_AUTO_INIT: (svc.name === 'fhir-api' && props.dbAutoInit) ? 'true' : 'false',
+          // RDS secret name for bootstrap config to create IAM user (only needed for fhir-api with auto-init)
+          FHIR4JAVA_DB_RDS_SECRET_NAME: (svc.name === 'fhir-api' && props.dbAutoInit) ? props.rdsSecretName : '',
         },
         secrets: {
+          // ElastiCache secret is stored as plain text (not JSON), so no field extraction needed
           ELASTICACHE_AUTH_TOKEN: ecs.Secret.fromSecretsManager(
-            secretsmanager.Secret.fromSecretCompleteArn(this, `${svc.name}CacheSecret`, props.cacheSecretArn),
-            'authToken'
+            secretsmanager.Secret.fromSecretCompleteArn(this, `${svc.name}CacheSecret`, props.cacheSecretArn)
           ),
         },
         portMappings: [{ containerPort: 8080 }],
         readonlyRootFilesystem: true,
-        user: '65532:65532',
+        linuxParameters,
         healthCheck: {
-          command: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8080/actuator/health/liveness || exit 1'],
+          command: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"],
           interval: cdk.Duration.seconds(30),
           timeout: cdk.Duration.seconds(10),
           retries: 3,
-          startPeriod: cdk.Duration.seconds(60),
+          startPeriod: cdk.Duration.seconds(120),
         },
       });
-
-      // Add tmp volume for writable filesystem
-      taskDefinition.addVolume({ name: 'tmp' });
-      container.addMountPoints({ sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false });
 
       const service = new ecs.FargateService(this, `${svc.name}Service`, {
         serviceName: `${prefix}-${svc.name}`,
         cluster: this.cluster,
         taskDefinition,
-        desiredCount: svc.desiredCount,
+        // Set to 0 on initial deployment when ECR is empty
+        desiredCount: props.skipTaskDeployment ? 0 : svc.desiredCount,
         securityGroups: [this.taskSecurityGroup],
         vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
         enableExecuteCommand: true,
       });
 
+      // Attach to target group
       service.attachToApplicationTargetGroup(svc.targetGroup);
 
       // Auto-scaling
