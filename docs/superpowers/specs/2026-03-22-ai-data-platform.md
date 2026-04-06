@@ -8,24 +8,23 @@
 
 This document proposes the enhancements needed to transform FHIR4Java from a traditional FHIR server into a **fully AI-ready data and API platform** that natively integrates within AI agent ecosystems and supports a next-generation clinical UI.
 
-The design covers **eleven pillars**:
+The design covers **ten pillars**:
 
 | # | Pillar | Purpose |
 |---|--------|---------|
 | 1 | **MCP Server** | Expose FHIR as AI tools (3 unified tools: discover, query, mutate) + safety features (dry-run, risk-level, terminology validation) |
-| 2 | **API Discovery** | OpenAPI + enhanced CapabilityStatement for all consumers |
-| 3 | **Event-Driven Architecture** | Real-time updates via FHIR Subscriptions, SSE, WebSocket |
-| 4 | **Semantic Search** | Natural language queries + vector search with medical embeddings + hybrid search |
-| 5 | **Agent-Friendly Auth** | OAuth2/SMART + API keys + Consent enforcement + Provenance tracking + data localization |
-| 6 | **Bulk Data Processing** | $export + NDJSON streaming + de-identification profiles |
-| 7 | **AI Orchestration** | Composite workflows, CDS Hooks, GraphQL |
-| 8 | **Command API** | Natural language command interface for clinical UI |
-| 9 | **UI Configuration** | Multi-level config system (system → tenant → role → user) |
-| 10 | **Clinical Workflow** | Queue management, note lifecycle, pending results tracking |
-| 11 | **Observability** | MCP audit logging, explainability metadata, immutable audit trail, metrics |
+| 2 | **Event-Driven Architecture** | Real-time updates via FHIR Subscriptions, SSE, WebSocket |
+| 3 | **Semantic Search** | Natural language queries + vector search with medical embeddings + hybrid search |
+| 4 | **Agent-Friendly Auth** | OAuth2/SMART + API keys + Consent enforcement + Provenance tracking + data localization |
+| 5 | **Bulk Data Processing** | $export + NDJSON streaming + de-identification profiles |
+| 6 | **AI Orchestration** | Composite workflows, CDS Hooks, GraphQL |
+| 7 | **Command API** | Natural language command interface for clinical UI |
+| 8 | **UI Configuration** | Multi-level config system (system → tenant → role → user) |
+| 9 | **Clinical Workflow** | Queue management, note lifecycle, pending results tracking |
+| 10 | **Observability** | MCP audit logging, explainability metadata, immutable audit trail, metrics |
 
-Pillars 1-7 and 11 serve **AI agents** (Claude, GPT, custom agents).
-Pillars 8-10 serve the **clinical web UI** and its backend requirements.
+Pillars 1-6 and 10 serve **AI agents** (Claude, GPT, custom agents).
+Pillars 7-9 serve the **clinical web UI** and its backend requirements.
 
 ---
 
@@ -394,109 +393,7 @@ Tool responses include contextual hints to guide the agent's next action, reduci
 }
 ```
 
-#### 1.4 FHIR Resources as MCP Resources
-
-Expose FHIR data as native MCP "resources" — a read-only data primitive in the MCP protocol separate from tools. This allows host applications to pre-load clinical context before the agent starts reasoning.
-
-**Resource declaration:**
-```json
-{
-  "uri": "fhir://Patient/123",
-  "name": "Patient John Doe",
-  "mimeType": "application/fhir+json",
-  "description": "Patient resource with ID 123"
-}
-```
-
-**Resource templates for parameterized access:**
-```json
-{
-  "uriTemplate": "fhir://{resourceType}/{id}",
-  "name": "FHIR Resource by ID",
-  "description": "Read any FHIR resource by type and ID"
-}
-```
-
-**Why this matters for agents:**
-
-| Use Case | Without MCP Resources | With MCP Resources |
-|----------|----------------------|-------------------|
-| Context loading | Agent must call `fhir_query` tool | Agent reads `fhir://Patient/123` directly into context |
-| Multi-resource context | Multiple sequential tool calls | Host attaches multiple resources in one request |
-| LLM context window | Agent decides what to fetch | Host application pre-loads relevant resources |
-
-**Example workflow:**
-```
-User: "Summarize this patient's recent care"
-
-Host app (e.g., Claude Desktop) can automatically:
-1. Attach fhir://Patient/123 as context
-2. Attach fhir://Patient/123/$everything as context
-3. Agent sees full patient record WITHOUT making tool calls
-4. Agent focuses on reasoning, not data fetching
-```
-
-**Key benefit:** Reduces round-trips. The host application can pre-populate the agent's context with relevant FHIR data before the agent starts reasoning — no tool calls needed for read-only context.
-
-#### 1.5 Prompt Templates for Clinical Workflows
-
-Pre-built, parameterized prompt templates that agents can invoke for common clinical tasks. The server fetches relevant FHIR data and embeds it into a structured prompt, so the agent doesn't need to understand FHIR queries.
-
-**Available templates:**
-
-| Template | Description | Parameters |
-|----------|-------------|------------|
-| `patient_summary` | Generate a clinical summary for a patient | `patientId` |
-| `lab_trends` | Analyze lab result trends over time | `patientId`, `labCode`, `timeRange` |
-| `medication_review` | Review active medications for interactions | `patientId` |
-| `care_gap_analysis` | Identify gaps in preventive care | `patientId`, `guidelineSet` |
-| `clinical_timeline` | Build chronological timeline of encounters | `patientId`, `startDate`, `endDate` |
-
-**How agents use templates:**
-
-```
-Agent calls: getPrompt("patient_summary", { patientId: "123" })
-
-Server returns (with FHIR data already embedded):
-{
-  "name": "patient_summary",
-  "description": "Generate clinical summary for patient",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Generate a clinical summary for this patient:\n\n
-        **Patient:** John Smith, 67M, MRN 12345\n
-        **Problems:** Type 2 DM (2019), HTN (2018), HLD (2020)\n
-        **Medications:** Metformin 1000mg BID, Lisinopril 20mg daily, Atorvastatin 40mg QHS\n
-        **Allergies:** Penicillin (rash), Sulfa (anaphylaxis)\n
-        **Recent Labs:** A1c 8.1% (Mar 15), Cr 1.2 (Mar 15), LDL 142 (Mar 15)\n
-        **Recent Visits:** 3 encounters in past 6 months\n\n
-        Summarize current health status, key concerns, and care gaps."
-    }
-  ]
-}
-```
-
-**Why this matters for agents:**
-
-| Benefit | Description |
-|---------|-------------|
-| **Standardization** | Consistent clinical analysis across all agents using the server |
-| **Data embedding** | Server fetches and formats FHIR data; agent doesn't need FHIR knowledge |
-| **Domain expertise** | Templates encode clinical best practices (what data to include, how to analyze) |
-| **Reduced token usage** | Agent doesn't spend tokens figuring out what data to fetch or how to structure queries |
-
-**When to use each MCP primitive:**
-
-| MCP Primitive | Best For | Token Impact |
-|---------------|----------|--------------|
-| **Resources** | Pre-loading context, read-only data access | Reduces tool call overhead |
-| **Prompt Templates** | Standardized clinical workflows, consistent analysis | Reduces reasoning tokens |
-| **Tools** (`fhir_query`, etc.) | Dynamic queries, mutations, complex operations | Full flexibility |
-
-Together, resources and prompts let agents focus on **clinical reasoning** rather than **data fetching** — the server handles FHIR complexity while the agent handles clinical intelligence.
-
-#### 1.6 Transport Support
+#### 1.4 Transport Support
 
 | Transport | Use Case | Priority |
 |-----------|----------|----------|
@@ -504,7 +401,7 @@ Together, resources and prompts let agents focus on **clinical reasoning** rathe
 | **SSE** | Legacy MCP clients, real-time streaming | P1 |
 | **stdio** | Local development, CLI-based agents | P1 |
 
-#### 1.7 Validation & Error Handling
+#### 1.5 Validation & Error Handling
 
 Since unified tools have a broader input surface, the tool executor performs runtime validation and returns clear, actionable error messages:
 
@@ -520,7 +417,7 @@ Since unified tools have a broader input surface, the tool executor performs run
 
 This compensates for the lack of per-resource schema validation by providing discovery-guided error recovery.
 
-#### 1.8 Dry-Run Mode for Safe Mutations
+#### 1.6 Dry-Run Mode for Safe Mutations
 
 The `fhir_mutate` tool supports a `dryRun` parameter that validates and simulates the mutation without persisting changes:
 
@@ -582,7 +479,7 @@ The `fhir_mutate` tool supports a `dryRun` parameter that validates and simulate
 - Enables "what-if" exploration without side effects
 - Provides validation feedback before persistence
 
-#### 1.9 Risk-Level Tagging
+#### 1.7 Risk-Level Tagging
 
 All tool responses include a risk assessment to help agents and downstream systems understand the safety implications:
 
@@ -657,7 +554,7 @@ public class RiskAssessor {
 }
 ```
 
-#### 1.10 Terminology Validation
+#### 1.8 Terminology Validation
 
 Before persisting mutations that include coded values, validate against standard terminologies to prevent hallucinated or invalid codes:
 
@@ -745,7 +642,7 @@ public class TerminologyValidator {
 }
 ```
 
-#### 1.11 Rate Limiting
+#### 1.9 Rate Limiting
 
 > **Infrastructure Note:** Rate limiting for MCP endpoints is handled at the **API Gateway layer**, not within the application.
 
@@ -789,7 +686,7 @@ fhir4java:
 
 This separation ensures rate limiting scales horizontally without application-level coordination overhead.
 
-#### 1.12 Mutation Safety & Data Integrity
+#### 1.10 Mutation Safety & Data Integrity
 
 > **Design Note:** The `fhir_mutate` tool does **not expose DELETE operations** at the application level. All data modifications follow an immutable, version-based pattern.
 
@@ -831,211 +728,21 @@ SELECT * FROM fhir_resource WHERE resource_id = :id;
 
 This architecture ensures AI agents **cannot cause data loss** — they can only create new versions of existing data.
 
----
+#### 1.11 Standard FHIR Discovery (Non-AI Consumers)
 
-## Pillar 2: API Discovery (OpenAPI + Enhanced CapabilityStatement)
+> **Note:** Discovery for non-MCP consumers is handled by **existing standard FHIR features**, not new AI-specific pillars.
 
-### Goal
-Ensure all consumers — FHIR-aware systems, human developers, and non-MCP agents — can discover and understand the server's capabilities through standard protocols.
+| Consumer Type | Discovery Mechanism | Status |
+|---------------|---------------------|--------|
+| **AI Agents (MCP)** | `fhir_discover` tool | Covered by Pillar 1 |
+| **FHIR Systems (EHRs)** | `CapabilityStatement` at `/metadata` | Existing FHIR4Java feature |
+| **REST Developers** | OpenAPI via `springdoc-openapi` | Standard Spring dependency |
 
-### Relationship to `fhir_discover` (Pillar 1)
-
-The Hybrid B2+ design in Pillar 1 introduces `fhir_discover` as a dedicated MCP tool for AI agent discovery. This raises a valid question: **does Pillar 2 still need a separate Discovery API?**
-
-The short answer is: **no, not as originally designed.** The `fhir_discover` tool absorbs the core agent-discovery use case. Here's the overlap analysis:
-
-#### What `fhir_discover` Already Covers
-
-| Original Discovery API Endpoint | `fhir_discover` Equivalent | Status |
-|--------------------------------|---------------------------|--------|
-| `GET /api/discovery/resources` | `fhir_discover(topic: "resources")` | **Absorbed** |
-| `GET /api/discovery/resources/{type}` | `fhir_discover(topic: "all", resourceType: "Patient")` | **Absorbed** |
-| `GET /api/discovery/operations` | `fhir_discover(topic: "operations")` | **Absorbed** |
-| `GET /api/discovery/operations/{type}/{name}` | `fhir_discover(topic: "operations", resourceType: "Patient")` | **Absorbed** |
-| `GET /api/discovery/search-parameters/{type}` | `fhir_discover(topic: "searchParams", resourceType: "...")` | **Absorbed** |
-| `GET /api/discovery/capabilities` | `fhir_discover(topic: "all")` | **Absorbed** |
-| `GET /api/discovery/plugins` | N/A — platform internals, not agent-facing | **Dropped** |
-| `GET /api/discovery/tenants` | N/A — admin concern, not discovery | **Dropped** |
-
-For MCP-connected agents, `fhir_discover` provides everything the Discovery API would have — with the advantage of being a native MCP tool that doesn't require the agent to know REST endpoints.
-
-#### What CapabilityStatement Already Covers
-
-FHIR's `CapabilityStatement` (served at `/metadata`) is the standard mechanism for FHIR-to-FHIR interoperability. It declares:
-
-- Supported resource types and their interactions (CRUD)
-- Search parameters per resource type (name, type, documentation)
-- Extended operations (as canonical URL references)
-- Supported FHIR versions
-- Security/auth declarations
-
-For **FHIR-aware consumers** (EHR systems, FHIR clients, interoperability engines), CapabilityStatement is the correct and sufficient discovery mechanism. These systems already understand FHIR's interaction model, search parameter types, and operation definitions.
-
-#### Remaining Gaps: What Neither Covers for Non-MCP Consumers
-
-There is one consumer category not served by `fhir_discover` or CapabilityStatement:
-
-**Non-MCP programmatic consumers** — REST API clients, integration scripts, human developers, and AI agents that connect via HTTP rather than MCP. These consumers need:
-
-1. **Machine-readable API specification** — What endpoints exist? What are the request/response schemas?
-2. **Interactive documentation** — How do I try out an API call?
-3. **Code generation support** — Can I auto-generate a client SDK?
-
-This is the standard role of **OpenAPI**, not a custom Discovery API.
-
-### Revised Pillar 2 Scope
-
-Given the above analysis, Pillar 2 is **reduced and refocused** to two components:
-
-| Component | Audience | Purpose |
-|-----------|----------|---------|
-| **OpenAPI 3.1** | Human developers, REST clients, non-MCP agents | Standard machine-readable API spec with interactive docs |
-| **Enhanced CapabilityStatement** | FHIR-aware systems, EHR integrations | Richer conformance declaration (the spec requires it) |
-
-The custom Discovery REST API (`/api/discovery/*`) is **removed as a standalone pillar**. Its functionality is either:
-- Absorbed by `fhir_discover` MCP tool (for AI agents)
-- Already covered by CapabilityStatement (for FHIR systems)
-- Better served by OpenAPI (for REST developers)
-
-What remains is a **DiscoveryService** — an internal service class that powers the `fhir_discover` tool's responses by reading from `ResourceRegistry`, `SearchParameterRegistry`, and operation configs. This is an implementation detail of Pillar 1, not a separate API surface.
-
-### 2.1 OpenAPI 3.1 Specification
-
-Add `springdoc-openapi` to auto-generate OpenAPI specs from controllers:
-
-```yaml
-# New dependency in fhir4java-api/pom.xml
-springdoc-openapi-starter-webmvc-api: 2.8+
-```
-
-**Endpoints:**
-- `GET /v3/api-docs` - Full OpenAPI JSON spec
-- `GET /v3/api-docs.yaml` - Full OpenAPI YAML spec
-- `GET /swagger-ui.html` - Interactive API documentation
-
-**Why OpenAPI and not the custom Discovery API?**
-
-OpenAPI is the industry standard for REST API documentation with a massive ecosystem:
-- Clients can auto-generate SDKs in any language
-- Tools like Swagger UI provide interactive try-it-out documentation
-- CI/CD pipelines can validate API contract conformance
-- Non-MCP AI agents (e.g., OpenAI function calling, LangChain) can ingest OpenAPI specs directly
-
-A custom `/api/discovery/*` API would require every consumer to learn a proprietary schema. OpenAPI gives us all the same benefits with zero adoption friction.
-
-**Enhancements beyond default Spring generation:**
-
-The default `springdoc-openapi` output describes Spring controllers generically. We enhance it with FHIR-specific detail by reading from existing configuration:
-
-```java
-@Component
-public class FhirOpenApiCustomizer implements OpenApiCustomizer {
-
-    @Autowired
-    private ResourceRegistry resourceRegistry;
-
-    @Autowired
-    private SearchParameterRegistry searchParameterRegistry;
-
-    @Override
-    public void customise(OpenAPI openApi) {
-        // For each enabled resource in ResourceRegistry:
-        // 1. Generate per-resource path docs (/fhir/r5/Patient, /fhir/r5/Observation, etc.)
-        // 2. Add search parameters with types, modifiers, and examples to query params
-        // 3. Document extended operations with parameter schemas
-        // 4. Include FHIR-specific media types (application/fhir+json)
-        // 5. Add resource JSON schemas from StructureDefinitions
-    }
-}
-```
-
-This means OpenAPI documentation stays in sync with `ResourceRegistry` configuration automatically — same principle as `fhir_discover`, just a different output format.
-
-**Example generated OpenAPI path (for Patient search):**
-```yaml
-/fhir/r5/Patient:
-  get:
-    summary: Search Patient resources
-    operationId: searchPatient
-    tags: [Patient]
-    parameters:
-      - name: family
-        in: query
-        description: "A portion of the family name. Modifiers: :exact, :contains, :missing"
-        schema:
-          type: string
-        examples:
-          default: { value: "Smith" }
-          exact: { value: "family:exact=O'Brien" }
-      - name: birthdate
-        in: query
-        description: "Patient birth date. Prefixes: eq, ne, lt, gt, le, ge, sa, eb, ap"
-        schema:
-          type: string
-        examples:
-          exact: { value: "1990-01-01" }
-          range: { value: "ge1980-01-01" }
-      - name: identifier
-        in: query
-        description: "Patient identifier (system|value or value). Modifiers: :exact, :text, :not"
-        schema:
-          type: string
-        examples:
-          with_system: { value: "http://hospital.org|12345" }
-          value_only: { value: "12345" }
-    responses:
-      200:
-        description: Search results as FHIR Bundle
-        content:
-          application/fhir+json:
-            schema:
-              $ref: '#/components/schemas/Bundle'
-```
-
-### 2.2 Enhanced CapabilityStatement
-
-The existing `MetadataController` already generates a CapabilityStatement. We enhance it to be more complete, which benefits both FHIR-aware systems and serves as the authoritative conformance declaration:
-
-- **Add `TerminologyCapabilities`** endpoint (`/fhir/r5/metadata?mode=terminology`)
-- **Inline operation definitions** as contained resources (so consumers don't need to resolve canonical URLs)
-- **Include security/auth declarations** — advertise OAuth2/SMART endpoints, supported scopes
-- **Declare MCP support** via extension element (non-standard but useful):
-  ```json
-  {
-    "url": "http://fhir4java.org/StructureDefinition/mcp-support",
-    "valueBoolean": true
-  }
-  ```
-- **Add implementation guide references** for supported profiles
-
-This ensures CapabilityStatement remains the single source of truth for FHIR conformance, while OpenAPI serves REST developers and `fhir_discover` serves MCP agents.
-
-### 2.3 Discovery Architecture Summary
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Discovery Sources (Internal)                   │
-│  ResourceRegistry │ SearchParameterRegistry │ OperationConfigs   │
-└────────┬─────────────────────┬──────────────────────┬────────────┘
-         │                     │                      │
-         ▼                     ▼                      ▼
-┌─────────────────┐  ┌─────────────────┐  ┌───────────────────────┐
-│ fhir_discover   │  │ OpenAPI 3.1     │  │ CapabilityStatement   │
-│ (MCP Tool)      │  │ (/v3/api-docs)  │  │ (/fhir/r5/metadata)  │
-│                 │  │                 │  │                       │
-│ For: AI agents  │  │ For: REST devs, │  │ For: FHIR systems,   │
-│ via MCP         │  │ non-MCP agents, │  │ EHR integrations,    │
-│                 │  │ code generators │  │ conformance testing   │
-│ Format: MCP     │  │ Format: OpenAPI │  │ Format: FHIR JSON    │
-│ tool response   │  │ 3.1 JSON/YAML  │  │ (CapabilityStatement)│
-└─────────────────┘  └─────────────────┘  └───────────────────────┘
-```
-
-Three discovery surfaces, each serving a distinct audience, all generated from the same source configuration. No custom `/api/discovery/*` REST API needed.
+The `fhir_discover` tool is backed by an internal **DiscoveryService** that reads from `ResourceRegistry`, `SearchParameterRegistry`, and operation configs. This same data source can generate CapabilityStatement and OpenAPI output, but those are standard FHIR/REST features rather than AI-specific capabilities.
 
 ---
 
-## Pillar 3: Event-Driven Architecture (Real-Time Agent Integration)
+## Pillar 2: Event-Driven Architecture (Real-Time Agent Integration)
 
 ### Goal
 Enable AI agents to react to clinical data changes in real-time rather than polling.
@@ -1308,12 +1015,12 @@ public class ClinicalWebSocketHandler extends TextWebSocketHandler {
 
 ---
 
-## Pillar 4: Semantic Search & Natural Language Query
+## Pillar 3: Semantic Search & Natural Language Query
 
 ### Goal
 Allow AI agents to query clinical data using natural language, not just structured FHIR search parameters.
 
-### 4.1 Natural Language to FHIR Search Translation
+### 3.1Natural Language to FHIR Search Translation
 
 A new endpoint that translates natural language queries into FHIR search API calls:
 
@@ -1351,7 +1058,7 @@ Natural Language Query
 
 This component can work **without an LLM** by using rule-based NLP mapping against the SearchParameterRegistry, or can optionally integrate with an LLM for complex queries.
 
-### 4.2 Vector Search for Clinical Narratives
+### 3.2Vector Search for Clinical Narratives
 
 Add embedding-based search for unstructured clinical text (narrative fields, notes):
 
@@ -1385,7 +1092,7 @@ POST /api/ai/semantic-search
 }
 ```
 
-### 4.3 Embedding Pipeline Plugin
+### 3.3Embedding Pipeline Plugin
 
 A new plugin that generates embeddings on resource create/update:
 
@@ -1417,7 +1124,7 @@ fhir4java:
         - description
 ```
 
-### 4.4 Medical-Domain Embedding Providers (SPI)
+### 3.4Medical-Domain Embedding Providers (SPI)
 
 General-purpose embedding models (OpenAI, Ollama) may not capture clinical semantics as well as domain-specific models. The embedding system uses a **pluggable SPI** to support medical-domain models:
 
@@ -1573,7 +1280,7 @@ fhir4java:
         parallel-workers: 4
 ```
 
-### 4.5 Hybrid Search Architecture
+### 3.5Hybrid Search Architecture
 
 Combine multiple search strategies for robust clinical queries:
 
@@ -1702,7 +1409,7 @@ public class HybridSearchService {
 }
 ```
 
-### 4.6 Clinical Narrative Mode
+### 3.6Clinical Narrative Mode
 
 Optimized search for clinical documents like discharge summaries, progress notes, and consult reports:
 
@@ -1729,12 +1436,12 @@ fhir4java:
 
 ---
 
-## Pillar 5: Agent-Friendly Authentication & Authorization
+## Pillar 4: Agent-Friendly Authentication & Authorization
 
 ### Goal
 Enable fine-grained, scoped authorization for AI agents with proper identity, audit trail, and least-privilege access.
 
-### 5.1 OAuth2 / SMART on FHIR
+### 4.1OAuth2 / SMART on FHIR
 
 Implement [SMART on FHIR](https://smarthealthit.org/) authorization:
 
@@ -1758,7 +1465,7 @@ user/*.read                   - Read all resources in user context
 launch/patient                - Patient context launch
 ```
 
-### 5.2 Agent Identity & API Keys
+### 4.2Agent Identity & API Keys
 
 Support API key authentication for simpler agent integrations:
 
@@ -1781,7 +1488,7 @@ fhir4java:
         tenant-access: ["*"]
 ```
 
-### 5.3 Scoped Authorization Plugin
+### 4.3Scoped Authorization Plugin
 
 Replace the existing `NoOpAuthorizationPlugin` with a real implementation:
 
@@ -1793,7 +1500,7 @@ public class ScopedAuthorizationPlugin implements AuthorizationPlugin {
 }
 ```
 
-### 5.4 Agent Audit Trail
+### 4.4Agent Audit Trail
 
 Extend the existing audit log to capture agent-specific metadata:
 
@@ -1804,7 +1511,7 @@ ALTER TABLE fhir_audit_log ADD COLUMN tool_invocation_id VARCHAR(256);
 ALTER TABLE fhir_audit_log ADD COLUMN mcp_request_id VARCHAR(256);
 ```
 
-### 5.5 FHIR Consent Enforcement
+### 4.5FHIR Consent Enforcement
 
 Automatically enforce FHIR Consent resources before any data access. This ensures patient privacy preferences are respected by AI agents.
 
@@ -1904,7 +1611,7 @@ fhir4java:
         research-agent: research
 ```
 
-### 5.6 AI Provenance Tracking
+### 4.6AI Provenance Tracking
 
 Automatically create FHIR Provenance resources for all AI-generated or AI-modified content. This is **critical for regulatory compliance** and clinical accountability.
 
@@ -2025,7 +1732,7 @@ public class AiProvenancePlugin implements FhirPlugin {
 }
 ```
 
-### 5.7 Relationship-Based Access Control
+### 4.7Relationship-Based Access Control
 
 Fine-grained scopes that consider the relationship between the requesting agent and the target data:
 
@@ -2083,7 +1790,7 @@ public class RelationshipScopeValidator {
 }
 ```
 
-### 5.8 Data Localization
+### 4.8Data Localization
 
 Support regional data protection requirements by enforcing data residency and access controls:
 
@@ -2172,12 +1879,12 @@ WHERE tenant_code = 'HOSP-SG';
 
 ---
 
-## Pillar 6: Bulk Data & Batch Processing for Agents
+## Pillar 5: Bulk Data & Batch Processing for Agents
 
 ### Goal
 Enable AI agents to efficiently process large volumes of clinical data.
 
-### 6.1 FHIR Bulk Data Export ($export)
+### 5.1FHIR Bulk Data Export ($export)
 
 Implement the [FHIR Bulk Data Access](https://hl7.org/fhir/uv/bulkdata/) specification:
 
@@ -2202,7 +1909,7 @@ GET /api/bulk/status/job-123
 
 **Why agents need this:** AI agents doing population health analysis, training data extraction, or cohort analysis need to process thousands to millions of resources efficiently. Individual REST calls are too slow.
 
-### 6.2 Enhanced Batch/Transaction Processing
+### 5.2Enhanced Batch/Transaction Processing
 
 The existing `BundleController` handles batch/transaction bundles. Enhance with:
 - **Async batch processing** - Return 202 with status polling for large bundles
@@ -2310,7 +2017,7 @@ GET /api/bulk/status/job-123
 }
 ```
 
-### 6.3 NDJSON Streaming
+### 5.3NDJSON Streaming
 
 Support NDJSON (Newline Delimited JSON) for streaming large result sets:
 
@@ -2327,7 +2034,7 @@ Transfer-Encoding: chunked
 ...
 ```
 
-### 6.4 De-Identification for Bulk Export
+### 5.4De-Identification for Bulk Export
 
 Support de-identification profiles in the `$export` operation for research, analytics, and AI training use cases:
 
@@ -2505,12 +2212,12 @@ fhir4java:
 
 ---
 
-## Pillar 7: AI Orchestration Layer
+## Pillar 6: AI Orchestration Layer
 
 ### Goal
 Provide higher-level abstractions that make it easy for AI agents to perform complex clinical workflows.
 
-### 7.1 Composite Operations (Agent Workflows)
+### 6.1Composite Operations (Agent Workflows)
 
 Pre-built composite operations that combine multiple FHIR operations:
 
@@ -2676,7 +2383,7 @@ public class WorkflowExecutor {
 }
 ```
 
-### 7.2 Clinical Decision Support Hooks
+### 6.2Clinical Decision Support Hooks
 
 Implement [CDS Hooks](https://cds-hooks.hl7.org/) for AI-powered clinical decision support:
 
@@ -2707,7 +2414,7 @@ GET /cds-services
   }
 ```
 
-### 7.3 GraphQL Interface
+### 6.3GraphQL Interface
 
 Add a FHIR GraphQL endpoint for efficient, agent-friendly data fetching:
 
@@ -2725,7 +2432,7 @@ Benefits for agents:
 
 ---
 
-## Pillar 8: Command API for Clinical UI
+## Pillar 7: Command API for Clinical UI
 
 ### Goal
 Provide a high-level natural language command interface for the clinical web UI, abstracting FHIR complexity behind intuitive commands that clinicians can speak or type.
@@ -2793,7 +2500,7 @@ The Command API and MCP tools share these internal services (but expose them dif
    (via Clinical UI)                           (via MCP Client)
 ```
 
-### 8.1 Command Endpoint
+### 7.1Command Endpoint
 
 ```
 POST /api/command
@@ -2827,7 +2534,7 @@ Response:
 }
 ```
 
-### 8.2 Tiered Interpretation Pipeline
+### 7.2Tiered Interpretation Pipeline
 
 To minimize LLM usage (cost and latency), commands flow through four tiers:
 
@@ -2862,7 +2569,7 @@ To minimize LLM usage (cost and latency), commands flow through four tiers:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 8.3 Command Cache Layers
+### 7.3Command Cache Layers
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -2890,7 +2597,7 @@ CACHE LOOKUP ORDER:
 User Cache → Tenant Cache → Global Cache → Pattern Match → LLM
 ```
 
-### 8.4 Risk-Based Execution
+### 7.4Risk-Based Execution
 
 | Risk Level | Examples | Behavior |
 |------------|----------|----------|
@@ -2900,7 +2607,7 @@ User Cache → Tenant Cache → Global Cache → Pattern Match → LLM
 | **HIGH** | Prescriptions, high-alert meds, chemo | Require explicit confirmation |
 | **CRITICAL** | Delete operations, status changes | Two-step confirmation |
 
-### 8.5 Pre-Seeded Command Templates
+### 7.5Pre-Seeded Command Templates
 
 ```yaml
 # commands/queries.yml
@@ -2936,7 +2643,7 @@ prescriptions:
     requiresConfirmation: true
 ```
 
-### 8.6 Implementation Components
+### 7.6Implementation Components
 
 ```java
 // New classes in fhir4java-api
@@ -2974,7 +2681,7 @@ public class CommandExecutor {
 }
 ```
 
-### 8.7 Command Audit Trail
+### 7.7Command Audit Trail
 
 All commands logged to `command_audit_log`:
 
@@ -3006,12 +2713,12 @@ CREATE INDEX idx_cmd_audit_patient ON command_audit_log(patient_ref, created_at 
 
 ---
 
-## Pillar 9: UI Configuration Service
+## Pillar 8: UI Configuration Service
 
 ### Goal
 Provide a multi-level configuration system for the clinical UI, enabling organizations, roles, and individual users to customize panel layouts, columns, filters, and views.
 
-### 9.1 Configuration Hierarchy
+### 8.1Configuration Hierarchy
 
 ```
 SYSTEM DEFAULTS (shipped with application)
@@ -3025,7 +2732,7 @@ USER PREFERENCES (individual customization)
 
 Each level can override the previous. Configuration merges use deep merge semantics.
 
-### 9.2 UI Configuration Tables
+### 8.2UI Configuration Tables
 
 Tables are added to the `fhir` schema (consistent with tenant table location) with `ui_` prefix:
 
@@ -3116,7 +2823,7 @@ CREATE TABLE IF NOT EXISTS fhir.ui_tenant_branding (
 );
 ```
 
-### 9.3 UI Configuration API
+### 8.3UI Configuration API
 
 ```
 GET  /api/uiconfig/panels                           # List available panels
@@ -3141,7 +2848,7 @@ POST /api/uiconfig/admin/panels/custom              # Create custom panel
 PUT  /api/uiconfig/admin/branding                   # Update branding
 ```
 
-### 9.4 Configuration Merge Logic
+### 8.4Configuration Merge Logic
 
 ```java
 @Service
@@ -3162,12 +2869,12 @@ public class UiConfigService {
 
 ---
 
-## Pillar 10: Clinical Workflow Support
+## Pillar 9: Clinical Workflow Support
 
 ### Goal
 Provide backend services for clinical workflow management including patient queue management, note lifecycle tracking, and pending results coordination.
 
-### 10.1 Queue Management
+### 9.1Queue Management
 
 #### Queue Status State Machine
 
@@ -3258,7 +2965,7 @@ POST /api/queue/complete                            # Complete checkout
 POST /api/queue/no-show                             # Mark as no-show
 ```
 
-### 10.2 Note Lifecycle Management
+### 9.2Note Lifecycle Management
 
 #### Note States
 
@@ -3325,7 +3032,7 @@ GET /api/notes/pended                               # Get user's pended notes
 GET /api/notes/pended?awaitingResults=true          # Filter by pending results
 ```
 
-### 10.3 Result Notification Service
+### 9.3Result Notification Service
 
 Coordinates between FHIR Subscriptions and the clinical UI to notify clinicians when results arrive:
 
@@ -3356,12 +3063,12 @@ public class ResultNotificationService {
 
 ---
 
-## Pillar 11: Observability & Explainability
+## Pillar 10: Observability & Explainability
 
 ### Goal
 Provide comprehensive audit, tracing, and explainability infrastructure for AI agent interactions. This is **critical for healthcare deployments** where regulatory compliance (HIPAA, PDPA, etc.) requires complete audit trails of AI-assisted clinical decisions.
 
-### 11.1 MCP Interaction Logging
+### 10.1MCP Interaction Logging
 
 Every MCP tool call generates a structured audit record:
 
@@ -3416,7 +3123,7 @@ CREATE INDEX idx_mcp_log_resource ON mcp_interaction_log(resource_type, resource
 CREATE INDEX idx_mcp_log_status ON mcp_interaction_log(status, created_at DESC);
 ```
 
-### 11.2 Explainability Metadata
+### 10.2Explainability Metadata
 
 For mutations and clinical decisions, capture reasoning context:
 
@@ -3445,7 +3152,7 @@ CREATE TABLE mcp_decision_context (
 CREATE INDEX idx_decision_context_interaction ON mcp_decision_context(interaction_id);
 ```
 
-### 11.3 Audit API Endpoints
+### 10.3Audit API Endpoints
 
 ```
 GET /mcp/audit                                        # Query MCP interaction logs
@@ -3488,7 +3195,7 @@ GET /mcp/audit/stats                                  # Aggregated statistics
     }
 ```
 
-### 11.4 Logging Implementation
+### 10.4Logging Implementation
 
 ```java
 @Component
@@ -3552,7 +3259,7 @@ public class McpAuditLogger {
 }
 ```
 
-### 11.5 Trace Correlation
+### 10.5Trace Correlation
 
 All MCP interactions within a logical workflow share a `trace_id`:
 
@@ -3579,7 +3286,7 @@ public class TraceIdFilter implements McpRequestFilter {
 }
 ```
 
-### 11.6 Immutable Audit Trail
+### 10.6Immutable Audit Trail
 
 For regulatory compliance, audit logs must be immutable:
 
@@ -3601,7 +3308,7 @@ CREATE TRIGGER no_update_decision_context
     FOR EACH ROW EXECUTE FUNCTION prevent_audit_modification();
 ```
 
-### 11.7 Monitoring Metrics
+### 10.7Monitoring Metrics
 
 Key metrics exposed via Micrometer (Prometheus-compatible):
 
@@ -3650,7 +3357,7 @@ public class McpMetrics {
 }
 ```
 
-### 11.8 Grafana Dashboard Templates
+### 10.8Grafana Dashboard Templates
 
 Pre-built dashboard JSON for common monitoring scenarios:
 
@@ -3668,7 +3375,7 @@ Pre-built dashboard JSON for common monitoring scenarios:
 
 Dashboard panels configuration shipped with the server, importable via Grafana provisioning.
 
-### 11.9 Future: OpenTelemetry Integration
+### 10.9Future: OpenTelemetry Integration
 
 The logging-based approach can be enhanced with full OpenTelemetry tracing in a future phase:
 
@@ -4183,16 +3890,14 @@ The Minimum Viable Product includes the foundational capabilities for AI agent i
 
 | Pillar | MVP Components | Deferred to Later |
 |--------|----------------|-------------------|
-| **1. MCP Server** | 3 tools (discover, query, mutate), Streamable HTTP transport, Basic response hints | MCP Resources, Prompt Templates, SSE/stdio transports |
-| **1. Safety** | Dry-run mode, Risk-level tagging | Full terminology validation (use warnings not rejections) |
-| **2. API Discovery** | OpenAPI 3.1 generation, Basic CapabilityStatement | Full FHIR-aware OpenAPI customization |
-| **3. Events** | SSE endpoint for resource changes | Full FHIR Subscriptions, Webhook registry |
-| **4. Semantic Search** | NL-to-FHIR translation (rule-based) | Vector search, Medical embeddings, Hybrid search |
-| **5. Auth** | OAuth2 resource server, API key auth, Basic scopes | Consent enforcement, Provenance tracking, Data localization |
-| **6. Bulk Data** | Basic $export | De-identification, NDJSON streaming |
-| **7. Orchestration** | - | Composite workflows, CDS Hooks, GraphQL |
-| **8-10. Clinical UI** | - | All deferred to later phases |
-| **11. Observability** | Basic MCP audit logging | Full metrics, Grafana dashboards, Decision context |
+| **1. MCP Server** | 3 tools (discover, query, mutate), Streamable HTTP transport, Basic response hints, Dry-run mode, Risk-level tagging | SSE/stdio transports, Full terminology validation |
+| **2. Events** | SSE endpoint for resource changes | Full FHIR Subscriptions, Webhook registry |
+| **3. Semantic Search** | NL-to-FHIR translation (rule-based) | Vector search, Medical embeddings, Hybrid search |
+| **4. Auth** | OAuth2 resource server, API key auth, Basic scopes | Consent enforcement, Provenance tracking, Data localization |
+| **5. Bulk Data** | Basic $export | De-identification, NDJSON streaming |
+| **6. Orchestration** | - | Composite workflows, CDS Hooks, GraphQL |
+| **7-9. Clinical UI** | - | All deferred to later phases |
+| **10. Observability** | Basic MCP audit logging | Full metrics, Grafana dashboards, Decision context |
 
 ### MVP Dependency Map
 
@@ -4201,15 +3906,15 @@ Phase 1 (Foundation)                    Phase 2 (MCP)                      Phase
 ─────────────────────                   ────────────────                   ────────────────
 
 ┌──────────────────┐                   ┌──────────────────┐               ┌──────────────────┐
-│ OpenAPI 3.1      │                   │ fhir_discover    │◀──────────────│ SSE Events       │
-│ Generation       │                   │ tool             │               │                  │
+│ DiscoveryService │──────────────────▶│ fhir_discover    │◀──────────────│ SSE Events       │
+│ (reads registries│                   │ tool             │               │                  │
 └────────┬─────────┘                   └────────┬─────────┘               └──────────────────┘
          │                                      │
          ��                                      │
-┌────────▼─────────┐                   ┌────────▼─────────┐
-│ DiscoveryService │──────────────────▶│ fhir_query tool  │
-│ (internal)       │                   │                  │
-└────────┬─────────┘                   └────────┬─────────┘
+         │                             ┌────────▼─────────┐
+         │                             │ fhir_query tool  │
+         │                             │                  │
+         │                             └────────┬─────────┘
          │                                      │
          │                                      │
 ┌────────▼─────────┐                   ┌────────▼─────────┐
@@ -4304,18 +4009,17 @@ fhir4java:
 
 This design transforms FHIR4Java from a **FHIR server** into a **complete AI-ready clinical platform** serving two audiences:
 
-**For AI Agents (Pillars 1-7, 11):**
+**For AI Agents (Pillars 1-6, 10):**
 - MCP integration with 3 unified tools (discover, query, mutate) keeps the interface lean and scalable
 - Safety features: dry-run mode, risk-level tagging, terminology validation prevent accidental or hallucinated mutations
-- `fhir_discover` enables runtime capability learning
-- OpenAPI serves REST consumers, enhanced CapabilityStatement serves FHIR systems
+- `fhir_discover` enables runtime capability learning (standard OpenAPI/CapabilityStatement for non-AI consumers)
 - Event streaming (SSE, WebSocket, FHIR Subscriptions) enables real-time agent reactions
 - Semantic search with medical-domain embeddings (ClinicalBERT, BioBERT) and hybrid search (structured + keyword + vector)
 - Agent-friendly auth with OAuth2/SMART scopes, Consent enforcement, AI Provenance tracking, and data localization
 - Bulk data export with de-identification profiles (Safe Harbor, k-anonymity) for research use cases
 - Comprehensive observability with MCP audit logging, explainability metadata, and immutable audit trails for regulatory compliance
 
-**For Clinical UI (Pillars 8-10):**
+**For Clinical UI (Pillars 7-9):**
 - Command API provides natural language interface for clinicians (voice/text)
 - Tiered interpretation pipeline minimizes LLM usage through caching and pattern matching
 - Multi-level UI configuration (system → tenant → role → user) enables organizational customization
@@ -4338,6 +4042,6 @@ This design transforms FHIR4Java from a **FHIR server** into a **complete AI-rea
 - Command API reuses interpretation logic from MCP tools internally
 - Clinical events (result-received, queue-updated, etc.) flow through the same event infrastructure as agent events
 - UI configuration tables share the `fhir` schema with tenant configuration
-- Observability (Pillar 11) captures all MCP interactions across all pillars
+- Observability (Pillar 10) captures all MCP interactions across all pillars
 
 The 8-phase implementation ensures production stability while incrementally delivering value: Phases 1-3 deliver the MVP (MCP tools, basic auth, events), Phases 4-5 add intelligence and orchestration, Phases 6-8 add clinical UI support. See the MVP Definition section for scope details.
