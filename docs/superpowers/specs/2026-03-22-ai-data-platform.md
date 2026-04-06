@@ -12,7 +12,7 @@ The design covers **ten pillars**:
 
 | # | Pillar | Purpose |
 |---|--------|---------|
-| 1 | **MCP Server** | Expose FHIR as AI tools (3 unified tools: discover, query, mutate) + safety features (dry-run, risk-level, terminology validation) |
+| 1 | **MCP Server** | Expose FHIR as AI tools (3 unified tools: discover, query, mutate) + safety features (dry-run, risk-level) |
 | 2 | **Event-Driven Architecture** | Real-time updates via FHIR Subscriptions, SSE, WebSocket |
 | 3 | **Semantic Search** | Natural language queries + vector search with medical embeddings + hybrid search |
 | 4 | **Agent-Friendly Auth** | OAuth2/SMART + API keys + Consent enforcement + Provenance tracking + data localization |
@@ -554,95 +554,7 @@ public class RiskAssessor {
 }
 ```
 
-#### 1.8 Terminology Validation
-
-Before persisting mutations that include coded values, validate against standard terminologies to prevent hallucinated or invalid codes:
-
-**Validated terminology systems:**
-
-| System | URI | Validation Method |
-|--------|-----|-------------------|
-| LOINC | `http://loinc.org` | Local lookup table + API fallback |
-| SNOMED CT | `http://snomed.info/sct` | Local lookup table + API fallback |
-| RxNorm | `http://www.nlm.nih.gov/research/umls/rxnorm` | Local lookup table + API fallback |
-| ICD-10 | `http://hl7.org/fhir/sid/icd-10` | Local lookup table |
-| CPT | `http://www.ama-assn.org/go/cpt` | Local lookup table |
-
-**Validation response:**
-```json
-{
-  "terminologyValidation": {
-    "valid": false,
-    "checkedCodes": [
-      {
-        "path": "code.coding[0]",
-        "system": "http://loinc.org",
-        "code": "2339-0",
-        "display": "Glucose [Mass/volume] in Blood",
-        "status": "VALID"
-      },
-      {
-        "path": "code.coding[1]",
-        "system": "http://loinc.org",
-        "code": "99999-9",
-        "display": "Invalid Test",
-        "status": "INVALID",
-        "error": "Code not found in LOINC",
-        "suggestions": ["2339-0 (Glucose)", "2345-7 (Glucose [Mass/volume] in Serum)"]
-      }
-    ]
-  }
-}
-```
-
-**Configuration:**
-```yaml
-fhir4java:
-  mcp:
-    terminology-validation:
-      enabled: true
-      strict-mode: false          # false = warn on invalid, true = reject
-      systems:
-        - http://loinc.org
-        - http://snomed.info/sct
-        - http://www.nlm.nih.gov/research/umls/rxnorm
-      fallback-api:
-        enabled: true
-        url: https://tx.fhir.org/r4  # Public terminology server
-```
-
-**Implementation:**
-```java
-@Service
-public class TerminologyValidator {
-
-    @Autowired
-    private TerminologyLookupService lookupService;
-
-    public TerminologyValidationResult validate(IBaseResource resource) {
-        List<CodeValidation> results = new ArrayList<>();
-
-        // Extract all coded elements from resource
-        List<CodedElement> codes = extractCodes(resource);
-
-        for (CodedElement code : codes) {
-            if (isConfiguredForValidation(code.getSystem())) {
-                CodeValidation validation = lookupService.validateCode(
-                    code.getSystem(),
-                    code.getCode(),
-                    code.getDisplay()
-                );
-                results.add(validation);
-            }
-        }
-
-        boolean allValid = results.stream().allMatch(CodeValidation::isValid);
-        return new TerminologyValidationResult(allValid, results);
-    }
-}
-```
-
-#### 1.9 Rate Limiting
+#### 1.8 Rate Limiting
 
 > **Infrastructure Note:** Rate limiting for MCP endpoints is handled at the **API Gateway layer**, not within the application.
 
@@ -686,7 +598,7 @@ fhir4java:
 
 This separation ensures rate limiting scales horizontally without application-level coordination overhead.
 
-#### 1.10 Mutation Safety & Data Integrity
+#### 1.9 Mutation Safety & Data Integrity
 
 > **Design Note:** The `fhir_mutate` tool does **not expose DELETE operations** at the application level. All data modifications follow an immutable, version-based pattern.
 
@@ -728,7 +640,7 @@ SELECT * FROM fhir_resource WHERE resource_id = :id;
 
 This architecture ensures AI agents **cannot cause data loss** — they can only create new versions of existing data.
 
-#### 1.11 Standard FHIR Discovery (Non-AI Consumers)
+#### 1.10 Standard FHIR Discovery (Non-AI Consumers)
 
 > **Note:** Discovery for non-MCP consumers is handled by **existing standard FHIR features**, not new AI-specific pillars.
 
@@ -1058,6 +970,93 @@ Natural Language Query
 
 This component can work **without an LLM** by using rule-based NLP mapping against the SearchParameterRegistry, or can optionally integrate with an LLM for complex queries.
 
+**LLM Invocation Decision Tree:**
+
+The NL-to-FHIR translation uses a tiered approach to minimize LLM costs:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    QUERY INTERPRETATION PIPELINE                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+User Query: "Find diabetic patients over 65"
+                    │
+                    ▼
+┌───────────────────────────────────────┐
+│  TIER 1: Pattern Matching (No LLM)    │  Cost: $0, Latency: <10ms
+│                                        │
+│  • Regex patterns for common queries   │
+│  • "patients with [condition]"         │
+│  • "[resource] where [field] = [val]"  │
+│  • Cached query templates              │
+└───────────────────┬───────────────────┘
+                    │ No match?
+                    ▼
+┌───────────────────────────────────────┐
+│  TIER 2: Rule-Based NLP (No LLM)      │  Cost: $0, Latency: 20-50ms
+│                                        │
+│  • Clinical concept extraction         │
+│  • SNOMED/LOINC code lookup            │
+│  • SearchParameterRegistry mapping     │
+│  • Handles 70-80% of clinical queries  │
+└───────────────────┬───────────────────┘
+                    │ Ambiguous or complex?
+                    ▼
+┌───────────────────────────────────────┐
+│  TIER 3: LLM Fallback (Optional)      │  Cost: ~$0.01-0.05, Latency: 500-2000ms
+│                                        │
+│  • Complex multi-resource joins        │
+│  • Temporal reasoning ("last 3 months")│
+│  • Negation ("patients NOT on insulin")│
+│  • Only invoked if enabled in config   │
+└───────────────────────────────────────┘
+```
+
+**When LLM is invoked (Tier 3):**
+
+| Query Type | Example | Why LLM needed |
+|------------|---------|----------------|
+| Complex temporal | "Patients with HbA1c trending upward over past year" | Requires reasoning about trends |
+| Negation | "Diabetics not currently on metformin" | Negation logic |
+| Implicit joins | "Patients whose doctor is in cardiology" | Multi-hop relationship |
+| Ambiguous terms | "Patients with heart problems" | Needs clinical disambiguation |
+
+**When LLM is NOT invoked (Tiers 1-2):**
+
+| Query Type | Example | Rule-based handling |
+|------------|---------|---------------------|
+| Direct lookup | "Patient with ID 12345" | Regex pattern |
+| Code-based | "Patients with ICD-10 E11.9" | Direct code search |
+| Simple condition | "Diabetic patients" | SNOMED lookup (73211009) |
+| Age filter | "Patients over 65" | Birthdate calculation |
+
+**Configuration:**
+
+```yaml
+fhir4java:
+  ai:
+    nl-search:
+      llm-fallback:
+        enabled: false                    # Disable LLM by default (rule-based only)
+        provider: openai                  # openai, azure-openai, aws-bedrock, anthropic
+        model: gpt-4o-mini                # Use smaller model for query translation
+        max-tokens: 500
+        timeout-ms: 3000
+      pattern-cache:
+        enabled: true
+        max-entries: 10000
+      rule-engine:
+        snomed-lookup: true
+        loinc-lookup: true
+```
+
+**Important:** The LLM here is for **query translation** (understanding user intent), NOT for embedding generation. These are separate:
+
+| Purpose | Model Type | Cost | When Called |
+|---------|------------|------|-------------|
+| Query translation | LLM (GPT-4, Claude) | ~$0.01-0.05/query | Only Tier 3 fallback |
+| Embedding generation | Embedding model (text-embedding-3-small) | ~$0.00002/1K tokens | Every semantic search |
+
 ### 3.2Vector Search for Clinical Narratives
 
 Add embedding-based search for unstructured clinical text (narrative fields, notes):
@@ -1130,14 +1129,18 @@ General-purpose embedding models (OpenAI, Ollama) may not capture clinical seman
 
 **Available providers:**
 
-| Provider | Model | Strengths | Use Case |
-|----------|-------|-----------|----------|
-| `openai` | text-embedding-3-small/large | General purpose, high quality | Default, broad coverage |
-| `clinical-bert` | ClinicalBERT | Trained on clinical notes (MIMIC-III) | Discharge summaries, clinical narratives |
-| `bio-bert` | BioBERT | Trained on PubMed, PMC | Research, medical literature |
-| `pubmed-bert` | PubMedBERT | Domain-specific pre-training | Biomedical text |
-| `ollama` | Any local model | Privacy, no external API calls | On-premise deployments |
-| `custom` | User-provided | Organization-specific fine-tuning | Custom requirements |
+| Provider | Model | Dimensions | Strengths | Use Case |
+|----------|-------|------------|-----------|----------|
+| `openai` | text-embedding-3-small | 1536 | General purpose, high quality | Default, broad coverage |
+| `openai` | text-embedding-3-large | 3072 | Higher accuracy, more expensive | High-precision search |
+| `aws-bedrock` | amazon.titan-embed-text-v2 | 1024 | AWS-native, no data leaves AWS | AWS-hosted deployments |
+| `aws-bedrock` | cohere.embed-english-v3 | 1024 | Medical-aware, multilingual | Enterprise healthcare |
+| `azure-openai` | text-embedding-3-small | 1536 | Azure-native, HIPAA-compliant | Azure-hosted deployments |
+| `gcp-vertex` | text-embedding-004 | 768 | GCP-native, low latency | GCP-hosted deployments |
+| `clinical-bert` | ClinicalBERT | 768 | Trained on clinical notes (MIMIC-III) | Discharge summaries, narratives |
+| `bio-bert` | BioBERT | 768 | Trained on PubMed, PMC | Research, medical literature |
+| `ollama` | Any local model | varies | Privacy, no external API calls | On-premise deployments |
+| `custom` | User-provided | varies | Organization-specific fine-tuning | Custom requirements |
 
 **Embedding Provider SPI:**
 ```java
@@ -1195,37 +1198,117 @@ public class ClinicalBertEmbeddingProvider implements EmbeddingProvider {
 }
 ```
 
-**Configuration for medical embeddings:**
+**Configuration for embedding providers:**
+
 ```yaml
 fhir4java:
   ai:
     embeddings:
       enabled: true
-      provider: clinical-bert        # Use ClinicalBERT for clinical narratives
-      dimensions: 768
+      provider: aws-bedrock           # Active provider
       providers:
+        # OpenAI (direct API)
+        openai:
+          api-key: ${OPENAI_API_KEY}
+          model: text-embedding-3-small
+          dimensions: 1536
+
+        # AWS Bedrock (uses default AWS credential chain)
+        aws-bedrock:
+          region: ${AWS_REGION:us-east-1}
+          model: amazon.titan-embed-text-v2:0
+          dimensions: 1024
+          # Optional: assume role for cross-account access
+          # role-arn: arn:aws:iam::123456789:role/FhirEmbeddingRole
+
+        # Azure OpenAI
+        azure-openai:
+          endpoint: https://${AZURE_OPENAI_RESOURCE}.openai.azure.com
+          api-key: ${AZURE_OPENAI_KEY}
+          deployment: text-embedding-3-small  # Your deployment name
+          api-version: "2024-02-01"
+          dimensions: 1536
+
+        # GCP Vertex AI
+        gcp-vertex:
+          project-id: ${GCP_PROJECT_ID}
+          location: ${GCP_LOCATION:us-central1}
+          model: text-embedding-004
+          dimensions: 768
+          # Uses Application Default Credentials (ADC)
+
+        # HuggingFace models (ClinicalBERT, BioBERT)
         clinical-bert:
           endpoint: https://api-inference.huggingface.co/models/emilyalsentzer/Bio_ClinicalBERT
           api-key: ${HF_API_KEY}
-        bio-bert:
-          endpoint: https://api-inference.huggingface.co/models/dmis-lab/biobert-base-cased-v1.2
-          api-key: ${HF_API_KEY}
+          dimensions: 768
+
+        # Local Ollama (for on-premise/air-gapped)
         ollama:
           endpoint: http://localhost:11434
-          model: medllama2
+          model: nomic-embed-text
+          dimensions: 768
+```
+
+**Cloud Provider Implementation Example (AWS Bedrock):**
+
+```java
+@Component
+@ConditionalOnProperty(name = "fhir4java.ai.embeddings.provider", havingValue = "aws-bedrock")
+public class AwsBedrockEmbeddingProvider implements EmbeddingProvider {
+
+    private final BedrockRuntimeClient bedrockClient;
+    private final String modelId;
+    private final int dimensions;
+
+    public AwsBedrockEmbeddingProvider(
+            @Value("${fhir4java.ai.embeddings.providers.aws-bedrock.model}") String modelId,
+            @Value("${fhir4java.ai.embeddings.providers.aws-bedrock.dimensions}") int dimensions,
+            @Value("${fhir4java.ai.embeddings.providers.aws-bedrock.region}") String region) {
+        this.modelId = modelId;
+        this.dimensions = dimensions;
+        this.bedrockClient = BedrockRuntimeClient.builder()
+            .region(Region.of(region))
+            .credentialsProvider(DefaultCredentialsProvider.create())
+            .build();
+    }
+
+    @Override
+    public float[] embed(String text) {
+        var request = InvokeModelRequest.builder()
+            .modelId(modelId)
+            .contentType("application/json")
+            .body(SdkBytes.fromUtf8String(
+                "{\"inputText\": \"" + escapeJson(text) + "\"}"
+            ))
+            .build();
+
+        var response = bedrockClient.invokeModel(request);
+        return parseEmbeddingResponse(response.body().asUtf8String());
+    }
+
+    @Override
+    public int getDimensions() { return dimensions; }
+
+    @Override
+    public String getProviderId() { return "aws-bedrock"; }
+}
 ```
 
 **Dimension Handling & Provider Migration:**
 
 Different embedding providers produce vectors of different dimensions:
 
-| Provider | Dimensions |
-|----------|------------|
-| OpenAI text-embedding-3-small | 1536 |
-| OpenAI text-embedding-3-large | 3072 |
-| ClinicalBERT | 768 |
-| BioBERT | 768 |
-| PubMedBERT | 768 |
+| Provider | Model | Dimensions |
+|----------|-------|------------|
+| OpenAI | text-embedding-3-small | 1536 |
+| OpenAI | text-embedding-3-large | 3072 |
+| AWS Bedrock | amazon.titan-embed-text-v2 | 1024 |
+| AWS Bedrock | cohere.embed-english-v3 | 1024 |
+| Azure OpenAI | text-embedding-3-small | 1536 |
+| GCP Vertex AI | text-embedding-004 | 768 |
+| ClinicalBERT | Bio_ClinicalBERT | 768 |
+| BioBERT | biobert-base-cased-v1.2 | 768 |
 
 The `fhir_resource_embedding` table stores `model_id` alongside embeddings to handle this:
 
@@ -1433,6 +1516,96 @@ fhir4java:
           history: 1.2
           physical-exam: 1.0
 ```
+
+### 3.7 Performance Considerations
+
+Semantic search adds latency and resource costs compared to structured FHIR search. This section provides guidance for production deployments.
+
+**Latency Breakdown (typical):**
+
+| Component | Latency | Notes |
+|-----------|---------|-------|
+| Query embedding generation | 50-200ms | External API call to embedding provider |
+| Vector similarity search | 20-100ms | Depends on index type and dataset size |
+| Structured FHIR search | 10-50ms | Well-indexed PostgreSQL |
+| Keyword full-text search | 20-80ms | PostgreSQL tsvector |
+| Result fusion (RRF) | 5-10ms | In-memory computation |
+| **Total hybrid search** | **100-400ms** | All three paths in parallel |
+
+**The dominant cost is the embedding API call.** For external providers (OpenAI, AWS Bedrock), network latency adds 50-150ms per request.
+
+**Optimization Strategies:**
+
+```yaml
+fhir4java:
+  ai:
+    semantic-search:
+      # 1. Query embedding cache - cache repeated queries
+      query-cache:
+        enabled: true
+        ttl-minutes: 60
+        max-entries: 10000
+
+      # 2. Timeouts - prevent slow searches from blocking
+      timeouts:
+        embedding-generation-ms: 500    # Fail fast if embedding API slow
+        vector-search-ms: 200           # Cap vector search time
+        total-search-ms: 1000           # Total timeout for hybrid search
+
+      # 3. Fallback behavior - if vector search times out, use structured only
+      fallback-on-timeout: true
+
+      # 4. Batch embedding - process multiple queries together
+      batch:
+        enabled: true
+        max-batch-size: 10
+        max-wait-ms: 50
+
+    embeddings:
+      # 5. Index tuning for pgvector
+      index:
+        type: hnsw                      # HNSW faster for reads (vs IVFFlat)
+        m: 16                           # HNSW connections per node
+        ef-construction: 64             # Build-time quality
+        ef-search: 40                   # Query-time quality/speed tradeoff
+```
+
+**Vector Index Comparison:**
+
+| Index Type | Build Time | Query Speed | Memory | Best For |
+|------------|------------|-------------|--------|----------|
+| IVFFlat | Fast | Moderate | Lower | Smaller datasets (<1M vectors) |
+| HNSW | Slower | Fast | Higher | Production, frequent queries |
+| None (exact) | N/A | Slow | N/A | Testing only, <10K vectors |
+
+**Cost Estimation:**
+
+| Provider | Model | Cost per 1M tokens | Cost per 1K queries* |
+|----------|-------|-------------------|---------------------|
+| OpenAI | text-embedding-3-small | $0.02 | ~$0.002 |
+| OpenAI | text-embedding-3-large | $0.13 | ~$0.013 |
+| AWS Bedrock | Titan Embed v2 | $0.02 | ~$0.002 |
+| Azure OpenAI | text-embedding-3-small | $0.02 | ~$0.002 |
+| Self-hosted | ClinicalBERT | $0 (infra only) | $0 |
+
+*Assumes average query of 100 tokens
+
+**Storage Requirements:**
+
+| Vectors | Dimensions | Storage (uncompressed) |
+|---------|------------|------------------------|
+| 1M | 768 | ~3 GB |
+| 1M | 1536 | ~6 GB |
+| 10M | 1536 | ~60 GB |
+
+**Production Recommendations:**
+
+1. **Start with structured search** - Only enable semantic search for resources that truly benefit (DocumentReference, DiagnosticReport)
+2. **Use HNSW index** for production workloads with frequent queries
+3. **Enable query caching** - Clinical queries are often repetitive
+4. **Set aggressive timeouts** - Fail fast and fall back to structured search
+5. **Consider self-hosted embeddings** for high-volume deployments (ClinicalBERT via Ollama or HuggingFace TGI)
+6. **Monitor embedding API costs** - Track usage to avoid surprise bills
 
 ---
 
@@ -3890,7 +4063,7 @@ The Minimum Viable Product includes the foundational capabilities for AI agent i
 
 | Pillar | MVP Components | Deferred to Later |
 |--------|----------------|-------------------|
-| **1. MCP Server** | 3 tools (discover, query, mutate), Streamable HTTP transport, Basic response hints, Dry-run mode, Risk-level tagging | SSE/stdio transports, Full terminology validation |
+| **1. MCP Server** | 3 tools (discover, query, mutate), Streamable HTTP transport, Basic response hints, Dry-run mode, Risk-level tagging | SSE/stdio transports |
 | **2. Events** | SSE endpoint for resource changes | Full FHIR Subscriptions, Webhook registry |
 | **3. Semantic Search** | NL-to-FHIR translation (rule-based) | Vector search, Medical embeddings, Hybrid search |
 | **4. Auth** | OAuth2 resource server, API key auth, Basic scopes | Consent enforcement, Provenance tracking, Data localization |
@@ -4011,7 +4184,7 @@ This design transforms FHIR4Java from a **FHIR server** into a **complete AI-rea
 
 **For AI Agents (Pillars 1-6, 10):**
 - MCP integration with 3 unified tools (discover, query, mutate) keeps the interface lean and scalable
-- Safety features: dry-run mode, risk-level tagging, terminology validation prevent accidental or hallucinated mutations
+- Safety features: dry-run mode, risk-level tagging prevent accidental mutations; terminology validation handled by existing FHIR validation pipeline
 - `fhir_discover` enables runtime capability learning (standard OpenAPI/CapabilityStatement for non-AI consumers)
 - Event streaming (SSE, WebSocket, FHIR Subscriptions) enables real-time agent reactions
 - Semantic search with medical-domain embeddings (ClinicalBERT, BioBERT) and hybrid search (structured + keyword + vector)
