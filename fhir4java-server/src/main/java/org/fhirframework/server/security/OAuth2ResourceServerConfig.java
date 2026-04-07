@@ -1,5 +1,7 @@
 package org.fhirframework.server.security;
 
+import org.fhirframework.persistence.repository.AgentApiKeyRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,14 +11,21 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
  * OAuth2 Resource Server configuration for FHIR4Java.
  *
- * <p>This configuration secures the FHIR and MCP API endpoints using JWT-based OAuth2
- * authentication. Public endpoints like metadata and actuator health are excluded from
- * authentication requirements.</p>
+ * <p>This configuration secures the FHIR and MCP API endpoints using either JWT-based OAuth2
+ * authentication or API key authentication. Both methods work alongside each other - clients
+ * can use either an OAuth2 JWT token or an API key (via X-API-Key header) to authenticate.</p>
+ *
+ * <h3>Authentication Methods:</h3>
+ * <ul>
+ *   <li>OAuth2 JWT - Standard JWT bearer token authentication</li>
+ *   <li>API Key - Alternative authentication using X-API-Key header (for AI agents)</li>
+ * </ul>
  *
  * <h3>Security Rules:</h3>
  * <ul>
@@ -47,6 +56,7 @@ import org.springframework.security.web.SecurityFilterChain;
  * </pre>
  *
  * @see org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter
+ * @see ApiKeyAuthFilter
  */
 @Configuration
 @EnableWebSecurity
@@ -57,15 +67,23 @@ import org.springframework.security.web.SecurityFilterChain;
 )
 public class OAuth2ResourceServerConfig {
 
+    @Autowired
+    private AgentApiKeyRepository apiKeyRepository;
+
     /**
-     * Configures the security filter chain for OAuth2 resource server.
+     * Configures the security filter chain for OAuth2 resource server with API key support.
      *
      * <p>Key configurations:</p>
      * <ul>
      *   <li>CSRF disabled (stateless REST API)</li>
      *   <li>Session management set to STATELESS (no server-side sessions)</li>
+     *   <li>API key authentication filter (runs before JWT filter)</li>
      *   <li>JWT-based authentication for protected endpoints</li>
      * </ul>
+     *
+     * <p>The API key filter is added before the JWT bearer token filter, so requests
+     * with an X-API-Key header will be authenticated via API key first. If no API key
+     * is present, authentication falls through to the JWT filter.</p>
      *
      * @param http the HttpSecurity to configure
      * @return the configured SecurityFilterChain
@@ -109,6 +127,12 @@ public class OAuth2ResourceServerConfig {
             // Configure OAuth2 Resource Server with JWT
             .oauth2ResourceServer(oauth2 ->
                 oauth2.jwt(Customizer.withDefaults())
+            )
+
+            // Add API key authentication filter before JWT filter
+            .addFilterBefore(
+                new ApiKeyAuthFilter(apiKeyRepository),
+                BearerTokenAuthenticationFilter.class
             );
 
         return http.build();
