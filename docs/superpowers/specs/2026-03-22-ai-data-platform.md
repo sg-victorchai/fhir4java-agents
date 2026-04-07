@@ -4122,8 +4122,75 @@ Phase 1 (Foundation)                    Phase 2 (MCP)                      Phase
 | **Phase 6** | Clinical UI Backend | Command API, Queue management, Note lifecycle |
 | **Phase 7** | Configuration | UI config service, Multi-level preferences |
 | **Phase 8** | Clinical UI Frontend | React app, Patient chart, Queue dashboard |
-| **Phase 9** | Compliance | Full consent enforcement, Provenance, Data localization |
-| **Phase 10** | Operations | Grafana dashboards, Advanced metrics, OpenTelemetry |
+| **Phase 9** | Observability | Audit API, Metrics, Grafana dashboards, OpenTelemetry |
+| **Phase 10** | Compliance | Consent enforcement, AI Provenance, Data localization |
+
+---
+
+## Requirements Traceability Matrix
+
+This section maps spec requirements (Pillars) to implementation plans for traceability and verification.
+
+### Implementation Plans
+
+| Plan | File | Tasks | Weeks |
+|------|------|-------|-------|
+| MVP (Phases 1-3) | `docs/superpowers/plans/2026-04-07-mvp-ai-platform.md` | 15 | 1-11 |
+| Phase 4: Intelligence | `docs/superpowers/plans/2026-04-07-phase4-intelligence.md` | 7 | 12-17 |
+| Phase 5: Orchestration | `docs/superpowers/plans/2026-04-07-phase5-orchestration.md` | 6 | 18-23 |
+| Phase 6: Clinical UI Backend | `docs/superpowers/plans/2026-04-07-phase6-clinical-ui-backend.md` | 7 | 24-31 |
+| Phase 7: UI Configuration | `docs/superpowers/plans/2026-04-07-phase7-ui-configuration.md` | 4 | 32-35 |
+| Phase 8: Clinical UI Frontend | `docs/superpowers/plans/2026-04-07-phase8-clinical-ui-frontend.md` | 10 | 36-47 |
+| Phase 9: Observability | `docs/superpowers/plans/2026-04-07-phase9-observability.md` | 6 | 48-55 |
+| Phase 10: Compliance | `docs/superpowers/plans/2026-04-07-phase10-compliance.md` | 8 | 56-67 |
+| **Total** | | **63 tasks** | **67 weeks** |
+
+### Pillar to Implementation Plan Mapping
+
+| Pillar | Description | Implementation Plan(s) | Key Tasks |
+|--------|-------------|------------------------|-----------|
+| **Pillar 1** | MCP Server Interface | MVP Phase 2 | Tasks 4-9: fhir4java-mcp module, 3 MCP tools, dry-run, hints |
+| **Pillar 2** | Event-Driven Architecture | MVP Phase 3 | Tasks 10-13: SSE streaming, webhooks, FHIR Subscriptions |
+| **Pillar 3** | Semantic Search & NL Query | Phase 4 | Tasks 1-6: NL-to-FHIR, pgvector embeddings, semantic search |
+| **Pillar 4** | Agent Auth & Authorization | MVP Phase 1, Phase 10 | MVP Tasks 1-3: OAuth2, API keys; Phase 10 Tasks 1-5: Scopes, Consent, Provenance, Localization |
+| **Pillar 5** | Bulk Data & Batch Processing | Phase 4 | Task 7: FHIR $export with NDJSON streaming |
+| **Pillar 6** | AI Orchestration Layer | Phase 5 | Tasks 1-4: Workflow engine, CDS Hooks |
+| **Pillar 7** | Command API for Clinical UI | Phase 6 | Tasks 1-3: Command interpreter, tiered pipeline, Command API |
+| **Pillar 8** | UI Configuration Service | Phase 7 | Tasks 1-4: Config entity, merge logic, config service, REST API |
+| **Pillar 9** | Clinical Workflow Support | Phase 6, Phase 8 | Phase 6 Tasks 4-7: Queue state machine, Note lifecycle; Phase 8: React UI |
+| **Pillar 10** | Observability & Explainability | MVP Task 15, Phase 9 | MVP: Basic audit logging; Phase 9: Full metrics, dashboards, tracing |
+
+### Compliance Requirements Traceability
+
+| Requirement | Regulation(s) | Implementation Plan | Task |
+|-------------|---------------|---------------------|------|
+| OAuth2/SMART Authentication | All | MVP | Task 2: OAuth2 Resource Server |
+| API Key Authentication | All | MVP | Task 3: API Key Auth |
+| Scoped Authorization | All | Phase 10 | Task 1: ScopedAuthorizationPlugin |
+| MCP Audit Logging | HIPAA, PDPA, GDPR | MVP | Task 15: MCP Audit Logging |
+| Audit Query API | HIPAA, PDPA, GDPR | Phase 9 | Task 1: Audit Query API |
+| Immutable Audit Trail | HIPAA, PDPA, GDPR | Phase 10 | Task 6: DB Triggers |
+| FHIR Consent Enforcement | HIPAA, GDPR, PDPA | Phase 10 | Tasks 2-3: ConsentService, ConsentEnforcementPlugin |
+| AI Provenance Tracking | All (clinical accountability) | Phase 10 | Task 4: AiProvenancePlugin |
+| Data Localization | PDPA, PIPL, GDPR | Phase 10 | Task 5: DataLocalizationPlugin |
+| De-identification (Safe Harbor) | HIPAA | Phase 10 | Task 7: DeidentificationService |
+| Soft Delete | HIPAA, GDPR | Phase 10 | Task 8: Soft Delete Implementation |
+| Metrics & Tracing | Operational | Phase 9 | Tasks 2-6: Micrometer, Prometheus, OpenTelemetry |
+
+### MVP Verification Checklist
+
+| Requirement | Plan Task | Verification |
+|-------------|-----------|--------------|
+| Agents can authenticate via OAuth2 | MVP Task 2 | Security integration test |
+| Agents can authenticate via API key | MVP Task 3 | Security integration test |
+| Agents can discover FHIR capabilities | MVP Task 1, 6 | DiscoveryService unit test, fhir_discover tool test |
+| Agents can query FHIR resources | MVP Task 7 | fhir_query tool test |
+| Agents can mutate FHIR resources | MVP Task 8 | fhir_mutate tool test |
+| Dry-run mode prevents accidental mutations | MVP Task 8 | Dry-run integration test |
+| Agents receive real-time events via SSE | MVP Task 10-11 | SSE endpoint test |
+| Agents can register webhooks | MVP Task 12 | Webhook registration test |
+| All MCP calls are audit logged | MVP Task 15 | Audit log query test |
+| Multi-tenant isolation | Existing | Tenant isolation test |
 
 ---
 
@@ -4214,4 +4281,4 @@ This design transforms FHIR4Java from a **FHIR server** into a **complete AI-rea
 - UI configuration tables share the `fhir` schema with tenant configuration
 - Observability (Pillar 10) captures all MCP interactions across all pillars
 
-The 8-phase implementation ensures production stability while incrementally delivering value: Phases 1-3 deliver the MVP (MCP tools, basic auth, events), Phases 4-5 add intelligence and orchestration, Phases 6-8 add clinical UI support. See the MVP Definition section for scope details.
+The 10-phase implementation ensures production stability while incrementally delivering value: Phases 1-3 deliver the MVP (MCP tools, basic auth, events, basic audit), Phases 4-5 add intelligence and orchestration, Phases 6-8 add clinical UI support, Phase 9 adds full observability, and Phase 10 completes regulatory compliance. See the MVP Definition section for scope details and the Requirements Traceability Matrix for plan-to-requirement mapping.
