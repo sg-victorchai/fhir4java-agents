@@ -31,9 +31,11 @@ fhir4java-server/src/main/java/org/fhirframework/server/
 
 fhir4java-persistence/src/main/java/org/fhirframework/persistence/
 ├── entity/
-│   └── AgentApiKeyEntity.java          # API key storage
+│   ├── AgentApiKeyEntity.java          # API key storage
+│   └── McpAuditLogEntity.java          # MCP audit log storage
 ├── repository/
-│   └── AgentApiKeyRepository.java      # API key CRUD
+│   ├── AgentApiKeyRepository.java      # API key CRUD
+│   └── McpAuditLogRepository.java      # Audit log queries
 ```
 
 ### Phase 2: MCP Integration
@@ -56,8 +58,10 @@ fhir4java-mcp/                           # NEW MODULE
 │   │   ├── McpResponse.java             # MCP protocol response
 │   │   ├── ToolCallRequest.java         # Tool invocation request
 │   │   └── ToolCallResponse.java        # Tool invocation response
-│   └── hint/
-│       └── ResponseHintGenerator.java   # Smart response hints
+│   ├── hint/
+│   │   └── ResponseHintGenerator.java   # Smart response hints
+│   └── audit/
+│       └── McpAuditPlugin.java          # Audit logging for compliance
 ```
 
 ### Phase 3: Real-Time Events
@@ -728,6 +732,111 @@ void mcpWorkflow_discoverQueryMutate() {
 
 ---
 
+### Task 15: MCP Audit Logging
+
+**Files:**
+- Create: `fhir4java-persistence/src/main/java/org/fhirframework/persistence/entity/McpAuditLogEntity.java`
+- Create: `fhir4java-persistence/src/main/java/org/fhirframework/persistence/repository/McpAuditLogRepository.java`
+- Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/audit/McpAuditPlugin.java`
+- Migration: `db/migrations/V*.sql`
+- Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/audit/McpAuditPluginTest.java`
+
+- [ ] **Step 1: Add Flyway migration for mcp_audit_log table**
+
+```sql
+CREATE TABLE mcp_audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id VARCHAR(64) DEFAULT 'default',
+    agent_id VARCHAR(100) NOT NULL,
+    tool_name VARCHAR(50) NOT NULL,           -- fhir_discover, fhir_query, fhir_mutate
+    action VARCHAR(50),                        -- read, search, create, update, delete
+    resource_type VARCHAR(50),
+    resource_id VARCHAR(64),
+    request_params JSONB,
+    response_summary VARCHAR(500),
+    success BOOLEAN NOT NULL,
+    error_message TEXT,
+    latency_ms INTEGER,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    trace_id VARCHAR(64)                       -- For future correlation
+);
+
+CREATE INDEX idx_mcp_audit_tenant_time ON mcp_audit_log(tenant_id, timestamp DESC);
+CREATE INDEX idx_mcp_audit_agent ON mcp_audit_log(agent_id, timestamp DESC);
+CREATE INDEX idx_mcp_audit_tool ON mcp_audit_log(tool_name, timestamp DESC);
+```
+
+- [ ] **Step 2: Implement McpAuditLogEntity**
+
+```java
+@Entity
+@Table(name = "mcp_audit_log")
+public class McpAuditLogEntity {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String tenantId;
+    private String agentId;
+    private String toolName;
+    private String action;
+    private String resourceType;
+    private String resourceId;
+    @Column(columnDefinition = "jsonb")
+    private String requestParams;
+    private String responseSummary;
+    private boolean success;
+    private String errorMessage;
+    private Integer latencyMs;
+    private Instant timestamp;
+    private String traceId;
+}
+```
+
+- [ ] **Step 3: Write failing test for audit logging**
+
+```java
+@Test
+void mcpToolCall_isAudited() {
+    mcpEndpoint.handle(new McpRequest("tools/call",
+        Map.of("name", "fhir_query", "arguments", Map.of("action", "read", "resourceType", "Patient", "id", "123"))));
+
+    List<McpAuditLogEntity> logs = auditRepository.findByAgentId("test-agent");
+    assertThat(logs).hasSize(1);
+    assertThat(logs.get(0).getToolName()).isEqualTo("fhir_query");
+    assertThat(logs.get(0).getAction()).isEqualTo("read");
+}
+```
+
+- [ ] **Step 4: Implement McpAuditPlugin**
+
+```java
+@Component
+public class McpAuditPlugin {
+    private final McpAuditLogRepository auditRepository;
+
+    public void logToolCall(String agentId, String toolName, ToolCallRequest request,
+                           ToolCallResponse response, long latencyMs) {
+        McpAuditLogEntity log = new McpAuditLogEntity();
+        log.setAgentId(agentId);
+        log.setToolName(toolName);
+        log.setAction(request.getParam("action", null));
+        log.setResourceType(request.getParam("resourceType", null));
+        log.setResourceId(request.getParam("id", null));
+        log.setRequestParams(toJson(request.getParams()));
+        log.setSuccess(response.isSuccess());
+        log.setErrorMessage(response.getError());
+        log.setLatencyMs((int) latencyMs);
+        log.setTimestamp(Instant.now());
+        auditRepository.save(log);
+    }
+}
+```
+
+- [ ] **Step 5: Integrate McpAuditPlugin into McpEndpoint**
+- [ ] **Step 6: Run tests, verify pass**
+- [ ] **Step 7: Commit** `git commit -m "feat(mcp): add MCP audit logging for compliance"`
+
+---
+
 ## Summary
 
 | Phase | Tasks | Key Deliverables |
@@ -736,5 +845,6 @@ void mcpWorkflow_discoverQueryMutate() {
 | Phase 2 | 4-9 | fhir4java-mcp module, 3 MCP tools, dry-run, hints |
 | Phase 3 | 10-13 | SSE streaming, webhooks, FHIR Subscriptions |
 | Integration | 14 | E2E test |
+| Observability | 15 | MCP audit logging |
 
-**Total: 14 tasks**
+**Total: 15 tasks**
