@@ -33,7 +33,7 @@ class McpEndpointTest {
         // Create a test tool
         McpTool testTool = new TestTool();
         toolRegistry = new ToolRegistry(List.of(testTool));
-        endpoint = new McpEndpoint(toolRegistry, objectMapper);
+        endpoint = new McpEndpoint(toolRegistry);
     }
 
     @Nested
@@ -70,7 +70,7 @@ class McpEndpointTest {
         @DisplayName("should return empty list when no tools registered")
         void shouldReturnEmptyListWhenNoTools() {
             ToolRegistry emptyRegistry = new ToolRegistry(List.of());
-            McpEndpoint emptyEndpoint = new McpEndpoint(emptyRegistry, objectMapper);
+            McpEndpoint emptyEndpoint = new McpEndpoint(emptyRegistry);
             McpRequest request = new McpRequest("tools/list", null, "2");
 
             McpResponse response = emptyEndpoint.handle(request);
@@ -203,7 +203,7 @@ class McpEndpointTest {
             // Create a tool that throws an exception
             McpTool errorTool = new ErrorThrowingTool();
             ToolRegistry registryWithErrorTool = new ToolRegistry(List.of(errorTool));
-            McpEndpoint endpointWithErrorTool = new McpEndpoint(registryWithErrorTool, objectMapper);
+            McpEndpoint endpointWithErrorTool = new McpEndpoint(registryWithErrorTool);
 
             Map<String, Object> params = Map.of(
                     "name", "error_tool",
@@ -217,6 +217,46 @@ class McpEndpointTest {
             assertNotNull(response.getError());
             assertEquals(McpError.INTERNAL_ERROR, response.getError().getCode());
             assertTrue(response.getError().getMessage().contains("Tool execution failed"));
+        }
+
+        @Test
+        @DisplayName("should return error when method is null")
+        void shouldReturnErrorWhenMethodNull() {
+            McpRequest request = new McpRequest(null, null, "10");
+
+            McpResponse response = endpoint.handle(request);
+
+            assertNotNull(response);
+            assertNotNull(response.getError());
+            assertEquals(McpError.INVALID_REQUEST, response.getError().getCode());
+            assertTrue(response.getError().getMessage().contains("method"));
+        }
+
+        @Test
+        @DisplayName("should return error for invalid JSON-RPC version")
+        void shouldReturnErrorForInvalidJsonRpcVersion() {
+            McpRequest request = new McpRequest("tools/list", null, "11");
+            request.setJsonrpc("1.0");  // Invalid version
+
+            McpResponse response = endpoint.handle(request);
+
+            assertNotNull(response);
+            assertNotNull(response.getError());
+            assertEquals(McpError.INVALID_REQUEST, response.getError().getCode());
+            assertTrue(response.getError().getMessage().contains("JSON-RPC version"));
+        }
+
+        @Test
+        @DisplayName("should return error when JSON-RPC version is null")
+        void shouldReturnErrorWhenJsonRpcVersionNull() {
+            McpRequest request = new McpRequest("tools/list", null, "12");
+            request.setJsonrpc(null);
+
+            McpResponse response = endpoint.handle(request);
+
+            assertNotNull(response);
+            assertNotNull(response.getError());
+            assertEquals(McpError.INVALID_REQUEST, response.getError().getCode());
         }
     }
 

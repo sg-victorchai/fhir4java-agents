@@ -42,6 +42,13 @@ public class McpError {
     }
 
     /**
+     * Creates an invalid request error.
+     */
+    public static McpError invalidRequest(String details) {
+        return new McpError(INVALID_REQUEST, "Invalid request: " + details);
+    }
+
+    /**
      * Creates a method not found error.
      */
     public static McpError methodNotFound(String method) {

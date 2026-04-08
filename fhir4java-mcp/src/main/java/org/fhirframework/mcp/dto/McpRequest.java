@@ -52,7 +52,7 @@ public class McpRequest {
     }
 
     public Map<String, Object> getParams() {
-        return params;
+        return params == null ? null : Map.copyOf(params);
     }
 
     public void setParams(Map<String, Object> params) {

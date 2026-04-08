@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +69,7 @@ public class ToolRegistry {
      * @return unmodifiable collection of all tools
      */
     public Collection<McpTool> getAllTools() {
-        return tools.values();
+        return Collections.unmodifiableCollection(tools.values());
     }
 
     /**

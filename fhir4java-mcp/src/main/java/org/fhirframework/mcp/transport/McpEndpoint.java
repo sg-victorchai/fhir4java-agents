@@ -1,6 +1,5 @@
 package org.fhirframework.mcp.transport;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.fhirframework.mcp.dto.McpError;
 import org.fhirframework.mcp.dto.McpRequest;
 import org.fhirframework.mcp.dto.McpResponse;
@@ -53,12 +52,12 @@ public class McpEndpoint {
     private static final String METHOD_TOOLS_LIST = "tools/list";
     private static final String METHOD_TOOLS_CALL = "tools/call";
 
-    private final ToolRegistry toolRegistry;
-    private final ObjectMapper objectMapper;
+    private static final String JSON_RPC_VERSION = "2.0";
 
-    public McpEndpoint(ToolRegistry toolRegistry, ObjectMapper objectMapper) {
+    private final ToolRegistry toolRegistry;
+
+    public McpEndpoint(ToolRegistry toolRegistry) {
         this.toolRegistry = toolRegistry;
-        this.objectMapper = objectMapper;
     }
 
     /**
@@ -74,10 +73,29 @@ public class McpEndpoint {
     public McpResponse handle(@RequestBody McpRequest request) {
         String method = request.getMethod();
         String id = request.getId();
+        String jsonrpc = request.getJsonrpc();
 
         log.debug("MCP request: method={}, id={}", method, id);
 
         try {
+            // Validate JSON-RPC version
+            if (!JSON_RPC_VERSION.equals(jsonrpc)) {
+                log.warn("Invalid JSON-RPC version: {}", jsonrpc);
+                return McpResponse.error(
+                        McpError.invalidRequest("Invalid JSON-RPC version. Expected '2.0'"),
+                        id
+                );
+            }
+
+            // Validate method is present
+            if (method == null) {
+                log.warn("Missing method in MCP request");
+                return McpResponse.error(
+                        McpError.invalidRequest("Missing 'method' field"),
+                        id
+                );
+            }
+
             return switch (method) {
                 case METHOD_TOOLS_LIST -> listTools(id);
                 case METHOD_TOOLS_CALL -> callTool(request.getParams(), id);
@@ -87,9 +105,9 @@ public class McpEndpoint {
                 }
             };
         } catch (Exception e) {
-            log.error("Error processing MCP request: {}", e.getMessage(), e);
+            log.error("Error processing MCP request", e);
             return McpResponse.error(
-                    new McpError(McpError.INTERNAL_ERROR, "Error processing request: " + e.getMessage()),
+                    McpError.internalError("Internal server error"),
                     id
             );
         }
@@ -154,9 +172,9 @@ public class McpEndpoint {
             ToolCallResponse toolResponse = tool.execute(toolRequest);
             return McpResponse.success(toolResponse, id);
         } catch (Exception e) {
-            log.error("Error executing tool {}: {}", toolName, e.getMessage(), e);
+            log.error("Error executing tool: {}", toolName, e);
             return McpResponse.error(
-                    McpError.internalError("Tool execution failed: " + e.getMessage()),
+                    McpError.internalError("Tool execution failed"),
                     id
             );
         }
