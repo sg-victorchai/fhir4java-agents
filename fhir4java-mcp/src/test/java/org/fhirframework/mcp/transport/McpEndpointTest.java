@@ -37,6 +37,89 @@ class McpEndpointTest {
     }
 
     @Nested
+    @DisplayName("initialize method")
+    class InitializeTests {
+
+        @Test
+        @DisplayName("should return protocol version, capabilities, and server info")
+        void shouldReturnInitializeResponse() {
+            Map<String, Object> params = Map.of(
+                    "protocolVersion", "2024-11-05",
+                    "capabilities", Map.of(),
+                    "clientInfo", Map.of("name", "vscode", "version", "1.0.0")
+            );
+            McpRequest request = new McpRequest("initialize", params, "init-1");
+
+            McpResponse response = endpoint.handle(request);
+
+            assertNotNull(response);
+            assertNull(response.getError());
+            assertEquals("init-1", response.getId());
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> result = (Map<String, Object>) response.getResult();
+            assertNotNull(result);
+
+            // Check protocol version
+            assertEquals("2024-11-05", result.get("protocolVersion"));
+
+            // Check capabilities
+            @SuppressWarnings("unchecked")
+            Map<String, Object> capabilities = (Map<String, Object>) result.get("capabilities");
+            assertNotNull(capabilities);
+            assertNotNull(capabilities.get("tools"));
+
+            // Check server info
+            @SuppressWarnings("unchecked")
+            Map<String, Object> serverInfo = (Map<String, Object>) result.get("serverInfo");
+            assertNotNull(serverInfo);
+            assertEquals("fhir4java-mcp", serverInfo.get("name"));
+            assertNotNull(serverInfo.get("version"));
+        }
+
+        @Test
+        @DisplayName("should handle initialize without params")
+        void shouldHandleInitializeWithoutParams() {
+            McpRequest request = new McpRequest("initialize", null, "init-2");
+
+            McpResponse response = endpoint.handle(request);
+
+            assertNotNull(response);
+            assertNull(response.getError());
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> result = (Map<String, Object>) response.getResult();
+            assertNotNull(result);
+            assertEquals("2024-11-05", result.get("protocolVersion"));
+        }
+
+        @Test
+        @DisplayName("should handle notifications/initialized")
+        void shouldHandleInitializedNotification() {
+            McpRequest request = new McpRequest("notifications/initialized", null, "init-3");
+
+            McpResponse response = endpoint.handle(request);
+
+            assertNotNull(response);
+            assertNull(response.getError());
+            assertTrue(endpoint.isInitialized());
+        }
+
+        @Test
+        @DisplayName("should not be initialized before notifications/initialized")
+        void shouldNotBeInitializedBeforeNotification() {
+            assertFalse(endpoint.isInitialized());
+
+            // Call initialize
+            McpRequest initRequest = new McpRequest("initialize", null, "init-4");
+            endpoint.handle(initRequest);
+
+            // Still not initialized until notifications/initialized
+            assertFalse(endpoint.isInitialized());
+        }
+    }
+
+    @Nested
     @DisplayName("tools/list method")
     class ToolsListTests {
 

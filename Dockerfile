@@ -6,12 +6,10 @@ WORKDIR /app
 # Copy Maven wrapper and pom files
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
-COPY fhir4java-codegen/pom.xml fhir4java-codegen/
 COPY fhir4java-core/pom.xml fhir4java-core/
 COPY fhir4java-persistence/pom.xml fhir4java-persistence/
 COPY fhir4java-plugin/pom.xml fhir4java-plugin/
 COPY fhir4java-api/pom.xml fhir4java-api/
-COPY fhir4java-mcp/pom.xml fhir4java-mcp/
 COPY fhir4java-server/pom.xml fhir4java-server/
 
 # Download dependencies (cached layer)
