@@ -17,6 +17,12 @@ fhir:
     base-url: ${FHIR_SERVER_BASE_URL:http://localhost:8080/fhir/r5}
 
 fhir4java:
+  security:
+    oauth2:
+      # Disable OAuth2 for local Docker development (no auth server running)
+      # Re-enable when deploying with a real OAuth2 provider
+      enabled: ${OAUTH2_ENABLED:false}
+
   validation:
     # ============================================================================
     # DOCKER PROFILE VALIDATION CONFIGURATION

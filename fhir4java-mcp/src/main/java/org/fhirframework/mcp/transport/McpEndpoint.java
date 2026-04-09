@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -83,7 +86,8 @@ public class McpEndpoint {
     private static final String JSON_RPC_VERSION = "2.0";
 
     // MCP Protocol version - using the standard MCP protocol version
-    private static final String MCP_PROTOCOL_VERSION = "2024-11-05";
+    //private static final String MCP_PROTOCOL_VERSION = "2024-11-05";
+    private static final String MCP_PROTOCOL_VERSION = "2025-03-26";
 
     // Server info
     private static final String SERVER_NAME = "fhir4java-mcp";
@@ -183,6 +187,40 @@ public class McpEndpoint {
     public boolean isInitialized() {
         return initialized;
     }
+    
+    /**
+     * Handles GET requests to establish an SSE stream for server-to-client messages.
+     * <p>
+     * Required by the MCP Streamable HTTP transport specification (2025-11-05+).
+     * VSCode and other MCP clients using the newer protocol version will issue a GET
+     * after initialization to open a persistent SSE channel.
+     * </p>
+     *
+     * @return an SseEmitter that keeps the SSE connection open
+     */
+    @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter stream() {
+        log.info("MCP SSE stream requested - opening server-to-client channel");
+
+        // Timeout of 0 means no timeout - keep alive until client disconnects
+        SseEmitter emitter = new SseEmitter(0L);
+
+        emitter.onCompletion(() -> log.debug("MCP SSE stream completed"));
+        emitter.onTimeout(() -> log.debug("MCP SSE stream timed out"));
+        emitter.onError(e -> log.debug("MCP SSE stream error: {}", e.getMessage()));
+
+        // Send an initial empty comment to confirm the connection is established
+        // This is standard SSE practice to signal readiness
+        try {
+            emitter.send(SseEmitter.event().comment("MCP SSE stream ready"));
+        } catch (Exception e) {
+            log.warn("Failed to send initial SSE event", e);
+            emitter.completeWithError(e);
+        }
+
+        return emitter;
+    }
+
 
     /**
      * Handles MCP protocol requests.
