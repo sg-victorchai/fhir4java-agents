@@ -14,6 +14,7 @@ COPY fhir4java-core/pom.xml fhir4java-core/
 COPY fhir4java-persistence/pom.xml fhir4java-persistence/
 COPY fhir4java-plugin/pom.xml fhir4java-plugin/
 COPY fhir4java-api/pom.xml fhir4java-api/
+COPY fhir4java-mcp/pom.xml fhir4java-mcp/
 COPY fhir4java-server/pom.xml fhir4java-server/
 
 # Make mvnw executable and create unzip wrapper to handle overwrites
@@ -32,6 +33,7 @@ COPY fhir4java-core/src fhir4java-core/src
 COPY fhir4java-persistence/src fhir4java-persistence/src
 COPY fhir4java-plugin/src fhir4java-plugin/src
 COPY fhir4java-api/src fhir4java-api/src
+COPY fhir4java-mcp/src fhir4java-mcp/src
 COPY fhir4java-server/src fhir4java-server/src
 
 # Build the application

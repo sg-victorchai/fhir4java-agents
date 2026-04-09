@@ -25,6 +25,7 @@
         <module>fhir4java-persistence</module>
         <module>fhir4java-plugin</module>
         <module>fhir4java-api</module>
+        <module>fhir4java-mcp</module>
         <module>fhir4java-server</module>
     </modules>
 
@@ -92,6 +93,11 @@
             <dependency>
                 <groupId>org.fhirframework</groupId>
                 <artifactId>fhir4java-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.fhirframework</groupId>
+                <artifactId>fhir4java-mcp</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
@@ -301,6 +307,7 @@
                 <module>fhir4java-persistence</module>
                 <module>fhir4java-plugin</module>
                 <module>fhir4java-api</module>
+                <module>fhir4java-mcp</module>
                 <module>fhir4java-server</module>
             </modules>
         </profile>

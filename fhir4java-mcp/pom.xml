@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.fhirframework</groupId>
+        <artifactId>fhir4java-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>fhir4java-mcp</artifactId>
+    <packaging>jar</packaging>
+
+    <name>FHIR4Java - MCP</name>
+    <description>Model Context Protocol (MCP) integration for AI-ready FHIR server capabilities</description>
+
+    <dependencies>
+        <!-- Internal Modules -->
+        <dependency>
+            <groupId>org.fhirframework</groupId>
+            <artifactId>fhir4java-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.fhirframework</groupId>
+            <artifactId>fhir4java-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.fhirframework</groupId>
+            <artifactId>fhir4java-persistence</artifactId>
+        </dependency>
+
+        <!-- Spring Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Jackson for JSON -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -78,6 +78,15 @@ spring:
       fail-on-unknown-properties: false
     default-property-inclusion: non_null
 
+  # OAuth2 Resource Server Configuration
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Issuer URI for JWT validation
+          # Set via OAUTH2_ISSUER_URI environment variable in production
+          issuer-uri: ${OAUTH2_ISSUER_URI:http://localhost:8080/realms/fhir4java}
+
 # FHIR4Java Server Configuration
 fhir4java:
   server:
@@ -183,6 +192,13 @@ fhir4java:
     default-tenant-id: default
     header-name: X-Tenant-ID
 
+  # Security Configuration
+  security:
+    oauth2:
+      # Enable/disable OAuth2 resource server security
+      # Set to false to disable authentication (e.g., for development)
+      enabled: true
+
 # Actuator Configuration
 management:
   endpoints:
@@ -265,3 +281,10 @@ spring:
 
   cache:
     type: simple
+
+# Disable OAuth2 security for tests (most tests don't need authentication)
+# Security tests use @TestPropertySource to enable OAuth2 and mock the JwtDecoder
+fhir4java:
+  security:
+    oauth2:
+      enabled: false

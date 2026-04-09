@@ -35,6 +35,10 @@
             <groupId>org.fhirframework</groupId>
             <artifactId>fhir4java-api</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.fhirframework</groupId>
+            <artifactId>fhir4java-mcp</artifactId>
+        </dependency>
 
         <!-- Spring Boot -->
         <dependency>
@@ -79,6 +83,12 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>sts</artifactId>
+        </dependency>
+
+        <!-- Security - OAuth2 Resource Server -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
 
         <!-- Development -->
@@ -146,6 +156,13 @@
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Security Testing -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
