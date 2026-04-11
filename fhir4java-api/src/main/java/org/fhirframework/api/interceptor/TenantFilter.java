@@ -94,7 +94,7 @@ public class TenantFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        // Skip for actuator, health check, admin API, and non-FHIR endpoints
-        return path.startsWith("/actuator") || path.startsWith("/api/admin");
+        // Skip for actuator, health check, admin API, MCP endpoints, and non-FHIR endpoints
+        return path.startsWith("/actuator") || path.startsWith("/api/admin") || path.startsWith("/api/mcp");
     }
 }
