@@ -24,12 +24,12 @@ public class McpRequest {
     private Map<String, Object> params;
 
     @JsonProperty("id")
-    private String id;
+    private Object id;  // Object to preserve numeric (e.g. 1) vs string (e.g. "1") IDs per JSON-RPC 2.0 spec
 
     public McpRequest() {
     }
 
-    public McpRequest(String method, Map<String, Object> params, String id) {
+    public McpRequest(String method, Map<String, Object> params, Object id) {
         this.method = method;
         this.params = params;
         this.id = id;
@@ -59,11 +59,11 @@ public class McpRequest {
         this.params = params;
     }
 
-    public String getId() {
+    public Object getId() {
         return id;
     }
 
-    public void setId(String id) {
+    public void setId(Object id) {
         this.id = id;
     }
 
@@ -73,7 +73,7 @@ public class McpRequest {
                 "jsonrpc='" + jsonrpc + '\'' +
                 ", method='" + method + '\'' +
                 ", params=" + params +
-                ", id='" + id + '\'' +
+                ", id=" + id +
                 '}';
     }
 }

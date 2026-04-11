@@ -135,7 +135,7 @@ public class McpEndpoint {
 	 * @param id the request ID
 	 * @return the initialization response with server info and capabilities
 	 */
-	private McpResponse initialize(Map<String, Object> params, String id) {
+	private McpResponse initialize(Map<String, Object> params, Object id) {
 		log.info("MCP initialize request received");
 
 		// Extract client info for logging
@@ -197,7 +197,7 @@ public class McpEndpoint {
 	 * @param id the request ID (may be null for notifications)
 	 * @return an empty success response
 	 */
-	private McpResponse handleInitialized(String id) {
+	private McpResponse handleInitialized(Object id) {
 		log.info("MCP client initialized notification received - session is now active");
 		initialized = true;
 		// Return null to signal the HTTP layer (handle(McpRequest, HttpServletRequest))
@@ -294,7 +294,7 @@ public class McpEndpoint {
 	 */
 	McpResponse handle(McpRequest request) {
 		String method = request.getMethod();
-		String id = request.getId();
+		Object id = request.getId();
 		String jsonrpc = request.getJsonrpc();
 
 		log.debug("MCP request: method={}, id={}", method, id);
@@ -416,7 +416,7 @@ public class McpEndpoint {
 	/**
 	 * Handles tools/list method.
 	 */
-	private McpResponse listTools(String id) {
+	private McpResponse listTools(Object id) {
 		log.debug("Listing {} tools", toolRegistry.getToolCount());
 
 		Map<String, Object> result = new LinkedHashMap<>();
@@ -428,7 +428,7 @@ public class McpEndpoint {
 	/**
 	 * Handles tools/call method.
 	 */
-	private McpResponse callTool(Map<String, Object> params, String id) {
+	private McpResponse callTool(Map<String, Object> params, Object id) {
 		if (params == null) {
 			return McpResponse.error(
 					McpError.invalidParams("Missing params"),

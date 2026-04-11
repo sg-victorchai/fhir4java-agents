@@ -23,12 +23,12 @@ public class McpResponse {
     private McpError error;
 
     @JsonProperty("id")
-    private String id;
+    private Object id;  // Object to preserve numeric (e.g. 1) vs string (e.g. "1") IDs per JSON-RPC 2.0 spec
 
     public McpResponse() {
     }
 
-    private McpResponse(Object result, McpError error, String id) {
+    private McpResponse(Object result, McpError error, Object id) {
         this.result = result;
         this.error = error;
         this.id = id;
@@ -37,28 +37,28 @@ public class McpResponse {
     /**
      * Creates a successful response with the given result.
      */
-    public static McpResponse success(Object result, String id) {
+    public static McpResponse success(Object result, Object id) {
         return new McpResponse(result, null, id);
     }
 
     /**
      * Creates an error response with the given error.
      */
-    public static McpResponse error(McpError error, String id) {
+    public static McpResponse error(McpError error, Object id) {
         return new McpResponse(null, error, id);
     }
 
     /**
      * Creates an error response with a simple error message.
      */
-    public static McpResponse error(String message, String id) {
+    public static McpResponse error(String message, Object id) {
         return new McpResponse(null, new McpError(McpError.INTERNAL_ERROR, message), id);
     }
 
     /**
      * Creates a method not found error response.
      */
-    public static McpResponse methodNotFound(String method, String id) {
+    public static McpResponse methodNotFound(String method, Object id) {
         return new McpResponse(null, McpError.methodNotFound(method), id);
     }
 
@@ -86,11 +86,11 @@ public class McpResponse {
         this.error = error;
     }
 
-    public String getId() {
+    public Object getId() {
         return id;
     }
 
-    public void setId(String id) {
+    public void setId(Object id) {
         this.id = id;
     }
 
@@ -107,7 +107,7 @@ public class McpResponse {
                 "jsonrpc='" + jsonrpc + '\'' +
                 ", result=" + result +
                 ", error=" + error +
-                ", id='" + id + '\'' +
+                ", id=" + id +
                 '}';
     }
 }
