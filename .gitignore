@@ -105,3 +105,6 @@ coverage/
 
 # Git worktrees
 .worktrees/
+
+# Superpowers generated plan
+docs/superpowers/
