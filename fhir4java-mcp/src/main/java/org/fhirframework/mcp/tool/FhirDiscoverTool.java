@@ -86,8 +86,10 @@ public class FhirDiscoverTool implements McpTool {
         // Topic property
         Map<String, Object> topicProp = new LinkedHashMap<>();
         topicProp.put("type", "string");
-        topicProp.put("enum", List.of("RESOURCES", "SEARCH_PARAMS", "OPERATIONS", "ALL"));
-        topicProp.put("description", "What to discover");
+        topicProp.put("enum", List.of("RESOURCES", "SEARCH_PARAMS", "OPERATIONS", "EVENT_CAPABILITIES", "ALL"));
+        topicProp.put("description", "What to discover: RESOURCES (available resource types), " +
+                "SEARCH_PARAMS (search parameters), OPERATIONS (extended operations), " +
+                "EVENT_CAPABILITIES (SSE, webhooks, subscriptions), ALL (everything)");
         properties.put("topic", topicProp);
 
         // ResourceType property
@@ -126,7 +128,12 @@ public class FhirDiscoverTool implements McpTool {
                 topic = DiscoveryTopic.valueOf(topicStr.toUpperCase());
             } catch (IllegalArgumentException e) {
                 return ToolCallResponse.error("Invalid topic: " + topicStr + ". " +
-                        "Valid values are: RESOURCES, SEARCH_PARAMS, OPERATIONS, ALL");
+                        "Valid values are: RESOURCES, SEARCH_PARAMS, OPERATIONS, EVENT_CAPABILITIES, ALL");
+            }
+
+            // Handle EVENT_CAPABILITIES specially (not part of core DiscoveryService)
+            if (topic == DiscoveryTopic.EVENT_CAPABILITIES) {
+                return handleEventCapabilitiesDiscovery();
             }
 
             // Extract optional resourceType
@@ -175,6 +182,104 @@ public class FhirDiscoverTool implements McpTool {
         } catch (Exception e) {
             log.error("Discovery failed", e);
             return ToolCallResponse.error("Discovery failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Handles discovery of event capabilities (SSE, webhooks, FHIR Subscriptions).
+     * <p>
+     * This provides AI agents with information about real-time event subscription options.
+     * </p>
+     */
+    private ToolCallResponse handleEventCapabilitiesDiscovery() {
+        log.debug("Discovering event capabilities");
+
+        Map<String, Object> capabilities = new LinkedHashMap<>();
+
+        // SSE capabilities
+        Map<String, Object> sse = new LinkedHashMap<>();
+        sse.put("endpoint", "/api/events/stream");
+        sse.put("method", "GET");
+        sse.put("accept", "text/event-stream");
+        sse.put("supportedFilters", List.of(
+                Map.of("name", "topics", "description", "Comma-separated resource types (e.g., Patient,Observation)"),
+                Map.of("name", "actions", "description", "Comma-separated actions (e.g., create,update,delete)")
+        ));
+        sse.put("eventTypes", List.of(
+                Map.of("type", "resource-change", "description", "Emitted when a resource is created, updated, or deleted")
+        ));
+        sse.put("eventPayload", Map.of(
+                "resourceType", "The FHIR resource type",
+                "resourceId", "The logical ID of the resource",
+                "action", "create | update | delete",
+                "tenantId", "The tenant context",
+                "timestamp", "ISO 8601 timestamp"
+        ));
+        capabilities.put("sse", sse);
+
+        // Webhook capabilities
+        Map<String, Object> webhooks = new LinkedHashMap<>();
+        webhooks.put("endpoint", "/api/webhooks");
+        webhooks.put("methods", Map.of(
+                "POST", "Register a new webhook",
+                "GET", "List all webhooks for tenant",
+                "GET /{id}", "Get specific webhook",
+                "DELETE /{id}", "Delete webhook",
+                "POST /{id}/enable", "Enable webhook",
+                "POST /{id}/disable", "Disable webhook"
+        ));
+        webhooks.put("requestSchema", Map.of(
+                "callbackUrl", "URL to POST event notifications (required)",
+                "topics", "List of topics (e.g., ['Patient.create', 'Patient.*'])",
+                "secret", "Optional HMAC-SHA256 secret for signing payloads"
+        ));
+        webhooks.put("supportedTopicPatterns", List.of(
+                Map.of("pattern", "{ResourceType}.{action}", "example", "Patient.create"),
+                Map.of("pattern", "{ResourceType}.*", "example", "Patient.*", "description", "All actions for resource"),
+                Map.of("pattern", "*.*", "description", "All events")
+        ));
+        webhooks.put("signatureHeader", "X-Webhook-Signature");
+        webhooks.put("signatureFormat", "sha256=<base64-encoded-hmac>");
+        capabilities.put("webhooks", webhooks);
+
+        // FHIR Subscription capabilities
+        Map<String, Object> subscriptions = new LinkedHashMap<>();
+        subscriptions.put("channels", List.of(
+                Map.of("type", "rest-hook", "description", "HTTP POST callback"),
+                Map.of("type", "sse", "description", "Server-Sent Events stream")
+        ));
+        subscriptions.put("topicMatching", Map.of(
+                "resourceType", "Exact match on resource type",
+                "events", "List of events to match (create, update, delete)",
+                "filters", "Additional filter criteria (future)"
+        ));
+        capabilities.put("subscriptions", subscriptions);
+
+        // Usage hints
+        Map<String, Object> usageHints = new LinkedHashMap<>();
+        usageHints.put("forRealTimeMonitoring", "Use SSE for continuous real-time updates in client applications");
+        usageHints.put("forServerToServer", "Use webhooks for server-to-server notifications");
+        usageHints.put("forFhirCompliance", "Use FHIR Subscriptions for standards-compliant subscription management");
+        capabilities.put("usageHints", usageHints);
+
+        try {
+            String jsonResponse = objectMapper.writeValueAsString(capabilities);
+
+            // Generate hints for event capabilities
+            HintContext hintContext = new HintContext(
+                    TOOL_NAME,
+                    "event_capabilities",
+                    null,
+                    List.of(),
+                    Map.of("hasEventCapabilities", true)
+            );
+            String hints = hintGenerator.generateHintsJson(hintContext);
+
+            return ToolCallResponse.success(jsonResponse, hints);
+
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize event capabilities", e);
+            return ToolCallResponse.error("Failed to serialize event capabilities: " + e.getMessage());
         }
     }
 
@@ -274,6 +379,12 @@ public class FhirDiscoverTool implements McpTool {
                             metadata.put("discoveredResources", resourceNames);
                         }
                     }
+                    break;
+
+                case EVENT_CAPABILITIES:
+                    // EVENT_CAPABILITIES is handled separately, but add metadata if needed
+                    metadata.put("hasEventCapabilities", true);
+                    metadata.put("supportedChannels", List.of("sse", "webhooks", "subscriptions"));
                     break;
             }
         } catch (JsonProcessingException e) {

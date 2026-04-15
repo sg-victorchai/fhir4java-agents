@@ -22,6 +22,12 @@ public class SharedTestContext {
     private String lastResourceType;
     private String lastEtag;
 
+    // Event-related fields for Phase 3 BDD tests
+    private Long lastWebhookId;
+    private String currentTenantId;
+    private String lastEventData;
+    private int registeredWebhookCount;
+
     public Response getLastResponse() {
         return lastResponse;
     }
@@ -111,5 +117,43 @@ public class SharedTestContext {
             return fullId.substring(fullId.lastIndexOf("/") + 1);
         }
         return fullId;
+    }
+
+    // ========== Event-related getters/setters ==========
+
+    public Long getLastWebhookId() {
+        return lastWebhookId;
+    }
+
+    public void setLastWebhookId(Long lastWebhookId) {
+        this.lastWebhookId = lastWebhookId;
+    }
+
+    public String getCurrentTenantId() {
+        return currentTenantId;
+    }
+
+    public void setCurrentTenantId(String currentTenantId) {
+        this.currentTenantId = currentTenantId;
+    }
+
+    public String getLastEventData() {
+        return lastEventData;
+    }
+
+    public void setLastEventData(String lastEventData) {
+        this.lastEventData = lastEventData;
+    }
+
+    public int getRegisteredWebhookCount() {
+        return registeredWebhookCount;
+    }
+
+    public void setRegisteredWebhookCount(int registeredWebhookCount) {
+        this.registeredWebhookCount = registeredWebhookCount;
+    }
+
+    public void incrementWebhookCount() {
+        this.registeredWebhookCount++;
     }
 }

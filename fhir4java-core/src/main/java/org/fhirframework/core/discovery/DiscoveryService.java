@@ -62,6 +62,8 @@ public class DiscoveryService {
             case RESOURCES -> discoverResources(version);
             case SEARCH_PARAMS -> discoverSearchParameters(resourceType, version);
             case OPERATIONS -> discoverOperations(resourceType, version);
+            case EVENT_CAPABILITIES -> throw new UnsupportedOperationException(
+                    "EVENT_CAPABILITIES is handled by FhirDiscoverTool directly");
             case ALL -> discoverAll(resourceType, version);
         };
     }

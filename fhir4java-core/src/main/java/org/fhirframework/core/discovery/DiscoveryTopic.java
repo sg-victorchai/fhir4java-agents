@@ -24,6 +24,19 @@ public enum DiscoveryTopic {
     OPERATIONS,
 
     /**
+     * Discover event subscription capabilities (SSE, webhooks, FHIR Subscriptions).
+     * <p>
+     * Returns information about:
+     * <ul>
+     *   <li>SSE endpoint and supported filters</li>
+     *   <li>Webhook registration endpoint and topic patterns</li>
+     *   <li>FHIR Subscription channels</li>
+     * </ul>
+     * </p>
+     */
+    EVENT_CAPABILITIES,
+
+    /**
      * Discover all topics combined (resources, search params, and operations).
      */
     ALL
