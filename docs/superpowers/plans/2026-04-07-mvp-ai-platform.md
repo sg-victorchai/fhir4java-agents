@@ -87,14 +87,14 @@ fhir4java-plugin/src/main/java/org/fhirframework/plugin/
 
 ## Phase 1: Foundation (Weeks 1-3)
 
-### Task 1: DiscoveryService
+### Task 1: DiscoveryService ✅
 
 **Files:**
 - Create: `fhir4java-core/src/main/java/org/fhirframework/core/discovery/DiscoveryService.java`
 - Create: `fhir4java-core/src/main/java/org/fhirframework/core/discovery/DiscoveryResponse.java`
 - Test: `fhir4java-core/src/test/java/org/fhirframework/core/discovery/DiscoveryServiceTest.java`
 
-- [ ] **Step 1: Write failing test for resource discovery**
+- [x] **Step 1: Write failing test for resource discovery**
 
 ```java
 @Test
@@ -105,7 +105,7 @@ void discoverResources_returnsEnabledResources() {
 }
 ```
 
-- [ ] **Step 2: Implement DiscoveryService**
+- [x] **Step 2: Implement DiscoveryService**
 
 ```java
 @Service
@@ -125,19 +125,19 @@ public class DiscoveryService {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(core): add DiscoveryService for MCP tool backing"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(core): add DiscoveryService for MCP tool backing"`
 
 ---
 
-### Task 2: OAuth2 Resource Server
+### Task 2: OAuth2 Resource Server ✅
 
 **Files:**
 - Create: `fhir4java-server/src/main/java/org/fhirframework/server/security/OAuth2ResourceServerConfig.java`
 - Modify: `fhir4java-server/src/main/resources/application.yml`
 - Test: `fhir4java-server/src/test/java/org/fhirframework/server/security/OAuth2SecurityTest.java`
 
-- [ ] **Step 1: Write failing security test**
+- [x] **Step 1: Write failing security test**
 
 ```java
 @Test
@@ -156,7 +156,7 @@ void validJwtToken_allowsAccess() {
 }
 ```
 
-- [ ] **Step 2: Add Spring Security OAuth2 dependency to pom.xml**
+- [x] **Step 2: Add Spring Security OAuth2 dependency to pom.xml**
 
 ```xml
 <dependency>
@@ -165,7 +165,7 @@ void validJwtToken_allowsAccess() {
 </dependency>
 ```
 
-- [ ] **Step 3: Implement OAuth2ResourceServerConfig**
+- [x] **Step 3: Implement OAuth2ResourceServerConfig**
 
 ```java
 @Configuration
@@ -186,7 +186,7 @@ public class OAuth2ResourceServerConfig {
 }
 ```
 
-- [ ] **Step 4: Configure JWT issuer in application.yml**
+- [x] **Step 4: Configure JWT issuer in application.yml**
 
 ```yaml
 spring:
@@ -197,19 +197,19 @@ spring:
           issuer-uri: ${OAUTH2_ISSUER_URI:http://localhost:8080/realms/fhir4java}
 ```
 
-- [ ] **Step 5: Run tests, verify pass**
-- [ ] **Step 6: Commit** `git commit -m "feat(security): add OAuth2 resource server configuration"`
+- [x] **Step 5: Run tests, verify pass**
+- [x] **Step 6: Commit** `git commit -m "feat(security): add OAuth2 resource server configuration"`
 
 ---
 
-### Task 3: API Key Authentication
+### Task 3: API Key Authentication ✅
 
 **Files:**
 - Create: `fhir4java-persistence/src/main/java/org/fhirframework/persistence/entity/AgentApiKeyEntity.java`
 - Create: `fhir4java-server/src/main/java/org/fhirframework/server/security/ApiKeyAuthFilter.java`
 - Test: `fhir4java-server/src/test/java/org/fhirframework/server/security/ApiKeyAuthTest.java`
 
-- [ ] **Step 1: Write failing test for API key auth**
+- [x] **Step 1: Write failing test for API key auth**
 
 ```java
 @Test
@@ -221,7 +221,7 @@ void validApiKey_allowsAccess() {
 }
 ```
 
-- [ ] **Step 2: Create AgentApiKeyEntity**
+- [x] **Step 2: Create AgentApiKeyEntity**
 
 ```java
 @Entity
@@ -238,7 +238,7 @@ public class AgentApiKeyEntity {
 }
 ```
 
-- [ ] **Step 3: Implement ApiKeyAuthFilter**
+- [x] **Step 3: Implement ApiKeyAuthFilter**
 
 ```java
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
@@ -257,21 +257,21 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 }
 ```
 
-- [ ] **Step 4: Add filter to security chain** (before OAuth2)
-- [ ] **Step 5: Run tests, verify pass**
-- [ ] **Step 6: Commit** `git commit -m "feat(security): add API key authentication for agents"`
+- [x] **Step 4: Add filter to security chain** (before OAuth2)
+- [x] **Step 5: Run tests, verify pass**
+- [x] **Step 6: Commit** `git commit -m "feat(security): add API key authentication for agents"`
 
 ---
 
 ## Phase 2: MCP Integration (Weeks 4-7)
 
-### Task 4: Create fhir4java-mcp Module
+### Task 4: Create fhir4java-mcp Module ✅
 
 **Files:**
 - Create: `fhir4java-mcp/pom.xml`
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/McpAutoConfiguration.java`
 
-- [ ] **Step 1: Create module pom.xml**
+- [x] **Step 1: Create module pom.xml**
 
 ```xml
 <project>
@@ -289,21 +289,21 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 </project>
 ```
 
-- [ ] **Step 2: Add module to parent pom.xml**
-- [ ] **Step 3: Create McpAutoConfiguration**
-- [ ] **Step 4: Verify module builds** `mvn clean compile -pl fhir4java-mcp`
-- [ ] **Step 5: Commit** `git commit -m "feat(mcp): create fhir4java-mcp module"`
+- [x] **Step 2: Add module to parent pom.xml**
+- [x] **Step 3: Create McpAutoConfiguration**
+- [x] **Step 4: Verify module builds** `mvn clean compile -pl fhir4java-mcp`
+- [x] **Step 5: Commit** `git commit -m "feat(mcp): create fhir4java-mcp module"`
 
 ---
 
-### Task 5: MCP Transport Layer
+### Task 5: MCP Transport Layer ✅
 
 **Files:**
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/transport/McpEndpoint.java`
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/dto/McpRequest.java`
 - Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/transport/McpEndpointTest.java`
 
-- [ ] **Step 1: Write failing test for MCP endpoint**
+- [x] **Step 1: Write failing test for MCP endpoint**
 
 ```java
 @Test
@@ -318,7 +318,7 @@ void mcpEndpoint_handleToolList() {
 }
 ```
 
-- [ ] **Step 2: Implement McpEndpoint controller**
+- [x] **Step 2: Implement McpEndpoint controller**
 
 ```java
 @RestController
@@ -335,18 +335,18 @@ public class McpEndpoint {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(mcp): add MCP HTTP endpoint"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(mcp): add MCP HTTP endpoint"`
 
 ---
 
-### Task 6: fhir_discover Tool
+### Task 6: fhir_discover Tool ✅
 
 **Files:**
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/tool/FhirDiscoverTool.java`
 - Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/tool/FhirDiscoverToolTest.java`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```java
 @Test
@@ -358,7 +358,7 @@ void fhirDiscover_returnsResourceList() {
 }
 ```
 
-- [ ] **Step 2: Implement FhirDiscoverTool**
+- [x] **Step 2: Implement FhirDiscoverTool**
 
 ```java
 @Component
@@ -380,18 +380,18 @@ public class FhirDiscoverTool implements McpTool {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(mcp): implement fhir_discover tool"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(mcp): implement fhir_discover tool"`
 
 ---
 
-### Task 7: fhir_query Tool
+### Task 7: fhir_query Tool ✅
 
 **Files:**
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/tool/FhirQueryTool.java`
 - Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/tool/FhirQueryToolTest.java`
 
-- [ ] **Step 1: Write failing tests for read, search, operation**
+- [x] **Step 1: Write failing tests for read, search, operation**
 
 ```java
 @Test
@@ -412,7 +412,7 @@ void fhirQuery_search_returnsBundle() {
 }
 ```
 
-- [ ] **Step 2: Implement FhirQueryTool**
+- [x] **Step 2: Implement FhirQueryTool**
 
 ```java
 @Component
@@ -435,18 +435,18 @@ public class FhirQueryTool implements McpTool {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(mcp): implement fhir_query tool"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(mcp): implement fhir_query tool"`
 
 ---
 
-### Task 8: fhir_mutate Tool with Dry-Run
+### Task 8: fhir_mutate Tool with Dry-Run ✅
 
 **Files:**
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/tool/FhirMutateTool.java`
 - Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/tool/FhirMutateToolTest.java`
 
-- [ ] **Step 1: Write failing tests for create, update, dry-run**
+- [x] **Step 1: Write failing tests for create, update, dry-run**
 
 ```java
 @Test
@@ -469,7 +469,7 @@ void fhirMutate_dryRun_doesNotPersist() {
 }
 ```
 
-- [ ] **Step 2: Implement FhirMutateTool with dry-run support**
+- [x] **Step 2: Implement FhirMutateTool with dry-run support**
 
 ```java
 @Component
@@ -498,18 +498,18 @@ public class FhirMutateTool implements McpTool {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(mcp): implement fhir_mutate tool with dry-run mode"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(mcp): implement fhir_mutate tool with dry-run mode"`
 
 ---
 
-### Task 9: Smart Response Hints
+### Task 9: Smart Response Hints ✅
 
 **Files:**
 - Create: `fhir4java-mcp/src/main/java/org/fhirframework/mcp/hint/ResponseHintGenerator.java`
 - Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/hint/ResponseHintGeneratorTest.java`
 
-- [ ] **Step 1: Write test for hint generation**
+- [x] **Step 1: Write test for hint generation**
 
 ```java
 @Test
@@ -521,23 +521,23 @@ void generateHint_afterSearch_suggestsRelated() {
 }
 ```
 
-- [ ] **Step 2: Implement ResponseHintGenerator**
-- [ ] **Step 3: Integrate hints into tool responses**
-- [ ] **Step 4: Run tests, verify pass**
-- [ ] **Step 5: Commit** `git commit -m "feat(mcp): add smart response hints"`
+- [x] **Step 2: Implement ResponseHintGenerator**
+- [x] **Step 3: Integrate hints into tool responses**
+- [x] **Step 4: Run tests, verify pass**
+- [x] **Step 5: Commit** `git commit -m "feat(mcp): add smart response hints"`
 
 ---
 
 ## Phase 3: Real-Time Events (Weeks 8-11)
 
-### Task 10: Event Publisher Plugin
+### Task 10: Event Publisher Plugin ✅
 
 **Files:**
 - Create: `fhir4java-plugin/src/main/java/org/fhirframework/plugin/event/ResourceChangePlugin.java`
 - Create: `fhir4java-api/src/main/java/org/fhirframework/api/event/EventPublisher.java`
 - Test: `fhir4java-plugin/src/test/java/org/fhirframework/plugin/event/ResourceChangePluginTest.java`
 
-- [ ] **Step 1: Write test for event publication**
+- [x] **Step 1: Write test for event publication**
 
 ```java
 @Test
@@ -550,7 +550,7 @@ void resourceCreate_publishesEvent() {
 }
 ```
 
-- [ ] **Step 2: Implement ResourceChangePlugin (AFTER phase)**
+- [x] **Step 2: Implement ResourceChangePlugin (AFTER phase)**
 
 ```java
 @Component
@@ -570,18 +570,18 @@ public class ResourceChangePlugin implements FhirPlugin {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(plugin): add ResourceChangePlugin for event emission"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(plugin): add ResourceChangePlugin for event emission"`
 
 ---
 
-### Task 11: SSE Event Stream
+### Task 11: SSE Event Stream ✅
 
 **Files:**
 - Create: `fhir4java-api/src/main/java/org/fhirframework/api/event/EventStreamController.java`
 - Test: `fhir4java-api/src/test/java/org/fhirframework/api/event/EventStreamControllerTest.java`
 
-- [ ] **Step 1: Write test for SSE endpoint**
+- [x] **Step 1: Write test for SSE endpoint**
 
 ```java
 @Test
@@ -602,7 +602,7 @@ void sseEndpoint_streamsEvents() {
 }
 ```
 
-- [ ] **Step 2: Implement EventStreamController**
+- [x] **Step 2: Implement EventStreamController**
 
 ```java
 @RestController
@@ -623,12 +623,12 @@ public class EventStreamController {
 }
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
-- [ ] **Step 4: Commit** `git commit -m "feat(api): add SSE event stream endpoint"`
+- [x] **Step 3: Run tests, verify pass**
+- [x] **Step 4: Commit** `git commit -m "feat(api): add SSE event stream endpoint"`
 
 ---
 
-### Task 12: Webhook Registry
+### Task 12: Webhook Registry ✅
 
 **Files:**
 - Create: `fhir4java-core/src/main/java/org/fhirframework/core/subscription/WebhookRegistry.java`
@@ -636,7 +636,7 @@ public class EventStreamController {
 - Create: `fhir4java-api/src/main/java/org/fhirframework/api/controller/WebhookController.java`
 - Test: `fhir4java-api/src/test/java/org/fhirframework/api/controller/WebhookControllerTest.java`
 
-- [ ] **Step 1: Write test for webhook registration**
+- [x] **Step 1: Write test for webhook registration**
 
 ```java
 @Test
@@ -656,22 +656,22 @@ void registerWebhook_savesAndReturnsId() {
 }
 ```
 
-- [ ] **Step 2: Implement WebhookEntity and repository**
-- [ ] **Step 3: Implement WebhookController**
-- [ ] **Step 4: Implement webhook dispatch in EventPublisher**
-- [ ] **Step 5: Run tests, verify pass**
-- [ ] **Step 6: Commit** `git commit -m "feat(api): add webhook registry for agent callbacks"`
+- [x] **Step 2: Implement WebhookEntity and repository**
+- [x] **Step 3: Implement WebhookController**
+- [x] **Step 4: Implement webhook dispatch in EventPublisher**
+- [x] **Step 5: Run tests, verify pass**
+- [x] **Step 6: Commit** `git commit -m "feat(api): add webhook registry for agent callbacks"`
 
 ---
 
-### Task 13: FHIR Subscription Support
+### Task 13: FHIR Subscription Support ✅
 
 **Files:**
 - Create: `fhir4java-core/src/main/java/org/fhirframework/core/subscription/SubscriptionManager.java`
 - Create: `fhir4java-core/src/main/java/org/fhirframework/core/subscription/SubscriptionTopic.java`
 - Test: `fhir4java-core/src/test/java/org/fhirframework/core/subscription/SubscriptionManagerTest.java`
 
-- [ ] **Step 1: Write test for subscription matching**
+- [x] **Step 1: Write test for subscription matching**
 
 ```java
 @Test
@@ -686,21 +686,21 @@ void subscriptionManager_matchesEventToSubscribers() {
 }
 ```
 
-- [ ] **Step 2: Implement SubscriptionManager**
-- [ ] **Step 3: Integrate with EventPublisher**
-- [ ] **Step 4: Run tests, verify pass**
-- [ ] **Step 5: Commit** `git commit -m "feat(core): add FHIR Subscription support"`
+- [x] **Step 2: Implement SubscriptionManager**
+- [x] **Step 3: Integrate with EventPublisher**
+- [x] **Step 4: Run tests, verify pass**
+- [x] **Step 5: Commit** `git commit -m "feat(core): add FHIR Subscription support"`
 
 ---
 
 ## Integration Tests
 
-### Task 14: End-to-End MCP Integration Test
+### Task 14: End-to-End MCP Integration Test ✅
 
 **Files:**
 - Create: `fhir4java-server/src/test/java/org/fhirframework/server/McpIntegrationTest.java`
 
-- [ ] **Step 1: Write E2E test for full MCP workflow**
+- [x] **Step 1: Write E2E test for full MCP workflow**
 
 ```java
 @Test
@@ -727,12 +727,12 @@ void mcpWorkflow_discoverQueryMutate() {
 }
 ```
 
-- [ ] **Step 2: Run integration test**
-- [ ] **Step 3: Commit** `git commit -m "test: add E2E MCP integration test"`
+- [x] **Step 2: Run integration test**
+- [x] **Step 3: Commit** `git commit -m "test: add E2E MCP integration test"`
 
 ---
 
-### Task 15: MCP Audit Logging
+### Task 15: MCP Audit Logging ✅
 
 **Files:**
 - Create: `fhir4java-persistence/src/main/java/org/fhirframework/persistence/entity/McpAuditLogEntity.java`
@@ -741,7 +741,7 @@ void mcpWorkflow_discoverQueryMutate() {
 - Migration: `db/migrations/V*.sql`
 - Test: `fhir4java-mcp/src/test/java/org/fhirframework/mcp/audit/McpAuditPluginTest.java`
 
-- [ ] **Step 1: Add Flyway migration for mcp_audit_log table**
+- [x] **Step 1: Add Flyway migration for mcp_audit_log table**
 
 ```sql
 CREATE TABLE mcp_audit_log (
@@ -766,7 +766,7 @@ CREATE INDEX idx_mcp_audit_agent ON mcp_audit_log(agent_id, timestamp DESC);
 CREATE INDEX idx_mcp_audit_tool ON mcp_audit_log(tool_name, timestamp DESC);
 ```
 
-- [ ] **Step 2: Implement McpAuditLogEntity**
+- [x] **Step 2: Implement McpAuditLogEntity**
 
 ```java
 @Entity
@@ -791,7 +791,7 @@ public class McpAuditLogEntity {
 }
 ```
 
-- [ ] **Step 3: Write failing test for audit logging**
+- [x] **Step 3: Write failing test for audit logging**
 
 ```java
 @Test
@@ -806,7 +806,7 @@ void mcpToolCall_isAudited() {
 }
 ```
 
-- [ ] **Step 4: Implement McpAuditPlugin**
+- [x] **Step 4: Implement McpAuditPlugin**
 
 ```java
 @Component
@@ -831,20 +831,20 @@ public class McpAuditPlugin {
 }
 ```
 
-- [ ] **Step 5: Integrate McpAuditPlugin into McpEndpoint**
-- [ ] **Step 6: Run tests, verify pass**
-- [ ] **Step 7: Commit** `git commit -m "feat(mcp): add MCP audit logging for compliance"`
+- [x] **Step 5: Integrate McpAuditPlugin into McpEndpoint**
+- [x] **Step 6: Run tests, verify pass**
+- [x] **Step 7: Commit** `git commit -m "feat(mcp): add MCP audit logging for compliance"`
 
 ---
 
-### Task 16: End-to-End Phase 3 Integration Test
+### Task 16: End-to-End Phase 3 Integration Test ✅
 
 **Files:**
 - Create: `fhir4java-server/src/test/java/org/fhirframework/server/RealTimeEventsIntegrationTest.java`
 
 Tests the complete real-time event system including SSE streaming, webhook management, and resource change events.
 
-- [ ] **Step 1: Write E2E test for webhook management**
+- [x] **Step 1: Write E2E test for webhook management**
 
 ```java
 @Test
@@ -866,7 +866,7 @@ void webhookManagement_fullLifecycle() {
 }
 ```
 
-- [ ] **Step 2: Write E2E test for SSE streaming**
+- [x] **Step 2: Write E2E test for SSE streaming**
 
 ```java
 @Test
@@ -883,7 +883,7 @@ void sseStream_receivesEvents() {
 }
 ```
 
-- [ ] **Step 3: Write E2E test for full event workflow**
+- [x] **Step 3: Write E2E test for full event workflow**
 
 ```java
 @Test
@@ -894,8 +894,8 @@ void fullEventWorkflow() {
 }
 ```
 
-- [ ] **Step 4: Run integration tests**
-- [ ] **Step 5: Commit** `git commit -m "test: add E2E integration test for Phase 3 real-time events"`
+- [x] **Step 4: Run integration tests**
+- [x] **Step 5: Commit** `git commit -m "test: add E2E integration test for Phase 3 real-time events"`
 
 ---
 
