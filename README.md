@@ -94,6 +94,17 @@ With MCP protocol support, the application enables **AI-powered plugin discovery
 
 This architecture aligns with the industry-standard [Model Context Protocol](https://modelcontextprotocol.io/) adopted by Anthropic, OpenAI, Microsoft, and the Linux Foundation.
 
+### AI Agent Integration
+
+The `fhir4java-mcp` module provides MCP tools that enable AI agents to interact with the FHIR server:
+
+| Tool | Description |
+|------|-------------|
+| **fhir_discover** | Discover FHIR server capabilities including available resources, search parameters, operations, and event subscription options |
+| **fhir_query** | Query FHIR resources with support for read, search, history, and extended operations |
+| **fhir_mutate** | Create, update, patch, and delete FHIR resources with dry-run validation support |
+| **Real-Time Events** | Subscribe to resource changes via Server-Sent Events (SSE) or register webhooks for push notifications |
+
 ### Detail feature description and implementation plan
 
 Refer to this document for details [Design feature description and implementation plan](https://github.com/sg-victorchai/fhir4java-agents/blob/main/FHIR4JAVA-IMPLEMENTATION-PLAN.md)
