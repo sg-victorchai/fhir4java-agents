@@ -6,6 +6,7 @@ import org.fhirframework.plugin.ExecutionMode;
 import org.fhirframework.plugin.FhirPlugin;
 import org.fhirframework.plugin.OperationDescriptor;
 import org.fhirframework.plugin.OperationType;
+import org.fhirframework.plugin.PluginConfig;
 import org.fhirframework.plugin.PluginContext;
 import org.fhirframework.plugin.PluginResult;
 import org.slf4j.Logger;
@@ -13,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.List;
 
@@ -38,16 +40,28 @@ public class ResourceChangePlugin implements FhirPlugin {
     private static final Logger log = LoggerFactory.getLogger(ResourceChangePlugin.class);
 
     private final EventPublisher eventPublisher;
+    private final PluginConfig pluginConfig;
     private boolean enabled = true;
 
     /**
      * Creates a new ResourceChangePlugin.
      *
      * @param eventPublisher The event publisher to use for publishing events
+     * @param pluginConfig   The plugin configuration for reading enabled state
      */
     @Autowired
-    public ResourceChangePlugin(EventPublisher eventPublisher) {
+    public ResourceChangePlugin(EventPublisher eventPublisher, PluginConfig pluginConfig) {
         this.eventPublisher = eventPublisher;
+        this.pluginConfig = pluginConfig;
+    }
+
+    /**
+     * Initialize plugin state from configuration after construction.
+     */
+    @PostConstruct
+    public void init() {
+        this.enabled = pluginConfig.isResourceChangeEnabled();
+        log.info("ResourceChangePlugin initialized: enabled={}", enabled);
     }
 
     @Override

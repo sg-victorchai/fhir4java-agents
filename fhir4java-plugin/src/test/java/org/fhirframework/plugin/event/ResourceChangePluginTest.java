@@ -5,6 +5,7 @@ import org.fhirframework.core.event.ResourceChangeEvent;
 import org.fhirframework.core.version.FhirVersion;
 import org.fhirframework.plugin.ExecutionMode;
 import org.fhirframework.plugin.OperationType;
+import org.fhirframework.plugin.PluginConfig;
 import org.fhirframework.plugin.PluginContext;
 import org.fhirframework.plugin.PluginResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,11 +25,15 @@ class ResourceChangePluginTest {
 
     private ResourceChangePlugin plugin;
     private TestEventPublisher eventPublisher;
+    private TestPluginConfig pluginConfig;
 
     @BeforeEach
     void setUp() {
         eventPublisher = new TestEventPublisher();
-        plugin = new ResourceChangePlugin(eventPublisher);
+        pluginConfig = new TestPluginConfig();
+        pluginConfig.setResourceChangeEnabled(true);
+        plugin = new ResourceChangePlugin(eventPublisher, pluginConfig);
+        plugin.init(); // Trigger @PostConstruct initialization
     }
 
     @Test
@@ -289,6 +294,22 @@ class ResourceChangePluginTest {
 
         public void clear() {
             publishedEvents.clear();
+        }
+    }
+
+    /**
+     * Test implementation of PluginConfig for controlling plugin behavior in tests.
+     */
+    private static class TestPluginConfig extends PluginConfig {
+        private boolean resourceChangeEnabled = true;
+
+        public void setResourceChangeEnabled(boolean enabled) {
+            this.resourceChangeEnabled = enabled;
+        }
+
+        @Override
+        public boolean isResourceChangeEnabled() {
+            return resourceChangeEnabled;
         }
     }
 }

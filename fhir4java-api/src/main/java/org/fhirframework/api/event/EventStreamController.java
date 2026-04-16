@@ -2,12 +2,14 @@ package org.fhirframework.api.event;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
@@ -54,12 +56,24 @@ public class EventStreamController {
 
     private static final Logger log = LoggerFactory.getLogger(EventStreamController.class);
 
+    private final EventsConfig eventsConfig;
+
     /**
      * Multicast sink for broadcasting events to all subscribers.
      * Uses backpressure buffering to handle slow subscribers.
      */
     private final Sinks.Many<ResourceChangeEvent> eventSink =
             Sinks.many().multicast().onBackpressureBuffer();
+
+    /**
+     * Creates a new EventStreamController.
+     *
+     * @param eventsConfig The events configuration for checking enabled state
+     */
+    public EventStreamController(EventsConfig eventsConfig) {
+        this.eventsConfig = eventsConfig;
+        log.info("EventStreamController initialized: SSE enabled={}", eventsConfig.isSseEnabled());
+    }
 
     /**
      * SSE stream endpoint for subscribing to resource change events.
@@ -83,6 +97,13 @@ public class EventStreamController {
     public Flux<ServerSentEvent<ResourceChangeEvent>> stream(
             @RequestParam(required = false) List<String> topics,
             @RequestParam(required = false) List<String> actions) {
+
+        // Check if SSE streaming is enabled
+        if (!eventsConfig.isSseEnabled()) {
+            log.warn("SSE streaming is disabled, rejecting subscription request");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "SSE streaming is disabled. Enable via fhir4java.events.sse.enabled=true");
+        }
 
         log.debug("New SSE subscription: topics={}, actions={}", topics, actions);
 

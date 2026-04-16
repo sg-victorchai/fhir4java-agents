@@ -321,9 +321,42 @@ public class FhirResourceController {
         // Check if this is a create or update
         boolean exists = resourceService.exists(resourceType, id);
 
-        // For standard resources with plugins, we could add plugin execution here
-        // similar to create. For now, we just call the service directly.
-        ResourceResult result = resourceService.update(resourceType, id, body, version);
+        FhirContext ctx = contextFactory.getContext(version);
+
+        // Parse resource for plugin processing
+        IBaseResource parsedResource = ctx.newJsonParser().parseResource(body);
+
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.UPDATE)
+                .resourceType(resourceType)
+                .resourceId(id)
+                .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
+                .inputResource(parsedResource)
+                .build();
+
+        // Provide raw JSON for plugins that need it
+        pluginContext.setAttribute("rawJson", body);
+
+        // Execute BEFORE plugins (validation, enrichment)
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            return buildAbortResponse(beforeResult, ctx);
+        }
+
+        // Re-encode the resource after plugins (plugins may modify in-place)
+        IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
+        String effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
+
+        // Execute core operation
+        ResourceResult result = resourceService.update(resourceType, id, effectiveBody, version);
+
+        // Set output resource on context for AFTER plugins
+        IBaseResource outputResource = ctx.newJsonParser().parseResource(result.content());
+        pluginContext.setOutputResource(outputResource);
+
+        // Execute AFTER plugins (notifications, event publishing)
+        pluginOrchestrator.executeAfter(pluginContext);
 
         String locationUri = String.format("/fhir/%s/%s/%s/_history/%d",
                 version.getCode(), resourceType, id, result.versionId());
@@ -381,6 +414,8 @@ public class FhirResourceController {
 
         interactionGuard.validateInteraction(resourceType, version, InteractionType.PATCH);
 
+        FhirContext ctx = contextFactory.getContext(version);
+
         // Read the current resource
         ResourceResult current = resourceService.read(resourceType, id, version);
 
@@ -397,8 +432,38 @@ public class FhirResourceController {
                             e.getMessage().replace("\"", "'") + "\"}]}");
         }
 
-        // Update via the standard update path
-        ResourceResult result = resourceService.update(resourceType, id, patchedJson, version);
+        // Parse patched resource for plugin processing
+        IBaseResource parsedResource = ctx.newJsonParser().parseResource(patchedJson);
+
+        // PATCH is semantically an UPDATE operation for plugin purposes
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.UPDATE)
+                .resourceType(resourceType)
+                .resourceId(id)
+                .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
+                .inputResource(parsedResource)
+                .build();
+
+        // Execute BEFORE plugins (validation, enrichment)
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            return buildAbortResponse(beforeResult, ctx);
+        }
+
+        // Re-encode the resource after plugins (plugins may modify in-place)
+        IBaseResource modified = pluginContext.getInputResource().orElse(parsedResource);
+        String effectiveBody = ctx.newJsonParser().encodeResourceToString(modified);
+
+        // Execute core operation
+        ResourceResult result = resourceService.update(resourceType, id, effectiveBody, version);
+
+        // Set output resource on context for AFTER plugins
+        IBaseResource outputResource = ctx.newJsonParser().parseResource(result.content());
+        pluginContext.setOutputResource(outputResource);
+
+        // Execute AFTER plugins (notifications, event publishing)
+        pluginOrchestrator.executeAfter(pluginContext);
 
         String locationUri = String.format("/fhir/%s/%s/%s/_history/%d",
                 version.getCode(), resourceType, id, result.versionId());
@@ -443,7 +508,29 @@ public class FhirResourceController {
 
         interactionGuard.validateInteraction(resourceType, version, InteractionType.DELETE);
 
+        FhirContext ctx = contextFactory.getContext(version);
+
+        PluginContext pluginContext = PluginContext.builder()
+                .operationType(OperationType.DELETE)
+                .resourceType(resourceType)
+                .resourceId(id)
+                .fhirVersion(version)
+                .tenantId(TenantContext.getCurrentTenantId())
+                .build();
+
+        // Execute BEFORE plugins (authorization checks, etc.)
+        PluginResult beforeResult = pluginOrchestrator.executeBefore(pluginContext);
+        if (beforeResult.isAborted()) {
+            // For delete returning void, throw an exception for abort
+            throw new IllegalStateException("Delete operation aborted by plugin: " +
+                    beforeResult.getMessage().orElse("Unknown reason"));
+        }
+
+        // Execute core operation
         ResourceResult result = resourceService.delete(resourceType, id, version);
+
+        // Execute AFTER plugins (notifications, event publishing)
+        pluginOrchestrator.executeAfter(pluginContext);
 
         return ResponseEntity
                 .noContent()

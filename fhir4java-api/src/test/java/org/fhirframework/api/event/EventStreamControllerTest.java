@@ -5,8 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link EventStreamController} SSE event streaming.
@@ -28,11 +29,15 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("EventStreamController")
 class EventStreamControllerTest {
 
+    @Mock
+    private EventsConfig eventsConfig;
+
     private EventStreamController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new EventStreamController();
+        when(eventsConfig.isSseEnabled()).thenReturn(true);
+        controller = new EventStreamController(eventsConfig);
     }
 
     @Nested

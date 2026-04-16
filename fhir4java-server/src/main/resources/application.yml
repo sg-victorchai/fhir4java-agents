@@ -173,6 +173,9 @@ fhir4java:
     async-pool-size: 4 # Thread pool size for async plugins
     business-logic:
       fail-on-error: true # Fail the request if a business logic plugin errors
+    # Resource Change Event Plugin - publishes events when resources are created, updated, or deleted
+    resource-change:
+      enabled: true # Enable/disable resource change event publishing
     # Sample Patient CREATE plugin settings
     #patient-create:
     #  enabled: true
@@ -185,6 +188,17 @@ fhir4java:
     #  duplicate-check-systems: # Identifier systems to check for duplicates (empty = all)
     #    - 'urn:fhir4java:patient:mrn'
     #    - 'http://hl7.org/fhir/sid/us-ssn'
+
+  # Real-time Events Configuration
+  events:
+    # Master switch for the event system
+    enabled: true
+    # Server-Sent Events (SSE) streaming endpoint configuration
+    sse:
+      enabled: true # Enable/disable the /api/events/stream SSE endpoint
+    # Webhook delivery configuration
+    webhooks:
+      enabled: true # Enable/disable webhook event delivery
 
   # Multi-tenancy
   tenant:

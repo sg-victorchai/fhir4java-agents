@@ -36,6 +36,10 @@ public class PluginConfig {
     @Value("${fhir4java.plugins.business-logic.fail-on-error:true}")
     private boolean businessLogicFailOnError;
 
+    // Resource Change Event Plugin settings
+    @Value("${fhir4java.plugins.resource-change.enabled:true}")
+    private boolean resourceChangeEnabled;
+
     // Getters
 
     public boolean isPluginsEnabled() {
@@ -72,5 +76,9 @@ public class PluginConfig {
 
     public boolean isBusinessLogicFailOnError() {
         return businessLogicFailOnError;
+    }
+
+    public boolean isResourceChangeEnabled() {
+        return resourceChangeEnabled;
     }
 }
