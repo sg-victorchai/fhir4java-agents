@@ -19,12 +19,12 @@ import org.springframework.security.web.SecurityFilterChain;
  *
  * <p>This configuration secures the FHIR and MCP API endpoints using either JWT-based OAuth2
  * authentication or API key authentication. Both methods work alongside each other - clients
- * can use either an OAuth2 JWT token or an API key (via X-API-Key header) to authenticate.</p>
+ * can use either an OAuth2 JWT token or an API key (via x-api-key header) to authenticate.</p>
  *
  * <h3>Authentication Methods:</h3>
  * <ul>
  *   <li>OAuth2 JWT - Standard JWT bearer token authentication</li>
- *   <li>API Key - Alternative authentication using X-API-Key header (for AI agents)</li>
+ *   <li>API Key - Alternative authentication using x-api-key header (for AI agents)</li>
  * </ul>
  *
  * <h3>Security Rules:</h3>
@@ -82,7 +82,7 @@ public class OAuth2ResourceServerConfig {
      * </ul>
      *
      * <p>The API key filter is added before the JWT bearer token filter, so requests
-     * with an X-API-Key header will be authenticated via API key first. If no API key
+     * with an x-api-key header will be authenticated via API key first. If no API key
      * is present, authentication falls through to the JWT filter.</p>
      *
      * @param http the HttpSecurity to configure

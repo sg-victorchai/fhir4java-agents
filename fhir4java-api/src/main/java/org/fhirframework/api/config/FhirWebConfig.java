@@ -53,6 +53,7 @@ public class FhirWebConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        // CORS for FHIR API endpoints
         registry.addMapping("/fhir/**")
                 .allowedOrigins("*")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD")
@@ -63,6 +64,17 @@ public class FhirWebConfig implements WebMvcConfigurer {
                         "ETag",
                         "Last-Modified",
                         "X-FHIR-Version",
+                        "X-Request-Id"
+                )
+                .maxAge(3600);
+
+        // CORS for API endpoints (SSE, MCP, webhooks)
+        registry.addMapping("/api/**")
+                .allowedOrigins("*")
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD")
+                .allowedHeaders("*")
+                .exposedHeaders(
+                        "Content-Type",
                         "X-Request-Id"
                 )
                 .maxAge(3600);

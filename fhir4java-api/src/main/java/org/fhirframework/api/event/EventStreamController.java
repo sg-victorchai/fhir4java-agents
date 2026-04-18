@@ -14,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -146,14 +148,51 @@ public class EventStreamController {
         // Create persistent subscription if persistence is enabled
         final String subscriptionId = createPersistentSubscription(topics, actions, tenantId);
 
-        return eventSink.asFlux()
+        // Create an initial "connected" event to confirm the stream is working
+        ResourceChangeEvent connectedEvent = new ResourceChangeEvent(
+                "System",        // resourceType
+                subscriptionId,  // resourceId
+                "connected",     // action
+                null,            // tenantId
+                Instant.now()    // timestamp
+        );
+        Flux<ServerSentEvent<ResourceChangeEvent>> initialEvent = Flux.just(
+                ServerSentEvent.<ResourceChangeEvent>builder()
+                        .id(UUID.randomUUID().toString())
+                        .event("connected")
+                        .data(connectedEvent)
+                        .build()
+        );
+
+        // Create heartbeat events every 30 seconds to keep connection alive
+        Flux<ServerSentEvent<ResourceChangeEvent>> heartbeat = Flux.interval(Duration.ofSeconds(30))
+                .map(tick -> {
+                    ResourceChangeEvent heartbeatEvent = new ResourceChangeEvent(
+                            "System",        // resourceType
+                            subscriptionId,  // resourceId
+                            "heartbeat",     // action
+                            null,            // tenantId
+                            Instant.now()    // timestamp
+                    );
+                    return ServerSentEvent.<ResourceChangeEvent>builder()
+                            .id(UUID.randomUUID().toString())
+                            .event("heartbeat")
+                            .data(heartbeatEvent)
+                            .build();
+                });
+
+        // Resource change events from the sink
+        Flux<ServerSentEvent<ResourceChangeEvent>> resourceEvents = eventSink.asFlux()
                 .filter(event -> filterByTopics(event, topics))
                 .filter(event -> filterByActions(event, actions))
                 .map(event -> ServerSentEvent.<ResourceChangeEvent>builder()
                         .id(UUID.randomUUID().toString())
                         .event("resource-change")
                         .data(event)
-                        .build())
+                        .build());
+
+        // Merge all event sources: initial event first, then heartbeats and resource events
+        return Flux.concat(initialEvent, Flux.merge(heartbeat, resourceEvents))
                 .doOnSubscribe(subscription -> {
                     log.debug("SSE client subscribed: {}", subscriptionId);
                 })
@@ -332,6 +371,10 @@ public class EventStreamController {
 
     /**
      * Filter events by resource type (topics).
+     * <p>
+     * Handles both individual list elements and comma-separated values within elements.
+     * For example, both ["Patient", "Observation"] and ["Patient,Observation"] are supported.
+     * </p>
      *
      * @param event  The event to check
      * @param topics List of resource types to accept, or null/empty to accept all
@@ -341,11 +384,20 @@ public class EventStreamController {
         if (topics == null || topics.isEmpty()) {
             return true;
         }
-        return topics.contains(event.resourceType());
+        // Expand comma-separated values and check for match
+        return topics.stream()
+                .flatMap(topic -> java.util.Arrays.stream(topic.split(",")))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .anyMatch(topic -> topic.equals(event.resourceType()));
     }
 
     /**
      * Filter events by action type.
+     * <p>
+     * Handles both individual list elements and comma-separated values within elements.
+     * For example, both ["create", "update"] and ["create,update"] are supported.
+     * </p>
      *
      * @param event   The event to check
      * @param actions List of actions to accept, or null/empty to accept all
@@ -355,6 +407,11 @@ public class EventStreamController {
         if (actions == null || actions.isEmpty()) {
             return true;
         }
-        return actions.contains(event.action());
+        // Expand comma-separated values and check for match
+        return actions.stream()
+                .flatMap(action -> java.util.Arrays.stream(action.split(",")))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .anyMatch(action -> action.equals(event.action()));
     }
 }

@@ -26,9 +26,14 @@ import java.util.stream.Collectors;
 /**
  * Filter for API key-based authentication.
  * <p>
- * This filter extracts the API key from the {@code X-API-Key} header,
- * validates it against the database, and sets up the security context
- * if authentication succeeds.
+ * This filter extracts the API key from the {@code x-api-key} header
+ * or the {@code apiKey} query parameter, validates it against the database,
+ * and sets up the security context if authentication succeeds.
+ * </p>
+ * <p>
+ * Query parameter support is provided for browser-based SSE (Server-Sent Events)
+ * clients, since the native EventSource API cannot set custom headers.
+ * For security, header-based authentication is preferred when possible.
  * </p>
  * <p>
  * The filter runs before the OAuth2 JWT filter, allowing API key auth
@@ -38,7 +43,8 @@ import java.util.stream.Collectors;
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
     private static final Logger logger = LoggerFactory.getLogger(ApiKeyAuthFilter.class);
-    private static final String API_KEY_HEADER = "X-API-Key";
+    private static final String API_KEY_HEADER = "x-api-key";
+    private static final String API_KEY_PARAM = "apiKey";
 
     private final AgentApiKeyRepository apiKeyRepository;
 
@@ -52,9 +58,15 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             @NonNull HttpServletResponse response,
             @NonNull FilterChain filterChain) throws ServletException, IOException {
 
+        // First try header-based authentication (preferred)
         String apiKey = request.getHeader(API_KEY_HEADER);
 
-        // If no API key header, skip this filter and let the chain continue
+        // If no header, try query parameter (for browser SSE EventSource which can't set headers)
+        if (apiKey == null || apiKey.isBlank()) {
+            apiKey = request.getParameter(API_KEY_PARAM);
+        }
+
+        // If no API key found in header or query parameter, skip this filter
         if (apiKey == null || apiKey.isBlank()) {
             filterChain.doFilter(request, response);
             return;

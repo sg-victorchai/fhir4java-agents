@@ -113,15 +113,25 @@ public class ResourceChangePlugin implements FhirPlugin {
             return PluginResult.continueProcessing();
         }
 
+        // Get resource ID from context, or extract from output resource (for CREATE operations)
+        String resourceId = context.getResourceId().orElse(null);
+
+        // For CREATE, the resource ID may not be in context - try to get from output resource
+        if (resourceId == null && context.getOutputResource().isPresent()) {
+            var outputResource = context.getOutputResource().get();
+            if (outputResource.getIdElement() != null && outputResource.getIdElement().hasIdPart()) {
+                resourceId = outputResource.getIdElement().getIdPart();
+            }
+        }
+
         // Need resource ID to publish a meaningful event
-        if (context.getResourceId().isEmpty()) {
+        if (resourceId == null) {
             log.debug("Skipping event publishing - no resource ID available for {} on {}",
                     context.getOperationType(), context.getResourceType());
             return PluginResult.continueProcessing();
         }
 
         String resourceType = context.getResourceType();
-        String resourceId = context.getResourceId().get();
         String tenantId = context.getTenantId().orElse(null);
         String action = mapOperationToAction(context.getOperationType());
 
