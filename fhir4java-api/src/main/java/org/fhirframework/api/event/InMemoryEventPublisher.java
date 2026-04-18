@@ -4,6 +4,7 @@ import org.fhirframework.core.event.ResourceChangeEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -11,7 +12,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 /**
- * In-memory implementation of EventPublisher.
+ * In-memory implementation of EventPublisher (development mode).
+ * <p>
+ * This lightweight publisher is enabled when {@code fhir4java.events.persistence.enabled=false}
+ * (the default), making it ideal for development and testing.
+ * </p>
  * <p>
  * Uses a thread-safe CopyOnWriteArrayList for subscribers to allow
  * concurrent publishing and subscription modifications.
@@ -21,12 +26,15 @@ import java.util.function.Consumer;
  * published to the SSE stream for real-time client notifications.
  * </p>
  * <p>
- * Suitable for single-instance deployments, testing, and development.
- * For production multi-instance deployments, consider using a distributed
- * messaging system like RabbitMQ or Kafka.
+ * For production deployments requiring persistence, retry, and audit trail,
+ * enable {@link PersistentEventPublisher} by setting
+ * {@code fhir4java.events.persistence.enabled=true}.
  * </p>
+ *
+ * @see PersistentEventPublisher
  */
 @Component
+@ConditionalOnProperty(name = "fhir4java.events.persistence.enabled", havingValue = "false", matchIfMissing = true)
 public class InMemoryEventPublisher implements EventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(InMemoryEventPublisher.class);

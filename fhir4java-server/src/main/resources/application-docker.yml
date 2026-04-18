@@ -61,6 +61,6 @@ logging:
     root: ${LOG_LEVEL_ROOT:INFO}
     org.fhirframework: ${LOG_LEVEL_FHIR4JAVA:DEBUG}
     ca.uhn.fhir: ${LOG_LEVEL_HAPI:INFO}
-    org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE_SQL:DEBUG}
+    org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE_SQL:INFO}
     org.hibernate.orm.jdbc.bind: ${LOG_LEVEL_HIBERNATE_BIND:DEBUG}
     org.springframework.web: ${LOG_LEVEL_SPRING_WEB:DEBUG}

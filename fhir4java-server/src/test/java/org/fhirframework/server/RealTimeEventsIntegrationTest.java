@@ -134,7 +134,7 @@ class RealTimeEventsIntegrationTest {
 
             assertEquals(HttpStatus.CREATED, response.getStatusCode());
             assertNotNull(response.getBody());
-            assertNotNull(response.getBody().id());
+            assertNotNull(response.getBody().subscriptionId());
             assertEquals("https://agent.example.com/callback", response.getBody().callbackUrl());
             assertEquals(List.of("Patient.create", "Patient.update"), response.getBody().topics());
             assertTrue(response.getBody().enabled());
@@ -188,7 +188,7 @@ class RealTimeEventsIntegrationTest {
                     WebhookResponse.class
             );
 
-            Long webhookId = createResponse.getBody().id();
+            String webhookId = createResponse.getBody().subscriptionId();
 
             // Delete the webhook
             HttpEntity<Void> deleteEntity = new HttpEntity<>(headers);
@@ -221,7 +221,7 @@ class RealTimeEventsIntegrationTest {
                     WebhookResponse.class
             );
 
-            Long webhookId = createResponse.getBody().id();
+            String webhookId = createResponse.getBody().subscriptionId();
 
             // Disable the webhook
             HttpEntity<Void> disableEntity = new HttpEntity<>(headers);
@@ -363,7 +363,7 @@ class RealTimeEventsIntegrationTest {
 
             assertEquals(HttpStatus.CREATED, webhookResponse.getStatusCode());
             assertNotNull(webhookResponse.getBody());
-            Long webhookId = webhookResponse.getBody().id();
+            String webhookId = webhookResponse.getBody().subscriptionId();
 
             // Step 2: Create a Patient resource
             ResponseEntity<String> patientResponse = createPatient("WorkflowTestFamily", tenantId);

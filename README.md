@@ -3,7 +3,7 @@
 > **A Modern, AI-Powered HL7 FHIR R5 Server Implementation in Java**
 
 [![FHIR R5](https://img.shields.io/badge/FHIR-R5-blue)](https://hl7.org/fhir/R5/)
-[![Java 21](https://img.shields.io/badge/Java-21-orange)](https://openjdk.org/projects/jdk/21/)
+[![Java 25](https://img.shields.io/badge/Java-25-orange)](https://openjdk.org/projects/jdk/25/)
 [![Spring Boot 3](https://img.shields.io/badge/Spring%20Boot-3.x-green)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
@@ -257,19 +257,28 @@ curl "http://localhost:8080/fhir/r5/Patient?family=Smith"
 ## Project Structure
 
 ```
-fhir4java/
-├── db/                          # Database scripts
-├── fhir4java-core/              # Core FHIR processing engine
-├── fhir4java-persistence/       # JPA and database layer
-├── fhir4java-api/               # REST API layer
-├── fhir4java-plugin/            # Plugin framework
+fhir4java-agents/
+├── db/                          # Database scripts (init, migrations, indexes)
+├── docker/                      # Docker and docker-compose files
+├── infrastructure/              # AWS CDK deployment scripts
+├── fhir4java-core/              # Core FHIR processing (config, validation, resource registry)
+├── fhir4java-persistence/       # JPA entities, repositories, search implementation
+├── fhir4java-api/               # FHIR RESTful APIs and real-time event APIs
+│   ├── controller/              #   - FHIR CRUD, search, operations endpoints
+│   ├── event/                   #   - SSE streaming, webhook delivery
+│   └── subscription/            #   - Subscription management
+├── fhir4java-plugin/            # Plugin framework (SPI and implementations)
+├── fhir4java-mcp/               # MCP (Model Context Protocol) implementation
+│   ├── tools/                   #   - fhir_discover, fhir_query, fhir_mutate
+│   └── agent/                   #   - AI agent webhook handler, SSE client
+├── fhir4java-codegen/           # Code generator for custom FHIR resources
 ├── fhir4java-server/            # Spring Boot application
 │   └── src/main/resources/
-│       └── fhir-config/         # FHIR configuration
-│           ├── searchparameters/  # SearchParameter definitions
-│           ├── operations/        # OperationDefinition files
-│           └── profiles/          # StructureDefinition files
-└── docker/                      # Docker configuration
+│       └── fhir-config/         # FHIR configuration files
+│           ├── resources/       #   - Resource configs (patient.yml, observation.yml)
+│           ├── r5/              #   - R5 searchparameters, operations, profiles
+│           └── r4b/             #   - R4B searchparameters, operations, profiles
+└── scripts/                     # Utility scripts (datagen, etc.)
 ```
 
 ---

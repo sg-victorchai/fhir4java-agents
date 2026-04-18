@@ -63,7 +63,7 @@ public class AgentWebhookHandler {
     private final WebClient webClient;
     private final String tenantId;
     private final ObjectMapper objectMapper;
-    private final Map<Long, String> webhookSecrets = new ConcurrentHashMap<>();
+    private final Map<String, String> webhookSecrets = new ConcurrentHashMap<>();
     private final Map<String, Consumer<ResourceChangeEvent>> actionHandlers = new ConcurrentHashMap<>();
 
     /**
@@ -114,8 +114,8 @@ public class AgentWebhookHandler {
                 .block();
 
         if (response != null && hmacSecret != null) {
-            webhookSecrets.put(response.id(), hmacSecret);
-            log.info("Webhook registered with ID: {}", response.id());
+            webhookSecrets.put(response.subscriptionId(), hmacSecret);
+            log.info("Webhook registered with ID: {}", response.subscriptionId());
         }
 
         return response;
@@ -140,32 +140,32 @@ public class AgentWebhookHandler {
                 .bodyToMono(WebhookResponse.class)
                 .doOnSuccess(response -> {
                     if (response != null && hmacSecret != null) {
-                        webhookSecrets.put(response.id(), hmacSecret);
+                        webhookSecrets.put(response.subscriptionId(), hmacSecret);
                     }
                 });
     }
 
     /**
-     * Unregisters a webhook by its ID.
+     * Unregisters a webhook by its subscription ID.
      *
-     * @param webhookId the webhook ID to unregister
+     * @param subscriptionId the webhook subscription ID to unregister
      * @return true if successfully unregistered
      */
-    public boolean unregisterWebhook(Long webhookId) {
-        log.info("Unregistering webhook: {}", webhookId);
+    public boolean unregisterWebhook(String subscriptionId) {
+        log.info("Unregistering webhook: {}", subscriptionId);
 
         try {
             webClient.delete()
-                    .uri("/api/webhooks/{id}", webhookId)
+                    .uri("/api/webhooks/{id}", subscriptionId)
                     .header("X-Tenant-ID", tenantId)
                     .retrieve()
                     .toBodilessEntity()
                     .block();
 
-            webhookSecrets.remove(webhookId);
+            webhookSecrets.remove(subscriptionId);
             return true;
         } catch (Exception e) {
-            log.error("Failed to unregister webhook: {}", webhookId, e);
+            log.error("Failed to unregister webhook: {}", subscriptionId, e);
             return false;
         }
     }

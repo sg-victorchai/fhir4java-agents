@@ -16,10 +16,20 @@ Enterprise FHIR server implementation supporting HL7 FHIR R4B and R5 with config
 ## Project Structure
 ```
 fhir4java-agents/
+├── db/                      # Database scripts (init, migrations, indexes)
+├── docker/                  # Docker and docker-compose files
+├── infrastructure/          # AWS CDK deployment scripts
 ├── fhir4java-core/          # Core FHIR processing (config, validation, resource registry)
 ├── fhir4java-persistence/   # JPA entities, repositories, search implementation
-├── fhir4java-api/           # REST controllers, filters, interceptors
+├── fhir4java-api/           # FHIR RESTful APIs and real-time event APIs
+│   ├── controller/          #   - FHIR CRUD, search, operations endpoints
+│   ├── event/               #   - SSE streaming (EventStreamController), webhook delivery
+│   └── subscription/        #   - Subscription management (WebhookRegistry, persistence)
 ├── fhir4java-plugin/        # Plugin SPI and implementations
+├── fhir4java-mcp/           # MCP (Model Context Protocol) implementation
+│   ├── tools/               #   - fhir_discover, fhir_query, fhir_mutate tools
+│   └── agent/               #   - AI agent webhook handler, SSE client
+├── fhir4java-codegen/       # Code generator for custom FHIR resources
 ├── fhir4java-server/        # Spring Boot application, configurations
 │   └── src/main/resources/
 │       ├── application.yml
@@ -30,8 +40,7 @@ fhir4java-agents/
 │           │   ├── operations/        # OperationDefinition YAML files
 │           │   └── profiles/          # StructureDefinition files
 │           └── r4b/         # R4B-specific definitions
-├── db/                      # Database scripts (init, migrations, indexes)
-└── docker/                  # Docker and docker-compose files
+└── scripts/                 # Utility scripts (datagen, etc.)
 ```
 
 ## Key Components
@@ -61,8 +70,13 @@ fhir4java-agents/
 | `OperationController` | `controller/` | Extended operation endpoints ($validate, etc.) |
 | `MetadataController` | `controller/` | CapabilityStatement endpoint |
 | `BundleController` | `controller/` | Batch/transaction endpoint |
+| `WebhookController` | `controller/` | Webhook registration and management |
 | `FhirVersionFilter` | `filter/` | Resolves FHIR version from URL |
 | `FhirResourceService` | `service/` | Business logic for CRUD operations |
+| `EventStreamController` | `event/` | SSE streaming endpoint for real-time events |
+| `EventPublisher` | `event/` | Publishes resource change events |
+| `WebhookRegistry` | `subscription/` | Webhook dispatch and HMAC signing |
+| `SubscriptionPersistenceService` | `subscription/` | Persistent subscription management |
 
 ### Plugin Layer (fhir4java-plugin)
 | Component | Location | Purpose |

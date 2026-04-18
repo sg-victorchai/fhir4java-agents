@@ -20,7 +20,7 @@ Build a configuration-driven, plugin-based FHIR server supporting HL7 FHIR R4B a
 ## Project Structure
 
 ```
-fhir4java/
+fhir4java-agents/
 ├── db/                                # Database scripts (all SQL in one place)
 │   ├── init/                          # Initial schema setup
 │   │   ├── 00-init-schemas.sql        # Create schemas (fhir_resources, fhir_audit, etc.)
@@ -29,52 +29,54 @@ fhir4java/
 │   │   ├── 03-search-index.sql        # Search index table with partitions
 │   │   └── 04-audit-tables.sql        # Audit and performance tracking tables
 │   ├── indexes/                       # Index definitions
-│   │   ├── 01-covering-indexes.sql    # Covering indexes for common queries
-│   │   ├── 02-search-indexes.sql      # Search parameter indexes
-│   │   ├── 03-partial-indexes.sql     # Partial indexes for common patterns
-│   │   └── 04-gin-brin-indexes.sql    # GIN and BRIN indexes
 │   ├── partitions/                    # Partition management
-│   │   ├── create-resource-partitions.sql
-│   │   ├── create-history-partitions.sql
-│   │   └── partition-maintenance.sql  # Scripts for adding/dropping partitions
 │   ├── functions/                     # Stored procedures and functions
-│   │   ├── history-functions.sql      # History management functions
-│   │   └── maintenance-functions.sql  # Vacuum, analyze, etc.
 │   ├── migrations/                    # Flyway migrations (versioned)
-│   │   ├── V1__initial_schema.sql
-│   │   ├── V2__add_search_index.sql
-│   │   └── V3__add_sync_tables.sql
 │   └── seeds/                         # Test/development data
-│       ├── sample-patients.sql
-│       └── sample-observations.sql
-├── docker/
+├── docker/                            # Docker and docker-compose files
 │   ├── Dockerfile
 │   └── docker-compose.yml
+├── infrastructure/                    # AWS CDK deployment scripts
+│   ├── bin/                           # CDK app entry point
+│   ├── lib/                           # CDK stack definitions
+│   └── cdk.json                       # CDK configuration
 ├── fhir4java-core/                    # Core FHIR processing engine
-│   └── src/main/java/com/fhir4java/core/
+│   └── src/main/java/org/fhirframework/core/
 │       ├── config/                    # Configuration classes
 │       ├── fhir/                      # FHIR version support (R4B, R5)
 │       ├── resource/                  # Resource registry & handling
 │       ├── validation/                # Validation framework
+│       ├── event/                     # Resource change event classes
 │       └── exception/                 # Custom exceptions
 ├── fhir4java-persistence/             # JPA and database layer
-│   └── src/main/java/com/fhir4java/persistence/
-│       ├── entity/                    # JPA entities
+│   └── src/main/java/org/fhirframework/persistence/
+│       ├── entity/                    # JPA entities (FhirResourceEntity, EventSubscriptionEntity)
 │       ├── repository/                # Spring Data repositories
 │       ├── schema/                    # Schema management
 │       └── converter/                 # FHIR-to-Entity converters
-├── fhir4java-api/                     # REST API layer
-│   └── src/main/java/com/fhir4java/api/
-│       ├── controller/                # REST controllers
+├── fhir4java-api/                     # FHIR RESTful APIs and real-time event APIs
+│   └── src/main/java/org/fhirframework/api/
+│       ├── controller/                # FHIR REST controllers (CRUD, operations, webhooks)
+│       ├── event/                     # Real-time events (SSE, event publishing, retry)
+│       ├── subscription/              # Subscription management (webhooks, persistence)
 │       ├── interceptor/               # Request/response interceptors
 │       ├── filter/                    # Servlet filters
 │       └── dto/                       # Data transfer objects
 ├── fhir4java-plugin/                  # Plugin framework
-│   └── src/main/java/com/fhir4java/plugin/
+│   └── src/main/java/org/fhirframework/plugin/
 │       ├── spi/                       # Plugin interfaces
 │       ├── audit/                     # Audit plugin
 │       ├── telemetry/                 # Telemetry plugin
-│       └── performance/               # Performance tracking plugin
+│       ├── performance/               # Performance tracking plugin
+│       └── resourcechange/            # Resource change event plugin
+├── fhir4java-mcp/                     # MCP (Model Context Protocol) implementation
+│   └── src/main/java/org/fhirframework/mcp/
+│       ├── tools/                     # MCP tools (fhir_discover, fhir_query, fhir_mutate)
+│       └── agent/                     # AI agent utilities (webhook handler, SSE client)
+├── fhir4java-codegen/                 # Code generator for custom FHIR resources
+│   └── src/main/java/org/fhirframework/codegen/
+│       ├── maven/                     # Maven plugin for code generation
+│       └── generator/                 # Entity and repository generators
 ├── fhir4java-server/                  # Spring Boot application
 │   └── src/main/
 │       ├── java/
@@ -82,29 +84,14 @@ fhir4java/
 │           ├── application.yml
 │           ├── fhir-config/           # FHIR configuration files
 │           │   ├── resources/         # Resource configurations (YAML, version-agnostic)
-│           │   │   ├── patient.yml    # Patient resource config (supports multiple versions)
-│           │   │   ├── observation.yml
-│           │   │   └── ...
 │           │   ├── r5/                # FHIR R5 version-specific definitions
-│           │   │   ├── capability.json    # R5 CapabilityStatement base config
 │           │   │   ├── searchparameters/  # R5 SearchParameter JSON files
-│           │   │   │   ├── SearchParameter-Resource-id.json
-│           │   │   │   ├── SearchParameter-Resource-lastUpdated.json
-│           │   │   │   ├── SearchParameter-DomainResource-text.json
-│           │   │   │   ├── SearchParameter-Patient-*.json
-│           │   │   │   └── ...
 │           │   │   ├── operations/        # R5 OperationDefinition files
-│           │   │   │   ├── OperationDefinition-Patient-merge.json
-│           │   │   │   └── ...
 │           │   │   └── profiles/          # R5 StructureDefinition files
-│           │   │       ├── StructureDefinition-Patient.json
-│           │   │       └── ...
 │           │   └── r4b/               # FHIR R4B version-specific definitions
-│           │       ├── capability.json    # R4B CapabilityStatement base config
-│           │       ├── searchparameters/  # R4B SearchParameter JSON files
-│           │       ├── operations/        # R4B OperationDefinition files
-│           │       └── profiles/          # R4B StructureDefinition files
 │           └── application-test.yml   # Test configuration
+├── scripts/                           # Utility scripts
+│   └── datagen/                       # Sample data generation scripts
 └── pom.xml                            # Parent POM
 ```
 
@@ -4980,6 +4967,179 @@ Request → Filter → Interceptor → Controller
               Business Logic Plugins (after)
                       ↓
               Response + Audit/Telemetry/Performance logging
+```
+
+---
+
+## MCP Tools and Real-Time Events
+
+This section provides an overview of the MCP (Model Context Protocol) tools and real-time event subscription/publishing APIs for AI agent integration.
+
+### MCP Tools Overview
+
+The `fhir4java-mcp` module provides three core MCP tools for AI agents:
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| **fhir_discover** | Discover server capabilities | Retrieve available resources, search parameters, operations, and event subscriptions |
+| **fhir_query** | Read and search resources | Single resource read, search with parameters, history retrieval |
+| **fhir_mutate** | Create, update, delete resources | CRUD operations with dry-run validation support |
+
+#### Using fhir_discover
+
+```json
+{
+  "tool": "fhir_discover",
+  "parameters": {
+    "category": "resources"  // Options: resources, searchParameters, operations, events
+  }
+}
+```
+
+#### Using fhir_query
+
+```json
+{
+  "tool": "fhir_query",
+  "parameters": {
+    "resourceType": "Patient",
+    "operation": "search",  // Options: read, search, history
+    "parameters": {
+      "family": "Smith",
+      "birthdate": "ge1980-01-01"
+    }
+  }
+}
+```
+
+#### Using fhir_mutate
+
+```json
+{
+  "tool": "fhir_mutate",
+  "parameters": {
+    "resourceType": "Patient",
+    "operation": "create",  // Options: create, update, patch, delete
+    "resource": { "resourceType": "Patient", "name": [{"family": "Smith"}] },
+    "dryRun": true  // Validate without persisting
+  }
+}
+```
+
+### Real-Time Event Subscription APIs
+
+The server supports real-time notifications for resource changes via two mechanisms:
+
+#### 1. Server-Sent Events (SSE) Streaming
+
+Subscribe to real-time events via SSE:
+
+```bash
+# Subscribe to all events
+curl -N -H "Accept: text/event-stream" \
+  http://localhost:8080/api/events/stream
+
+# Subscribe to Patient events only
+curl -N -H "Accept: text/event-stream" \
+  "http://localhost:8080/api/events/stream?topics=Patient"
+
+# Subscribe to create and update actions
+curl -N -H "Accept: text/event-stream" \
+  "http://localhost:8080/api/events/stream?topics=Patient,Observation&actions=create,update"
+```
+
+Event format:
+```
+event: resource-change
+data: {"eventId":"uuid","resourceType":"Patient","resourceId":"123","action":"create","timestamp":"..."}
+```
+
+#### 2. Webhook Registration
+
+Register webhooks for push notifications:
+
+```bash
+# Register a webhook
+curl -X POST http://localhost:8080/api/webhooks \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: my-tenant" \
+  -d '{
+    "callbackUrl": "https://my-agent.example.com/callback",
+    "topics": ["Patient.create", "Patient.update"],
+    "secret": "my-hmac-secret"
+  }'
+
+# List webhooks
+curl http://localhost:8080/api/webhooks \
+  -H "X-Tenant-ID: my-tenant"
+
+# Delete a webhook
+curl -X DELETE http://localhost:8080/api/webhooks/{subscriptionId} \
+  -H "X-Tenant-ID: my-tenant"
+```
+
+Webhook payload format:
+```json
+{
+  "eventId": "uuid",
+  "resourceType": "Patient",
+  "resourceId": "123",
+  "action": "create",
+  "tenantId": "my-tenant",
+  "timestamp": "2026-04-18T10:30:00Z",
+  "resource": { ... }
+}
+```
+
+HMAC signature header: `X-Webhook-Signature: sha256=base64encodedSignature`
+
+#### Topic Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| `Patient` | All Patient events (any action) |
+| `Patient.create` | Only Patient create events |
+| `Patient.*` | All Patient events (explicit wildcard) |
+| `*.*` | All events for all resource types |
+
+### Configuration
+
+```yaml
+fhir4java:
+  events:
+    enabled: true
+    sse:
+      enabled: true
+    webhooks:
+      enabled: true
+    persistence:
+      enabled: true  # Database-backed for production
+    retry:
+      enabled: true
+      max-retries: 3
+      initial-delay-ms: 1000
+      max-delay-ms: 60000
+```
+
+### AI Agent Integration Example
+
+```java
+// Using AgentWebhookHandler from fhir4java-mcp
+AgentWebhookHandler handler = new AgentWebhookHandler(serverBaseUrl, tenantId);
+
+// Register webhook for Patient events
+WebhookResponse webhook = handler.registerWebhook(
+    "https://my-agent.example.com/callback",
+    List.of("Patient.create", "Observation.create"),
+    "my-hmac-secret"
+);
+
+// Handle incoming webhook callbacks with signature validation
+handler.handleCallback(signature, payload, secret, event -> {
+    if ("Patient".equals(event.resourceType())) {
+        processPatientEvent(event);
+    }
+});
 ```
 
 ---

@@ -48,7 +48,7 @@ class EventStreamControllerTest {
         @DisplayName("should return text/event-stream content type compatible flux")
         void shouldReturnEventStreamContentType() {
             // The stream endpoint produces text/event-stream as declared by the annotation
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
             assertNotNull(flux, "Stream flux should not be null");
         }
 
@@ -58,7 +58,7 @@ class EventStreamControllerTest {
             ResourceChangeEvent event = new ResourceChangeEvent(
                     "Patient", "123", "create", "default", Instant.now());
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
 
             StepVerifier.create(flux.take(1))
                     .then(() -> controller.publishToStream(event))
@@ -82,7 +82,7 @@ class EventStreamControllerTest {
                     "Observation", "456", "update", "default", Instant.now());
 
             List<String> ids = new ArrayList<>();
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
 
             StepVerifier.create(flux.take(2))
                     .then(() -> {
@@ -115,7 +115,7 @@ class EventStreamControllerTest {
                     "Observation", "456", "create", "default", Instant.now());
 
             Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(
-                    List.of("Patient"), null);
+                    List.of("Patient"), null, null);
 
             StepVerifier.create(flux.take(1).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -139,7 +139,7 @@ class EventStreamControllerTest {
                     "Encounter", "789", "create", "default", Instant.now());
 
             Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(
-                    List.of("Patient", "Observation"), null);
+                    List.of("Patient", "Observation"), null, null);
 
             StepVerifier.create(flux.take(2).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -160,7 +160,7 @@ class EventStreamControllerTest {
             ResourceChangeEvent observationEvent = new ResourceChangeEvent(
                     "Observation", "456", "create", "default", Instant.now());
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
 
             StepVerifier.create(flux.take(2).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -180,7 +180,7 @@ class EventStreamControllerTest {
             ResourceChangeEvent observationEvent = new ResourceChangeEvent(
                     "Observation", "456", "create", "default", Instant.now());
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(List.of(), null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(List.of(), null, null);
 
             StepVerifier.create(flux.take(2).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -206,7 +206,7 @@ class EventStreamControllerTest {
                     "Patient", "456", "update", "default", Instant.now());
 
             Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(
-                    null, List.of("create"));
+                    null, List.of("create"), null);
 
             StepVerifier.create(flux.take(1).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -230,7 +230,7 @@ class EventStreamControllerTest {
                     "Patient", "789", "delete", "default", Instant.now());
 
             Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(
-                    null, List.of("create", "update"));
+                    null, List.of("create", "update"), null);
 
             StepVerifier.create(flux.take(2).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -251,7 +251,7 @@ class EventStreamControllerTest {
             ResourceChangeEvent deleteEvent = new ResourceChangeEvent(
                     "Patient", "456", "delete", "default", Instant.now());
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
 
             StepVerifier.create(flux.take(2).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -280,7 +280,7 @@ class EventStreamControllerTest {
 
             // Only want Patient creates
             Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(
-                    List.of("Patient"), List.of("create"));
+                    List.of("Patient"), List.of("create"), null);
 
             StepVerifier.create(flux.take(1).timeout(Duration.ofSeconds(2)))
                     .then(() -> {
@@ -307,8 +307,8 @@ class EventStreamControllerTest {
             AtomicInteger subscriber2Count = new AtomicInteger(0);
             CountDownLatch latch = new CountDownLatch(2);
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux1 = controller.stream(null, null);
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux2 = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux1 = controller.stream(null, null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux2 = controller.stream(null, null, null);
 
             // Subscribe both
             flux1.take(1).subscribe(sse -> {
@@ -344,11 +344,11 @@ class EventStreamControllerTest {
 
             // Subscriber 1 only wants Patient events
             Flux<ServerSentEvent<ResourceChangeEvent>> patientFlux =
-                    controller.stream(List.of("Patient"), null);
+                    controller.stream(List.of("Patient"), null, null);
 
             // Subscriber 2 only wants Observation events
             Flux<ServerSentEvent<ResourceChangeEvent>> observationFlux =
-                    controller.stream(List.of("Observation"), null);
+                    controller.stream(List.of("Observation"), null, null);
 
             patientFlux.take(1).subscribe(sse -> {
                 patientCount.incrementAndGet();
@@ -389,7 +389,7 @@ class EventStreamControllerTest {
             ResourceChangeEvent event = new ResourceChangeEvent(
                     "Patient", "123", "create", "default", Instant.now());
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
 
             StepVerifier.create(flux.take(1))
                     .then(() -> controller.publishToStream(event))
@@ -406,7 +406,7 @@ class EventStreamControllerTest {
             ResourceChangeEvent event = new ResourceChangeEvent(
                     "Patient", "pat-123", "update", "tenant-abc", timestamp);
 
-            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null);
+            Flux<ServerSentEvent<ResourceChangeEvent>> flux = controller.stream(null, null, null);
 
             StepVerifier.create(flux.take(1))
                     .then(() -> controller.publishToStream(event))

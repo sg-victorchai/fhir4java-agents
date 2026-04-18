@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * FHIR4Java Agents - Main Application Entry Point
@@ -19,6 +20,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @EntityScan(basePackages = "org.fhirframework.persistence.entity")
 @EnableJpaAuditing
 @EnableCaching
+@EnableScheduling
 @EnableConfigurationProperties(TenantProperties.class)
 public class Fhir4JavaApplication {
 

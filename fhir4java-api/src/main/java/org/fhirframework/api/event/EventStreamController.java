@@ -1,20 +1,23 @@
 package org.fhirframework.api.event;
 
+import org.fhirframework.api.subscription.SubscriptionPersistenceService;
+import org.fhirframework.persistence.entity.EventSubscriptionEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * REST controller for Server-Sent Events (SSE) streaming of resource change events.
@@ -59,11 +62,27 @@ public class EventStreamController {
     private final EventsConfig eventsConfig;
 
     /**
+     * Optional subscription persistence service for tracking SSE subscriptions.
+     */
+    private SubscriptionPersistenceService subscriptionPersistenceService;
+
+    /**
+     * Optional event delivery service for acknowledgements.
+     */
+    private EventDeliveryService eventDeliveryService;
+
+    /**
      * Multicast sink for broadcasting events to all subscribers.
      * Uses backpressure buffering to handle slow subscribers.
      */
     private final Sinks.Many<ResourceChangeEvent> eventSink =
             Sinks.many().multicast().onBackpressureBuffer();
+
+    /**
+     * Track active SSE subscriptions by subscription ID.
+     * Maps subscription ID to the subscription entity.
+     */
+    private final Map<String, EventSubscriptionEntity> activeSseSubscriptions = new ConcurrentHashMap<>();
 
     /**
      * Creates a new EventStreamController.
@@ -73,6 +92,22 @@ public class EventStreamController {
     public EventStreamController(EventsConfig eventsConfig) {
         this.eventsConfig = eventsConfig;
         log.info("EventStreamController initialized: SSE enabled={}", eventsConfig.isSseEnabled());
+    }
+
+    @Autowired(required = false)
+    public void setSubscriptionPersistenceService(SubscriptionPersistenceService service) {
+        this.subscriptionPersistenceService = service;
+        if (service != null) {
+            log.info("SSE subscription persistence enabled");
+        }
+    }
+
+    @Autowired(required = false)
+    public void setEventDeliveryService(EventDeliveryService service) {
+        this.eventDeliveryService = service;
+        if (service != null) {
+            log.info("SSE acknowledgement tracking enabled");
+        }
     }
 
     /**
@@ -96,7 +131,8 @@ public class EventStreamController {
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<ResourceChangeEvent>> stream(
             @RequestParam(required = false) List<String> topics,
-            @RequestParam(required = false) List<String> actions) {
+            @RequestParam(required = false) List<String> actions,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId) {
 
         // Check if SSE streaming is enabled
         if (!eventsConfig.isSseEnabled()) {
@@ -105,7 +141,10 @@ public class EventStreamController {
                     "SSE streaming is disabled. Enable via fhir4java.events.sse.enabled=true");
         }
 
-        log.debug("New SSE subscription: topics={}, actions={}", topics, actions);
+        log.debug("New SSE subscription: topics={}, actions={}, tenant={}", topics, actions, tenantId);
+
+        // Create persistent subscription if persistence is enabled
+        final String subscriptionId = createPersistentSubscription(topics, actions, tenantId);
 
         return eventSink.asFlux()
                 .filter(event -> filterByTopics(event, topics))
@@ -115,8 +154,155 @@ public class EventStreamController {
                         .event("resource-change")
                         .data(event)
                         .build())
-                .doOnSubscribe(subscription -> log.debug("SSE client subscribed"))
-                .doOnCancel(() -> log.debug("SSE client disconnected"));
+                .doOnSubscribe(subscription -> {
+                    log.debug("SSE client subscribed: {}", subscriptionId);
+                })
+                .doOnCancel(() -> {
+                    log.debug("SSE client disconnected: {}", subscriptionId);
+                    cleanupSubscription(subscriptionId);
+                })
+                .doOnTerminate(() -> {
+                    log.debug("SSE stream terminated: {}", subscriptionId);
+                    cleanupSubscription(subscriptionId);
+                });
+    }
+
+    /**
+     * Get subscription info for an active SSE subscription.
+     *
+     * @param subscriptionId The subscription ID
+     * @return Subscription info or 404 if not found
+     */
+    @GetMapping("/stream/{subscriptionId}")
+    public ResponseEntity<Map<String, Object>> getSubscriptionInfo(
+            @PathVariable String subscriptionId) {
+
+        EventSubscriptionEntity subscription = activeSseSubscriptions.get(subscriptionId);
+        if (subscription == null && subscriptionPersistenceService != null) {
+            subscription = subscriptionPersistenceService.findBySubscriptionId(subscriptionId)
+                    .orElse(null);
+        }
+
+        if (subscription == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> info = Map.of(
+                "subscriptionId", subscription.getSubscriptionId(),
+                "type", subscription.getSubscriptionType(),
+                "status", subscription.getStatus(),
+                "topics", subscription.getTopics() != null ? subscription.getTopics() : "",
+                "actions", subscription.getActions() != null ? subscription.getActions() : "",
+                "createdAt", subscription.getCreatedAt() != null ? subscription.getCreatedAt().toString() : "",
+                "lastEventAt", subscription.getLastEventAt() != null ? subscription.getLastEventAt().toString() : ""
+        );
+
+        return ResponseEntity.ok(info);
+    }
+
+    /**
+     * Acknowledge receipt of an event.
+     *
+     * @param subscriptionId    The subscription ID
+     * @param eventId          The event ID to acknowledge
+     * @param acknowledgementId Optional client-provided acknowledgement ID
+     * @return 200 OK if acknowledged, 400 if acknowledgement is disabled
+     */
+    @PostMapping("/stream/{subscriptionId}/ack")
+    public ResponseEntity<Map<String, Object>> acknowledgeEvent(
+            @PathVariable String subscriptionId,
+            @RequestParam String eventId,
+            @RequestParam(required = false) String acknowledgementId) {
+
+        if (!eventsConfig.isAcknowledgementEnabled()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Acknowledgement tracking is disabled"
+            ));
+        }
+
+        if (eventDeliveryService == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Event delivery service not available (persistence mode not enabled)"
+            ));
+        }
+
+        boolean acknowledged = eventDeliveryService.acknowledgeDelivery(
+                eventId, subscriptionId, acknowledgementId);
+
+        if (acknowledged) {
+            return ResponseEntity.ok(Map.of(
+                    "acknowledged", true,
+                    "eventId", eventId,
+                    "subscriptionId", subscriptionId
+            ));
+        } else {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Create a persistent subscription if persistence is enabled.
+     */
+    private String createPersistentSubscription(List<String> topics, List<String> actions, String tenantId) {
+        String subscriptionId = UUID.randomUUID().toString();
+
+        if (subscriptionPersistenceService != null && eventsConfig.isPersistenceEnabled()) {
+            try {
+                String topicsStr = topics != null ? String.join(",", topics) : null;
+                String actionsStr = actions != null ? String.join(",", actions) : null;
+
+                EventSubscriptionEntity subscription = subscriptionPersistenceService.createSseSubscription(
+                        tenantId, topicsStr, actionsStr);
+
+                subscriptionId = subscription.getSubscriptionId();
+                activeSseSubscriptions.put(subscriptionId, subscription);
+
+                log.info("Created persistent SSE subscription: {}", subscriptionId);
+            } catch (Exception e) {
+                log.warn("Failed to create persistent subscription, using in-memory: {}", e.getMessage());
+            }
+        }
+
+        return subscriptionId;
+    }
+
+    /**
+     * Cleanup subscription when client disconnects.
+     * <p>
+     * This method is called from reactive callbacks (doOnCancel, doOnTerminate)
+     * which run on Netty event loop threads. The SubscriptionPersistenceService
+     * uses programmatic transaction management to handle this properly.
+     * </p>
+     */
+    private void cleanupSubscription(String subscriptionId) {
+        if (subscriptionId == null) {
+            return;
+        }
+
+        log.info("Cleaning up SSE subscription: {}", subscriptionId);
+        activeSseSubscriptions.remove(subscriptionId);
+
+        if (subscriptionPersistenceService != null && eventsConfig.isPersistenceEnabled()) {
+            try {
+                boolean terminated = subscriptionPersistenceService.terminateSubscription(subscriptionId);
+                if (terminated) {
+                    log.info("Successfully terminated persistent SSE subscription: {}", subscriptionId);
+                } else {
+                    log.warn("Subscription {} not found or already terminated", subscriptionId);
+                }
+            } catch (Exception e) {
+                log.error("Failed to terminate persistent subscription {}: {}", subscriptionId, e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * Get count of active SSE subscriptions.
+     *
+     * @return Count of active subscriptions
+     */
+    public int getActiveSubscriptionCount() {
+        return activeSseSubscriptions.size();
     }
 
     /**

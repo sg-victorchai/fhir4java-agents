@@ -199,6 +199,24 @@ fhir4java:
     # Webhook delivery configuration
     webhooks:
       enabled: true # Enable/disable webhook event delivery
+    # Persistence mode (production vs development)
+    persistence:
+      # Enable database-backed event publishing with full audit trail
+      # When false (default), uses lightweight in-memory mode for development
+      enabled: true
+    # Retry mechanism configuration
+    retry:
+      enabled: true # Enable retry for failed deliveries
+      max-retries: 3 # Maximum retry attempts before dead letter
+      initial-delay-ms: 1000 # Initial delay for exponential backoff
+      max-delay-ms: 60000 # Maximum delay cap (1 minute)
+      multiplier: 2.0 # Exponential backoff multiplier
+      poll-interval-ms: 5000 # Retry scheduler poll interval
+      batch-size: 100 # Max deliveries per retry poll
+    # Acknowledgement tracking configuration
+    acknowledgement:
+      enabled: true # Track event acknowledgements
+      timeout-ms: 30000 # Timeout waiting for ack (30 seconds)
 
   # Multi-tenancy
   tenant:

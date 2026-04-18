@@ -4,6 +4,7 @@ import org.fhirframework.core.event.EventPublisher;
 import org.fhirframework.core.event.ResourceChangeEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -24,6 +25,10 @@ import java.util.function.Consumer;
  * </ul>
  * </p>
  * <p>
+ * In production mode (when persistence is enabled), subscriptions can be
+ * persisted to the database for durability across server restarts.
+ * </p>
+ * <p>
  * This implementation is thread-safe and suitable for concurrent access.
  * </p>
  */
@@ -36,6 +41,12 @@ public class SubscriptionManager {
     private final SubscriptionMatcher subscriptionMatcher;
     private final EventPublisher eventPublisher;
     private final Consumer<ResourceChangeEvent> eventHandler;
+
+    /**
+     * Flag indicating whether persistence mode is enabled.
+     */
+    @Value("${fhir4java.events.persistence.enabled:false}")
+    private boolean persistenceEnabled;
 
     /**
      * Creates a new SubscriptionManager and subscribes to the EventPublisher.
@@ -185,5 +196,37 @@ public class SubscriptionManager {
                         subscriptionId, e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Check if persistence mode is enabled.
+     * <p>
+     * When persistence is enabled, subscriptions are stored in the database
+     * and managed by the SubscriptionPersistenceService in the API layer.
+     * </p>
+     *
+     * @return true if persistence mode is enabled
+     */
+    public boolean isPersistenceEnabled() {
+        return persistenceEnabled;
+    }
+
+    /**
+     * Get all active subscription IDs.
+     *
+     * @return List of active subscription IDs
+     */
+    public List<String> getAllSubscriptionIds() {
+        return new ArrayList<>(activeSubscriptions.keySet());
+    }
+
+    /**
+     * Get subscription topic by ID.
+     *
+     * @param subscriptionId The subscription ID
+     * @return The subscription topic or null if not found
+     */
+    public SubscriptionTopic getSubscriptionTopic(String subscriptionId) {
+        return activeSubscriptions.get(subscriptionId);
     }
 }
