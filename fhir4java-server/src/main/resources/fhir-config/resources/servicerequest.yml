@@ -1,0 +1,31 @@
+# ServiceRequest Resource Configuration
+resourceType: ServiceRequest
+enabled: true
+
+# Multiple FHIR versions support
+fhirVersions:
+  - version: R5
+    default: true
+
+# Database schema configuration
+schema:
+  type: shared
+  name: patientdata
+
+# Enabled interactions
+interactions:
+  read: true
+  vread: true
+  create: true
+  update: true
+  patch: false
+  delete: false
+  search: true
+  history: true
+
+# No search parameter restrictions - all ServiceRequest search parameters are allowed
+
+# Required/optional profiles
+profiles:
+  - url: http://hl7.org/fhir/StructureDefinition/ServiceRequest
+    required: true

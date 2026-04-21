@@ -1,0 +1,31 @@
+# SubscriptionStatus Resource Configuration
+resourceType: SubscriptionStatus
+enabled: true
+
+# Multiple FHIR versions support
+fhirVersions:
+  - version: R5
+    default: true
+
+# Database schema configuration
+schema:
+  type: shared
+  name: fhir
+
+# Enabled interactions
+interactions:
+  read: true
+  vread: true
+  create: true
+  update: true
+  patch: false
+  delete: true
+  search: true
+  history: true
+
+# No search parameter restrictions - all SubscriptionStatus search parameters are allowed
+
+# Required/optional profiles
+profiles:
+  - url: http://hl7.org/fhir/StructureDefinition/SubscriptionStatus
+    required: true
