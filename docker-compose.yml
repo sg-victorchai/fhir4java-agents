@@ -23,12 +23,10 @@ services:
     networks:
       - fhir-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+    # Note: Distroless image has no shell or tools for health checks
+    # Health check disabled - use external monitoring or Kubernetes probes
+    # Spring Boot Actuator health endpoint: http://localhost:8080/actuator/health
+    # For production Kubernetes, use livenessProbe and readinessProbe
 
   postgres:
     image: postgres:16-alpine

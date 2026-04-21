@@ -39,35 +39,27 @@ COPY fhir4java-server/src fhir4java-server/src
 # Build the application
 RUN ./mvnw clean package -DskipTests -B
 
-# Runtime stage
-FROM eclipse-temurin:25-jre
-
-# Install curl for health check
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+# Runtime stage - Google Distroless for minimal attack surface
+# No shell, no package manager, no busybox - minimal CVE exposure
+FROM gcr.io/distroless/java25-debian13:nonroot
 
 WORKDIR /app
 
-# Create non-root user
-RUN groupadd -r fhir && useradd -r -g fhir fhir
-
-# Copy the built artifact
-COPY --from=builder /app/fhir4java-server/target/*.jar app.jar
-
-# Set ownership
-RUN chown -R fhir:fhir /app
-
-USER fhir
+# Copy the built artifact with nonroot ownership (UID 65532)
+# Distroless nonroot user is built-in, no need to create
+COPY --chown=nonroot:nonroot --from=builder /app/fhir4java-server/target/*.jar app.jar
 
 # Expose port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/actuator/health || exit 1
+# Health check note: Use orchestrator-level health checks (K8s livenessProbe, Docker Compose healthcheck)
+# Distroless has no shell or wget, so HEALTHCHECK directive cannot be used here
+# Spring Boot Actuator endpoint: /actuator/health
 
-# JVM options for containers
+# JVM options for containers via JAVA_TOOL_OPTIONS (picked up automatically by JVM)
 # MaxRAMPercentage=60.0 leaves ~40% for metaspace, thread stacks, native memory
 # This is important for HAPI FHIR which uses significant non-heap memory
-ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=60.0 -XX:+UseZGC -XX:MaxMetaspaceSize=256m"
+ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=60.0 -XX:+UseZGC -XX:MaxMetaspaceSize=256m"
 
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+# Distroless default entrypoint is equivalent to "java -jar"
+ENTRYPOINT ["java", "-jar", "app.jar"]

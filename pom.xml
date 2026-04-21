@@ -39,29 +39,40 @@
         <!-- Spring Boot Version (inherited from parent) -->
         <spring-boot.version>3.5.7</spring-boot.version>
 
+        <!-- Spring Boot Managed Dependency Overrides (Security Fixes) -->
+        <tomcat.version>10.1.54</tomcat.version>
+        <spring-security.version>6.5.9</spring-security.version>
+        <spring-framework.version>6.2.17</spring-framework.version>
+        <thymeleaf.version>3.1.4.RELEASE</thymeleaf.version>
+        <netty.version>4.1.132.Final</netty.version>
+        <logback.version>1.5.25</logback.version>
+
         <!-- HAPI FHIR Version -->
-        <hapi-fhir.version>7.6.0</hapi-fhir.version>
+        <hapi-fhir.version>8.8.1</hapi-fhir.version>
+        <!-- HAPI FHIR Core Libraries (Security Fix for CVE-2026-34359, CVE-2026-34360, CVE-2026-34361) -->
+        <hapi-fhir-core.version>6.9.4</hapi-fhir-core.version>
 
         <!-- Apache Commons -->
         <commons-compress.version>1.26.0</commons-compress.version>
+        <commons-lang3.version>3.18.0</commons-lang3.version>
 
         <!-- Database -->
-        <postgresql.version>42.7.4</postgresql.version>
-        <flyway.version>10.21.0</flyway.version>
+        <postgresql.version>42.7.7</postgresql.version>
+        <flyway.version>11.20.3</flyway.version>
 
         <!-- Testing -->
-        <cucumber.version>7.20.1</cucumber.version>
-        <testcontainers.version>2.0.2</testcontainers.version>
+        <cucumber.version>7.34.3</cucumber.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
 
         <!-- Utilities -->
-        <jackson.version>2.18.2</jackson.version>
+        <jackson.version>2.21.2</jackson.version>
         <json-patch.version>1.13</json-patch.version>
-        <lombok.version>1.18.42</lombok.version>
+        <lombok.version>1.18.44</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
 
         <!-- AWS SDK -->
-        <aws-sdk.version>2.29.0</aws-sdk.version>
-        <aws-secretsmanager-jdbc.version>1.0.12</aws-secretsmanager-jdbc.version>
+        <aws-sdk.version>2.42.37</aws-sdk.version>
+        <aws-secretsmanager-jdbc.version>2.1.0</aws-secretsmanager-jdbc.version>
 
         <!-- Plugin Versions -->
         <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
@@ -143,11 +154,78 @@
                 <version>${hapi-fhir.version}</version>
             </dependency>
 
+            <!-- HAPI FHIR Core Libraries - Security Overrides -->
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.utilities</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.r5</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.r4b</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.r4</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.dstu3</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.dstu3.support</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.dstu2</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.dstu2016may</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.convertors</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.validation</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.model</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ca.uhn.hapi.fhir</groupId>
+                <artifactId>org.hl7.fhir.support</artifactId>
+                <version>${hapi-fhir-core.version}</version>
+            </dependency>
+
             <!-- Apache Commons -->
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-compress</artifactId>
                 <version>${commons-compress.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>${commons-lang3.version}</version>
             </dependency>
 
             <!-- Database -->
@@ -187,6 +265,15 @@
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Jackson BOM - Security Override -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
